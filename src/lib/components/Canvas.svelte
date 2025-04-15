@@ -1,67 +1,92 @@
 <script lang="ts">
-  import { onMount, onDestroy, afterUpdate, untrack } from 'svelte';
+  import { onMount, onDestroy, createEventDispatcher, tick, untrack } from 'svelte';
+  import { slide } from 'svelte/transition';
+  import { cubicOut } from 'svelte/easing';
+  import { getStroke, type StrokeOptions } from 'perfect-freehand';
+  import { writable, type Writable } from 'svelte/store';
+  import { gsap } from 'gsap';
+  import { pages } from '$lib/stores/pages';
   import type { Tool, CanvasContent, DrawingContent } from '$lib/types';
   import { updatePageContent, createPage, getPage } from '$lib/supabase/pages';
-  import { getStroke } from 'perfect-freehand';
-  import { pages, user } from '$lib/stores/appStore';
-  import { gsap } from 'gsap';
-  import { getSvgPathFromStroke, getPerfectFreehandOptions, isPointInStroke } from '$lib/utils/drawingUtils';
+  import { getSvgPathFromStroke } from '$lib/utils/drawingUtils';
+  import { user } from '$lib/stores/auth';
   import ZoomControl from './ZoomControl.svelte';
 
-  // Add an error handler for effect_update_depth_exceeded errors
-  if (typeof window !== 'undefined') {
-    const originalError = console.error;
-    console.error = function(...args) {
-      if (args[0] && typeof args[0] === 'string' && args[0].includes('effect_update_depth_exceeded')) {
-        console.warn('EFFECT LOOP DETECTED IN CANVAS COMPONENT - Stack trace:');
-        console.warn(new Error().stack);
-      }
-      return originalError.apply(this, args);
-    };
-  }
+  // After imports and before script code, add a variable for tracking last render time
+  let lastRenderTimestamp = 0;
+  let renderFlagResetTimeout: ReturnType<typeof setTimeout> | null = null;
 
-  export let pageId: string;
-  export let content: CanvasContent;
+  // Props
+  export let content: CanvasContent = { objects: [], drawings: [] };
+  export let pageId: string = '';
   export let selectedTool: Tool = 'select';
-  export let onSaving: (status: boolean) => void;
-  export let onSaveStatus: (status: 'saved' | 'saving' | 'error') => void;
+  export let isDrawingMode = false; // Export isDrawingMode
+  export let onSaving: (isSaving: boolean) => void = () => {};
+  export let onSaveStatus: (status: 'saving' | 'saved' | 'error') => void = () => {};
+  export let onToolChange: (tool: Tool) => void = () => {};
 
+  // Expose selected object properties to parent components
+  export let selectedObjectType: string | null = null;
+  export let selectedObjectId: string | null = null;
+
+  // DOM references
   let canvasEl: HTMLCanvasElement;
   let canvasContainer: HTMLDivElement;
-  let canvas: any; // fabric.Canvas
-  let saveTimeout: any;
+
+  // Fabric.js references
+  let canvas: any = null; // Fabric.Canvas instance
+  let fabricLib: any = null; // Fabric.js library
   let fabricLoaded = false;
-  let fabricLib: any; // Store the fabric library reference
-  let initialized = false; // Flag to track if the canvas has been fully initialized
-  let contentLoaded = false; // Track if content has been loaded
-  let skipNextViewportSave = false; // Flag to prevent reactivity loops
-  let isActivelyDrawing = false; // Flag to track when actively drawing
-  let isSaving = false; // Flag to track when saving is in progress
 
-  // Canvas view properties
+  // Debug logging - helpful for tracking reactivity issues
+  let debugLogging = false;
+  function log(...args: any[]) {
+    if (debugLogging) console.log(...args);
+  }
+
+  // State initialization flags - using let for Svelte reactivity
+  let initialized = false;
+  let contentLoaded = false;
+  let isSaving = false;
+  let isActivelyDrawing = false;
+
+  // Prevent loops with explicit flags
+  let skipNextViewportSave = false;
+  let saveTimeout: any = null;
+
+  // Internal non-reactive state copy - critical for loop prevention
+  let localContent: any = null;
+
+  // Canvas viewport state
   let zoom = 1;
-  let minZoom = 0.1;
-  let maxZoom = 5;
-  let zoomStep = 0.1;
-  let isPanning = false;
+  const minZoom = 0.1;
+  const maxZoom = 5;
+  const zoomStep = 0.1;
 
-  // Store initial viewport to avoid reactivity loops
-  let initialViewport = content?.viewport ? {
-    zoom: content.viewport.zoom || 1,
-    panX: content.viewport.panX || 0,
-    panY: content.viewport.panY || 0
-  } : { zoom: 1, panX: 0, panY: 0 };
+  // Initial viewport values - can be updated from content prop
+  let initialViewport = {
+    zoom: 1,
+    panX: 0,
+    panY: 0
+  };
 
-  // Create a local deep copy of the content to prevent modifying props directly
-  let localContent: CanvasContent = content ? JSON.parse(JSON.stringify(content)) : null;
-
-  // Selected object and toolbar state
+  // Object selection state for displaying toolbar
   let selectedObject: any = null;
+  let objectType: string = '';
   let showToolbar = false;
   let toolbarPosition = { top: 0, left: 0 };
-  let objectType = '';
 
-  // Text properties
+  // Update exported properties when selection changes
+  $: {
+    selectedObjectType = objectType || null;
+    selectedObjectId = selectedObject ? getObjectId(selectedObject) : null;
+  }
+
+  // Styling presets for toolbar
+  const fontFamilies = ['Arial', 'Times New Roman', 'Courier New', 'Georgia', 'Verdana'];
+  const fontSizes = [8, 10, 12, 14, 16, 18, 20, 24, 28, 32, 36, 40, 48, 56, 64, 72];
+
+  // Text properties for selected object
   let textProps = {
     fontFamily: 'Arial',
     fontSize: 20,
@@ -72,44 +97,31 @@
     color: '#333333'
   };
 
-  // Shape properties
+  // Shape properties for selected object
   let shapeProps = {
-    fill: 'rgba(200, 200, 255, 0.3)',
-    stroke: '#8888FF',
+    fill: '#f0f0f0',
+    stroke: '#333333',
     strokeWidth: 1,
     opacity: 1
   };
 
-  // Available font families
-  const fontFamilies = [
-    'Arial',
-    'Times New Roman',
-    'Courier New',
-    'Georgia',
-    'Verdana',
-    'Helvetica'
-  ];
-
-  // Available font sizes
-  const fontSizes = [8, 10, 12, 14, 16, 18, 20, 24, 28, 32, 36, 48, 64];
-
-  // Options for perfect-freehand
-  const perfectFreehandOptions = {
-    size: 8,
-    thinning: 0.5,
+  // Drawing tool state
+  let drawingSettings = {
+    color: '#000000',
+    size: 3,
+    opacity: 1.0,
     smoothing: 0.5,
     streamline: 0.5
   };
 
-  // Drawing tool state
+  // Drawing area state
   let isCreatingDrawingArea = false;
   let drawingAreaStart = { x: 0, y: 0 };
-  let drawingAreaRect: fabric.Rect | null = null;
+  let drawingAreaRect: any = null;
   let activeDrawingId: string | null = null;
   let activeDrawingReference: any = null;
-  let isDrawingMode = false;
 
-  // Default shape styles
+  // Default style presets
   const defaultStyles = {
     rectangle: {
       fill: 'rgba(200, 200, 255, 0.3)',
@@ -143,28 +155,31 @@
     return JSON.parse(JSON.stringify(obj));
   }
 
+  // Main component initialization
   onMount(async () => {
     try {
-      // Dynamically import fabric.js
+      log('Canvas component mounting...');
+
+      // Dynamically import fabric.js to avoid SSR issues
       const { fabric } = await import('fabric');
       fabricLib = fabric;
       fabricLoaded = true;
 
+      // Validate DOM elements
       if (!canvasEl) {
         console.error('Canvas element is not defined');
         return;
       }
 
-      // Check parent element before initializing
       if (!canvasContainer) {
         console.error('Canvas container is not defined');
         return;
       }
 
-      console.log('Initializing canvas with dimensions:',
-                 canvasContainer.clientWidth, canvasContainer.clientHeight);
+      log('Initializing canvas with dimensions:',
+        canvasContainer.clientWidth, canvasContainer.clientHeight);
 
-      // Initialize the canvas
+      // Initialize the canvas with proper size and options
       canvas = new fabric.Canvas(canvasEl, {
         backgroundColor: '#ffffff',
         width: canvasContainer.clientWidth || 800,
@@ -173,70 +188,49 @@
         selection: true,
         centeredScaling: true,
         stopContextMenu: true,
-        fireRightClick: true
+        fireRightClick: true,
+        // Improve selection behavior
+        selectionKey: '', // Allow selection without modifier keys (empty string instead of null)
+        selectionColor: 'rgba(65, 105, 225, 0.2)', // Better selection visibility
+        selectionLineWidth: 1.5,
+        selectionBorderColor: 'rgba(65, 105, 225, 0.75)',
+        selectionFullyContained: false,
+        // Handle right-click events
+        skipTargetFind: false
       });
 
-      // Set initial zoom from initial viewport (not from content directly)
-      // Apply directly to canvas without going through applyZoom
-      zoom = initialViewport.zoom || 1;
-      canvas.setZoom(zoom);
-
-      // Set initial position if available
-      if (initialViewport.panX !== undefined && initialViewport.panY !== undefined) {
-        canvas.viewportTransform[4] = initialViewport.panX;
-        canvas.viewportTransform[5] = initialViewport.panY;
-      }
-
-      // Render once after all changes
-      canvas.renderAll();
-
-      // Use untrack to break the initialization chain
+      // Using untrack for all initialization that shouldn't trigger reactivity
       untrack(() => {
+        // Initialize local content from props (if available) to avoid reactivity
         if (content && !localContent) {
           localContent = safeClone(content);
+
+          // Extract viewport settings from content if available
+          if (localContent.viewport) {
+            initialViewport = {
+              zoom: localContent.viewport.zoom || 1,
+              panX: localContent.viewport.panX || 0,
+              panY: localContent.viewport.panY || 0
+            };
+          }
         }
+
+        // Set initial zoom from viewport
+        zoom = initialViewport.zoom || 1;
+        canvas.setZoom(zoom);
+
+        // Set initial position if available
+        if (initialViewport.panX !== undefined && initialViewport.panY !== undefined) {
+          canvas.viewportTransform[4] = initialViewport.panX;
+          canvas.viewportTransform[5] = initialViewport.panY;
+        }
+
+        canvas.renderAll();
       });
 
-      // Load the saved content
+      // Load saved content (if available)
       if (localContent && Object.keys(localContent).length > 0) {
-        // Use untrack to prevent loops during initial content loading
-        untrack(() => {
-          const restoreViewport = localContent.viewport;
-
-          // Set a flag to avoid saving during the initial load
-          skipNextViewportSave = true;
-
-          try {
-            // Load canvas objects without triggering reactivity
-            canvas.loadFromJSON(localContent, () => {
-              // After loading canvas, setup objects
-              canvas.forEachObject((obj: fabric.Object) => {
-                // Setup objects without triggering reactivity
-                if (obj.data?.type === 'drawing') {
-                  createDrawingObject(obj);
-                }
-              });
-
-              // Set viewport after loading, still within untrack
-              if (restoreViewport) {
-                zoom = restoreViewport.zoom || 1;
-                canvas.setViewportTransform([
-                  zoom, 0, 0, zoom,
-                  restoreViewport.panX || 0,
-                  restoreViewport.panY || 0
-                ]);
-              }
-
-              canvas.renderAll();
-              contentLoaded = true;
-              initialized = true;
-            });
-          } catch (error) {
-            console.error('Error loading canvas content:', error);
-            contentLoaded = true;
-            initialized = true;
-          }
-        });
+        await loadCanvasContent(localContent);
       } else {
         // No content to load, just mark as initialized
         contentLoaded = true;
@@ -244,11 +238,36 @@
       }
 
       // Set up event handlers
-      setupEventHandlers(fabric);
-      setupObjectSelectionHandlers();
+      setupEventHandlers();
+      setupSelectionHandlers();
 
-      // Set up wheel zoom handler
-      canvasContainer.addEventListener('wheel', handleWheel, { passive: false });
+      // Set up wheel zoom handler - this preserves cursor position during zoom
+      canvasContainer.addEventListener('wheel', (e) => {
+        if (e.ctrlKey || e.metaKey) {
+          e.preventDefault();
+          const delta = e.deltaY;
+          let newZoom = zoom;
+
+          if (delta < 0) {
+            // Zoom in
+            newZoom = Math.min(maxZoom, zoom + zoomStep);
+          } else {
+            // Zoom out
+            newZoom = Math.max(minZoom, zoom - zoomStep);
+          }
+
+          if (newZoom !== zoom) {
+            // Get mouse position relative to canvas
+            const rect = canvasEl.getBoundingClientRect();
+            const point = {
+              x: e.clientX - rect.left,
+              y: e.clientY - rect.top
+            };
+
+            zoomToPoint(newZoom, point);
+          }
+        }
+      }, { passive: false });
 
       // Set up resize handler
       window.addEventListener('resize', handleResize);
@@ -259,17 +278,10 @@
       // Initial render
       canvas.renderAll();
 
-      // Add debug mouse click handler to canvas container
-      canvasContainer.addEventListener('click', (e) => {
-        console.log('Container clicked at:', e.clientX, e.clientY);
-        console.log('Current tool:', selectedTool);
-      });
-
       // After a short delay, mark initialization as complete
       setTimeout(() => {
-        // Mark initialization as complete to prevent reactive loops
         initialized = true;
-        console.log('Canvas initialization complete');
+        log('Canvas initialization complete');
       }, 500);
     } catch (error) {
       console.error('Error initializing canvas:', error);
@@ -277,402 +289,207 @@
       contentLoaded = true;
     }
 
+    // Return cleanup function
     return () => {
-      // Cleanup canvas
-      if (canvas) {
-        canvas.dispose();
-      }
-      if (canvasContainer) {
-        canvasContainer.removeEventListener('wheel', handleWheel);
-        canvasContainer.removeEventListener('click', () => {});
-      }
-      window.removeEventListener('resize', handleResize);
+      log('Canvas component cleanup...');
+
+      // Clean up all resources
+      untrack(() => {
+        // Cancel any pending save operations
+        if (saveTimeout) {
+          clearTimeout(saveTimeout);
+          saveTimeout = null;
+        }
+
+        // Clean up canvas
+        if (canvas) {
+          // Remove all event listeners explicitly
+          canvas.off();
+          canvas.dispose();
+          canvas = null;
+        }
+
+        // Remove DOM event listeners
+        if (canvasContainer) {
+          // We're using an inline function for wheel events, so we can't use removeEventListener directly
+          // Instead, we'll remove all wheel event listeners with the capture option
+          const wheelEventOptions = { capture: true };
+          canvasContainer.removeEventListener('wheel', (e) => {}, wheelEventOptions);
+        }
+
+        window.removeEventListener('resize', handleResize);
+      });
     };
   });
 
-  // Function to add a default welcome text to the center of canvas
-  function addDefaultWelcomeText(fabric) {
-    if (!canvas) return;
+  // Load canvas content with proper untracking to avoid reactivity
+  async function loadCanvasContent(contentToLoad: any) {
+    if (!canvas || !contentToLoad) return;
 
-    const canvasWidth = canvas.width;
-    const canvasHeight = canvas.height;
+    // Use untrack to prevent loops during content loading
+    return new Promise<void>((resolve) => {
+      untrack(() => {
+        // Set a flag to avoid saving during the initial load
+        skipNextViewportSave = true;
 
-    const welcomeText = new fabric.IText('hello there', {
-      left: canvasWidth / 2,
-      top: canvasHeight / 2,
-      ...defaultStyles.welcomeText
+        try {
+          // Load canvas objects without triggering reactivity
+          canvas.loadFromJSON(contentToLoad, () => {
+            // After loading canvas, setup objects
+            canvas.forEachObject((obj: any) => {
+              // Setup objects without triggering reactivity
+              if (obj.data?.type === 'drawing') {
+                setupDrawingObject(obj);
+              }
+            });
+
+            // Set viewport after loading, still within untrack
+            if (contentToLoad.viewport) {
+              zoom = contentToLoad.viewport.zoom || 1;
+              canvas.setViewportTransform([
+                zoom, 0, 0, zoom,
+                contentToLoad.viewport.panX || 0,
+                contentToLoad.viewport.panY || 0
+              ]);
+            }
+
+            canvas.renderAll();
+            contentLoaded = true;
+            initialized = true;
+            resolve();
+          });
+        } catch (error) {
+          console.error('Error loading canvas content:', error);
+          contentLoaded = true;
+          initialized = true;
+          resolve();
+        }
+      });
     });
-
-    canvas.add(welcomeText);
-    canvas.renderAll();
-
-    // Save the initial state
-    autoSave();
   }
 
-  afterUpdate(() => {
-    if (canvas) {
-      updateToolMode();
-    }
-  });
-
   onDestroy(() => {
+    // Ensure we clean up any remaining resources
     if (saveTimeout) {
       clearTimeout(saveTimeout);
     }
 
     if (canvasContainer) {
-      canvasContainer.removeEventListener('wheel', handleWheel);
+      // We removed the wheel event listener in the onMount cleanup, no need to do it here
     }
     window.removeEventListener('resize', handleResize);
   });
 
-  // Set up handlers for object selection to show the toolbar
-  function setupObjectSelectionHandlers() {
-    if (!canvas) return;
+  // ======= EVENT HANDLERS =======
 
-    canvas.on('selection:created', handleObjectSelected);
-    canvas.on('selection:updated', handleObjectSelected);
-    canvas.on('selection:cleared', () => {
-      selectedObject = null;
-      showToolbar = false;
-    });
-
-    // When objects are modified, update toolbar properties
-    canvas.on('object:modified', () => {
-      if (selectedObject) {
-        updateToolbarProperties();
-      }
-      autoSave();
-    });
-  }
-
-  // Handle when an object is selected
-  function handleObjectSelected(options) {
-    const activeObject = canvas.getActiveObject();
-    if (!activeObject) {
-      showToolbar = false;
-      return;
-    }
-
-    selectedObject = activeObject;
-
-    // Determine object type
-    if (activeObject.type === 'i-text' || activeObject.type === 'text') {
-      objectType = 'text';
-    } else if (activeObject.type === 'rect') {
-      objectType = 'rectangle';
-    } else if (activeObject.type === 'circle') {
-      objectType = 'circle';
-    } else if (activeObject.type === 'path') {
-      objectType = 'path';
-    } else {
-      objectType = activeObject.type;
-    }
-
-    // Update toolbar properties based on selected object
-    updateToolbarProperties();
-
-    // Position toolbar at the top of the canvas
-    toolbarPosition = {
-      top: 16,
-      left: canvas.width / 2
-    };
-
-    showToolbar = true;
-  }
-
-  // Update toolbar properties based on the selected object
-  function updateToolbarProperties() {
-    if (!selectedObject) return;
-
-    if (objectType === 'text' || objectType === 'i-text') {
-      textProps = {
-        fontFamily: selectedObject.fontFamily,
-        fontSize: selectedObject.fontSize,
-        fontWeight: selectedObject.fontWeight,
-        fontStyle: selectedObject.fontStyle,
-        textAlign: selectedObject.textAlign,
-        underline: selectedObject.underline,
-        color: selectedObject.fill
-      };
-    } else {
-      shapeProps = {
-        fill: selectedObject.fill,
-        stroke: selectedObject.stroke,
-        strokeWidth: selectedObject.strokeWidth,
-        opacity: selectedObject.opacity
-      };
-    }
-  }
-
-  // Apply text property changes to the selected object
-  function applyTextProperties(prop, value) {
-    if (!selectedObject || !canvas) return;
-
-    // Update the object with new properties
-    selectedObject.set(prop, value);
-    canvas.renderAll();
-    autoSave();
-
-    // Update our toolbar state
-    textProps[prop] = value;
-  }
-
-  // Apply shape property changes to the selected object
-  function applyShapeProperties(prop, value) {
-    if (!selectedObject || !canvas) return;
-
-    // Update the object with new properties
-    selectedObject.set(prop, value);
-    canvas.renderAll();
-    autoSave();
-
-    // Update our toolbar state
-    shapeProps[prop] = value;
-  }
-
-  function setupEventHandlers(fabric) {
-    if (!canvas || !fabric) {
+  function setupEventHandlers() {
+    if (!canvas || !fabricLib) {
       console.error('Cannot setup event handlers - canvas or fabric is undefined');
       return;
     }
 
-    // Clear any existing event handlers to prevent duplication
+    // Add debug logging
+    log('Setting up event handlers for tool:', selectedTool);
+
+    // Remove all existing listeners to avoid duplicates
     canvas.off('mouse:down');
+    canvas.off('mouse:move');
+    canvas.off('mouse:up');
+    canvas.off('mouse:over');
+    canvas.off('mouse:out');
 
-    // Add console log to verify handler is being set up
-    console.log('Setting up event handlers for tool:', selectedTool);
+    // Set hover cursor for all objects
+    canvas.hoverCursor = 'pointer';
 
-    // Mouse down event
-    canvas.on('mouse:down', async (event) => {
-      isActivelyDrawing = true; // Set flag to prevent reactivity loops
-
-      if (selectedTool === 'draw' && !isCreatingDrawingArea && !activeDrawingId) {
-        // Start creating drawing area
-        isCreatingDrawingArea = true;
-        const pointer = canvas.getPointer(event.e);
-        drawingAreaStart = { x: pointer.x, y: pointer.y };
-
-        // Create a rectangle to represent the drawing area
-        drawingAreaRect = new fabric.Rect({
-          left: pointer.x,
-          top: pointer.y,
-          width: 0,
-          height: 0,
-          fill: 'rgba(200, 200, 255, 0.2)',
-          stroke: '#8888FF',
-          strokeWidth: 1,
-          selectable: false,
-          evented: false
-        });
-
-        canvas.add(drawingAreaRect);
-        canvas.renderAll();
-      } else if (selectedTool === 'draw' && activeDrawingId && activeDrawingReference) {
-        // We're already in drawing mode, handle this in the drawing object
-      }
-    });
-
-    // Mouse move event
-    canvas.on('mouse:move', (event) => {
-      if (selectedTool === 'draw' && isCreatingDrawingArea && drawingAreaRect) {
-        const pointer = canvas.getPointer(event.e);
-
-        // Update rectangle dimensions
-        const width = pointer.x - drawingAreaStart.x;
-        const height = pointer.y - drawingAreaStart.y;
-
-        // Use untrack to prevent reactivity issues when modifying objects
-        untrack(() => {
-          drawingAreaRect.set({
-            width: width,
-            height: height
-          });
-        });
-
-        canvas.renderAll();
-      }
-    });
-
-    // Mouse up event
-    canvas.on('mouse:up', async (event) => {
-      // Handle mouse up logic
-      try {
-        if (selectedTool === 'draw' && isCreatingDrawingArea && drawingAreaRect) {
-          const pointer = canvas.getPointer(event.e);
-
-          // Finish creating drawing area
-          isCreatingDrawingArea = false;
-
-          // Make sure the rectangle has positive dimensions
-          const width = Math.abs(pointer.x - drawingAreaStart.x);
-          const height = Math.abs(pointer.y - drawingAreaStart.y);
-
-          // Don't create tiny drawing areas
-          if (width < 50 || height < 50) {
-            canvas.remove(drawingAreaRect);
-            drawingAreaRect = null;
-            canvas.renderAll();
-            isActivelyDrawing = false; // Reset flag
-            return;
-          }
-
-          // Position correctly for negative dimensions
-          const left = pointer.x < drawingAreaStart.x ? pointer.x : drawingAreaStart.x;
-          const top = pointer.y < drawingAreaStart.y ? pointer.y : drawingAreaStart.y;
-
-          untrack(() => {
-            drawingAreaRect.set({
-              left: left,
-              top: top,
-              width: width,
-              height: height,
-              selectable: true
-            });
-          });
-
-          canvas.renderAll();
-
-          // Create a new drawing page in the database
-          try {
-            if (!$user) {
-              console.error('User not authenticated');
-              isActivelyDrawing = false; // Reset flag
-              return;
-            }
-
-            // Create a new drawing page
-            const { data: newDrawing, error } = await createPage(
-              $user.id,
-              'drawing',
-              `Drawing ${Math.floor(Math.random() * 10000)}`,
-              {
-                strokes: []
-              }
-            );
-
-            if (error) {
-              console.error('Error creating drawing page:', error);
-              return;
-            }
-
-            if (!newDrawing) {
-              console.error('Failed to create drawing page');
-              return;
-            }
-
-            // Add the new page to our store
-            pages.update(currentPages => [...currentPages, newDrawing]);
-
-            // Create a drawing reference for this canvas
-            const drawingRef = {
-              id: fabricLib.util.uuid(),
-              drawing_id: newDrawing.id,
-              position: {
-                x: left,
-                y: top,
-                width: width,
-                height: height
-              },
-              isEditing: true
-            };
-
-            // Use untrack to prevent reactivity loops when modifying content
-            untrack(() => {
-              if (!content.drawings) {
-                content.drawings = [];
-              }
-              content.drawings.push(drawingRef);
-
-              // Set the active drawing
-              activeDrawingId = newDrawing.id;
-              activeDrawingReference = drawingRef;
-            });
-
-            // Replace the rectangle with a drawing object
-            canvas.remove(drawingAreaRect);
-            drawingAreaRect = null;
-
-            // Create a group to represent the drawing area
-            createDrawingObject(drawingRef);
-
-            // Enter drawing mode
-            enterDrawingMode(drawingRef);
-
-            // Save the canvas state
-            autoSave();
-
-          } catch (err) {
-            console.error('Error setting up drawing:', err);
-            canvas.remove(drawingAreaRect);
-            drawingAreaRect = null;
-            canvas.renderAll();
-          }
+    // Add hover effects for objects
+    canvas.on('mouse:over', (e: any) => {
+      if (e.target && !isActivelyDrawing) {
+        // Don't change cursor for drawing objects in drawing mode
+        if (isDrawingMode && e.target.data?.type === 'drawing') {
+          return;
         }
-      } finally {
-        // Always reset the drawing flag when mouse up completes
-        isActivelyDrawing = false;
+
+        // Change cursor based on the type of object
+        if (e.target.type === 'i-text' || e.target.type === 'text') {
+          canvas.defaultCursor = 'text';
+        } else {
+          canvas.defaultCursor = 'pointer';
+        }
+
+        // Add subtle hover effect if not in drawing mode
+        if (!isDrawingMode && e.target.opacity !== undefined) {
+          e.target._originalOpacity = e.target.opacity;
+          e.target.set('opacity', Math.min(1, e.target.opacity * 1.1));
+          canvas.renderAll();
+        }
       }
     });
 
-    // Object modified event - save changes
-    canvas.on('object:modified', () => {
-      // Set the flag to prevent reactivity loops during save
-      isActivelyDrawing = true;
-      autoSave();
-      // Reset the flag after a short delay
-      setTimeout(() => {
-        isActivelyDrawing = false;
-      }, 100);
+    canvas.on('mouse:out', (e: any) => {
+      if (e.target && !isActivelyDrawing) {
+        // Reset cursor
+        canvas.defaultCursor = 'default';
+
+        // Remove hover effect
+        if (!isDrawingMode && e.target._originalOpacity !== undefined) {
+          e.target.set('opacity', e.target._originalOpacity);
+          delete e.target._originalOpacity;
+          canvas.renderAll();
+        }
+      }
     });
 
-    // Object added event - save changes
-    canvas.on('object:added', (e) => {
-      console.log('Object added to canvas:', e.target);
-      // Set the flag to prevent reactivity loops during save
-      isActivelyDrawing = true;
-      autoSave();
-      // Reset the flag after a short delay
-      setTimeout(() => {
-        isActivelyDrawing = false;
-      }, 100);
-    });
+    // Set up tool-specific handlers
+    // Based on selected tool, attach appropriate event handlers
+    if (selectedTool === 'select') {
+      // Keep default selection behavior
+      enableSelectMode();
+    } else if (selectedTool === 'pan') {
+      enablePanMode();
+    } else if (selectedTool === 'rectangle') {
+      enableRectangleMode();
+    } else if (selectedTool === 'text') {
+      enableTextMode();
+    } else if (selectedTool === 'draw') {
+      enableDrawMode();
+    } else if (selectedTool === 'eraser') {
+      enableEraserMode();
+    }
 
-    // Handle keyboard shortcuts
-    document.removeEventListener('keydown', handleKeyDown);
-    document.addEventListener('keydown', handleKeyDown);
+    // Enable common handlers for all modes
+    canvas.on('mouse:up', verifySelectionState);
   }
 
-  function handleKeyDown(e) {
+  // Handle keyboard shortcuts
+  function handleKeyDown(e: KeyboardEvent) {
     // Only handle if canvas is in focus
-    if (!document.activeElement || document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA') return;
+    if (!document.activeElement ||
+        document.activeElement.tagName === 'INPUT' ||
+        document.activeElement.tagName === 'TEXTAREA') return;
 
     // Delete or Backspace to delete selected objects
     if ((e.key === 'Delete' || e.key === 'Backspace') && canvas) {
-      const activeObjects = canvas.getActiveObjects();
-      if (activeObjects.length > 0) {
-        activeObjects.forEach(obj => canvas.remove(obj));
-        canvas.discardActiveObject();
-        canvas.renderAll();
-        autoSave();
-      }
+      untrack(() => {
+        const activeObjects = canvas.getActiveObjects();
+        if (activeObjects.length > 0) {
+          activeObjects.forEach((obj: any) => canvas.remove(obj));
+          canvas.discardActiveObject();
+          canvas.renderAll();
+          scheduleAutoSave();
+        }
+      });
     }
 
-    // Ctrl+Z for undo
+    // Ctrl+Z for undo (not implemented yet)
     if (e.key === 'z' && (e.ctrlKey || e.metaKey) && canvas) {
-      // Implement undo functionality
-      // (requires canvas history implementation)
-      // For now, just console log
-      console.log('Undo requested - to be implemented');
+      log('Undo requested - to be implemented');
     }
 
-    // Ctrl+Y or Ctrl+Shift+Z for redo
+    // Ctrl+Y or Ctrl+Shift+Z for redo (not implemented yet)
     if ((e.key === 'y' && (e.ctrlKey || e.metaKey)) ||
         (e.key === 'z' && e.shiftKey && (e.ctrlKey || e.metaKey)) &&
         canvas) {
-      // Implement redo functionality
-      console.log('Redo requested - to be implemented');
+      log('Redo requested - to be implemented');
     }
 
     // Ctrl++ or Ctrl+= to zoom in
@@ -694,302 +511,539 @@
     }
   }
 
-  function startDrawingPath(pointer, fabric) {
-    console.log('Starting drawing path at', pointer);
+  // Selection handlers for toolbar
+  function setupSelectionHandlers() {
+    if (!canvas) return;
 
-    // Don't set drawing mode here, just create a path
-    const path = new fabric.Path(`M ${pointer.x} ${pointer.y}`, {
-      stroke: '#000000',
-      strokeWidth: 3,
-      fill: '',
-      strokeLineCap: 'round',
-      strokeLineJoin: 'round'
+    // Add event handlers for object selection
+    canvas.on('selection:created', handleObjectSelected);
+    canvas.on('selection:updated', handleObjectSelected);
+    canvas.on('selection:cleared', handleSelectionCleared);
+
+    // Add mouse up handler to verify selection state
+    canvas.on('mouse:up', verifySelectionState);
+
+    // When objects are modified, update toolbar properties
+    canvas.on('object:modified', () => {
+      if (selectedObject) {
+        updateToolbarProperties();
+      }
     });
 
-    canvas.add(path);
-    canvas.setActiveObject(path);
-    canvas.renderAll();
-    autoSave();
+    // Make sure objects are properly selectable
+    makeObjectsSelectable();
   }
 
-  function createRectangle(pointer, fabric) {
-    console.log('Creating rectangle at', pointer);
+  // Make all objects selectable with appropriate cursor
+  function makeObjectsSelectable() {
+    if (!canvas) return;
 
-    const rect = new fabric.Rect({
-      left: pointer.x,
-      top: pointer.y,
-      width: 100,
-      height: 100,
-      ...defaultStyles.rectangle,
-      originX: 'center',
-      originY: 'center'
+    canvas.getObjects().forEach((obj: any) => {
+      // Don't make drawing objects selectable when in drawing mode
+      if (isDrawingMode && obj.data?.type === 'drawing' && obj.data?.referenceId !== activeDrawingReference?.id) {
+        return;
+      }
+
+      obj.selectable = true;
+      obj.evented = true;
+      obj.hoverCursor = 'pointer';
     });
 
-    canvas.add(rect);
-    canvas.setActiveObject(rect);
     canvas.renderAll();
-    autoSave();
   }
 
-  function createText(pointer, fabric) {
-    const text = new fabric.IText('Double-click to edit', {
-      left: pointer.x,
-      top: pointer.y,
-      ...defaultStyles.text,
-      originX: 'center',
-      originY: 'center'
+  // Handle selection cleared event
+  function handleSelectionCleared() {
+    untrack(() => {
+      // Clear selection state
+      selectedObject = null;
+      objectType = '';
+      showToolbar = false;
+
+      logSelectionState('selection:cleared');
+
+      // When selection is cleared, switch back to select tool
+      // but only if we're not actively using another tool
+      if (!isActivelyDrawing && selectedTool !== 'select'
+          && selectedTool !== 'rectangle' && selectedTool !== 'text') {
+        setTool('select');
+      }
     });
-
-    canvas.add(text);
-    canvas.setActiveObject(text);
-    canvas.renderAll();
-    autoSave();
   }
 
-  function createTextWithDefaultMessage(pointer, fabric) {
-    console.log('Creating text at', pointer);
+  // Verify our selection state matches Fabric.js state
+  function verifySelectionState() {
+    if (!canvas) return;
 
-    const text = new fabric.IText('hello there', {
-      left: pointer.x,
-      top: pointer.y,
-      ...defaultStyles.text,
-      originX: 'center',
-      originY: 'center'
+    untrack(() => {
+      const activeObject = canvas.getActiveObject();
+
+      // If Fabric.js has no active object but we think we have one, clear our state
+      if (!activeObject && selectedObject) {
+        console.log('Selection state mismatch detected: Fabric.js has no active object but we do');
+        selectedObject = null;
+        objectType = '';
+        showToolbar = false;
+
+        // Update exported values
+        selectedObjectType = null;
+        selectedObjectId = null;
+
+        logSelectionState('selection-verification');
+      }
+      // If Fabric.js has an active object but we don't, update our state
+      else if (activeObject && !selectedObject) {
+        console.log('Selection state mismatch detected: Fabric.js has active object but we don\'t');
+        handleObjectSelected({ target: activeObject });
+      }
     });
-
-    canvas.add(text);
-    canvas.setActiveObject(text);
-    canvas.renderAll();
-    autoSave();
   }
 
+  // Helper for logging selection state
+  function logSelectionState(source: string) {
+    const hasActiveObject = canvas ? !!canvas.getActiveObject() : false;
+    console.log(`[${source}] Selection state:`, {
+      fabricHasActiveObject: hasActiveObject,
+      selectedObject: selectedObject ? { type: objectType, id: getObjectId(selectedObject) } : null,
+      exported: { type: selectedObjectType, id: selectedObjectId }
+    });
+  }
+
+  // Handle object selection
+  function handleObjectSelected(options: any) {
+    // Make sure we have valid input - either options or a target
+    const target = options?.target || options?.selected?.[0] || null;
+
+    untrack(() => {
+      // Try to get active object from canvas if not provided
+      const activeObject = target || (canvas ? canvas.getActiveObject() : null);
+
+      // Handle case where we have no active object
+      if (!activeObject) {
+        selectedObject = null;
+        objectType = '';
+        showToolbar = false;
+        logSelectionState('handle-selected-no-object');
+        return;
+      }
+
+      // Set the selected object
+      selectedObject = activeObject;
+
+      // Determine object type more carefully
+      if (activeObject.type === 'i-text' || activeObject.type === 'text') {
+        objectType = 'text';
+
+        // Don't change tool on selection - only on double-click now
+        // Keep the select tool for moving text objects
+      } else if (activeObject.type === 'rect' && !activeObject.data?.type) {
+        // Only treat as rectangle if it's not part of a drawing
+        objectType = 'rectangle';
+
+        // Keep the select tool for moving rectangle objects
+      } else if (activeObject.type === 'circle') {
+        objectType = 'circle';
+
+        // Keep the select tool for moving circle objects
+      } else if (activeObject.type === 'path') {
+        objectType = 'path';
+
+        // Keep the select tool for moving path objects
+      } else if (activeObject.type === 'group' && activeObject.data?.type === 'drawing') {
+        objectType = 'drawing';
+      } else {
+        objectType = activeObject.type;
+
+        // Keep the select tool for moving other objects
+      }
+
+      // Log object details for debugging
+      logSelectionState('handle-object-selected');
+
+      // Don't show toolbar for drawing objects, they have their own interface
+      if (objectType === 'drawing') {
+        showToolbar = false;
+        return;
+      }
+
+      // Update toolbar properties based on selected object
+      updateToolbarProperties();
+
+      // Position toolbar at the top of the canvas
+      toolbarPosition = {
+        top: 16,
+        left: canvas ? canvas.width / 2 : 400
+      };
+
+      // Force toolbar to show
+      showToolbar = true;
+
+      console.log('Object selected:', objectType, 'Toolbar showing:', showToolbar);
+    });
+  }
+
+  // Helper function to extract object ID
+  function getObjectId(obj: any): string {
+    if (!obj) return 'Unknown';
+
+    // First check for explicit IDs
+    if (obj.id) return obj.id;
+
+    // Check data property which often contains metadata
+    if (obj.data) {
+      if (obj.data.id) return obj.data.id;
+      if (obj.data.referenceId) return obj.data.referenceId;
+    }
+
+    // For text objects, use the first 10 chars of text content as identifier
+    if (obj.type === 'text' || obj.type === 'i-text') {
+      return obj.text ? `${obj.text.substring(0, 10)}...` : 'Text';
+    }
+
+    // For objects without explicit IDs, create one based on position
+    return `${obj.type}-${Math.round(obj.left || 0)}-${Math.round(obj.top || 0)}`;
+  }
+
+  // Update toolbar based on selected object
+  function updateToolbarProperties() {
+    if (!selectedObject) return;
+
+    untrack(() => {
+      if (objectType === 'text' || objectType === 'i-text') {
+        // Update text properties
+        textProps = {
+          fontFamily: selectedObject.fontFamily || 'Arial',
+          fontSize: selectedObject.fontSize || 20,
+          fontWeight: selectedObject.fontWeight || 'normal',
+          fontStyle: selectedObject.fontStyle || 'normal',
+          textAlign: selectedObject.textAlign || 'left',
+          underline: selectedObject.underline || false,
+          color: selectedObject.fill || '#333333'
+        };
+      } else {
+        // Update shape properties
+        shapeProps = {
+          fill: selectedObject.fill || '#f0f0f0',
+          stroke: selectedObject.stroke || '#333333',
+          strokeWidth: selectedObject.strokeWidth || 1,
+          opacity: selectedObject.opacity || 1
+        };
+      }
+    });
+  }
+
+  // Apply text property changes to the selected object
+  function applyTextProperties(prop: string, value: any) {
+    if (!selectedObject || !canvas) return;
+
+    // Update the object with new properties
+    untrack(() => {
+      const newProps: {[key: string]: any} = {};
+      newProps[prop] = value;
+      selectedObject.set(newProps);
+      canvas.renderAll();
+      scheduleAutoSave();
+
+      // Update our toolbar state
+      const textPropsObj: {[key: string]: any} = textProps;
+      textPropsObj[prop] = value;
+    });
+  }
+
+  // Apply shape property changes to the selected object
+  function applyShapeProperties(prop: string, value: any) {
+    if (!selectedObject || !canvas) return;
+
+    // Update the object with new properties
+    untrack(() => {
+      const newProps: {[key: string]: any} = {};
+      newProps[prop] = value;
+      selectedObject.set(newProps);
+      canvas.renderAll();
+      scheduleAutoSave();
+
+      // Update our toolbar state
+      const shapePropsObj: {[key: string]: any} = shapeProps;
+      shapePropsObj[prop] = value;
+    });
+  }
+
+  // ======= TOOLBAR FUNCTIONS =======
+
+  // Create text object
+  function createText(pointer: {x: number, y: number}) {
+    if (!canvas || !fabricLib) return;
+
+    untrack(() => {
+      const text = new fabricLib.IText('Double-click to edit', {
+        left: pointer.x,
+        top: pointer.y,
+        ...defaultStyles.text,
+        // Use default origins (top-left) to ensure object appears exactly where clicked
+        originX: 'left',
+        originY: 'top'
+      });
+
+      canvas.add(text);
+      canvas.setActiveObject(text);
+      canvas.renderAll();
+
+      // Set isActivelyDrawing to false to ensure tool update works
+      isActivelyDrawing = false;
+
+      // Change tool to select after creating text
+      // This ensures we stay in select mode for moving the text
+      // Double-click will be needed to edit
+      setTool('select');
+
+      // Manually call handleObjectSelected to update toolbar
+      handleObjectSelected({ target: text });
+
+      // For newly created text, automatically enter editing mode
+      setTimeout(() => {
+        text.enterEditing();
+
+        // Simulate a click to position cursor at the end
+        if (text.hiddenTextarea) {
+          text.selectAll();
+          text.selectionStart = 0;
+          text.selectionEnd = text.text.length;
+        }
+      }, 50);
+
+      // Save changes
+      scheduleAutoSave();
+    });
+  }
+
+  // Create rectangle
+  function createRectangle(pointer: {x: number, y: number}) {
+    if (!canvas || !fabricLib) return;
+
+    untrack(() => {
+      const rect = new fabricLib.Rect({
+        left: pointer.x,
+        top: pointer.y,
+        width: 100,
+        height: 100,
+        ...defaultStyles.rectangle,
+        // Use default origins (top-left) to ensure object appears exactly where clicked
+        originX: 'left',
+        originY: 'top'
+      });
+
+      canvas.add(rect);
+      canvas.setActiveObject(rect);
+      canvas.renderAll();
+
+      // Set isActivelyDrawing to false to ensure tool update works
+      isActivelyDrawing = false;
+
+      // Change tool to select after creating rectangle
+      // This ensures we stay in select mode for moving the rectangle
+      // Double-click will be needed to edit properties via the toolbar
+      setTool('select');
+
+      // Manually call handleObjectSelected to update toolbar
+      handleObjectSelected({ target: rect });
+
+      // Save changes
+      scheduleAutoSave();
+    });
+  }
+
+  // Create welcome text (for blank canvas)
+  function addDefaultWelcomeText() {
+    if (!canvas || !fabricLib) return;
+
+    untrack(() => {
+      const canvasWidth = canvas.width;
+      const canvasHeight = canvas.height;
+
+      const welcomeText = new fabricLib.IText('hello there', {
+        left: canvasWidth / 2,
+        top: canvasHeight / 2,
+        ...defaultStyles.welcomeText
+      });
+
+      canvas.add(welcomeText);
+      canvas.renderAll();
+
+      // Save the initial state
+      scheduleAutoSave();
+    });
+  }
+
+  // ======= TOOL MODE FUNCTIONS =======
+
+  // Update the canvas mode based on the selected tool
   function updateToolMode() {
     if (!canvas) return;
 
-    // Reset cursor
-    canvas.defaultCursor = 'default';
+    untrack(() => {
+      // Reset cursor
+      canvas.defaultCursor = 'default';
 
-    // Update the canvas mode based on the selected tool
-    switch(selectedTool) {
-      case 'select':
-        canvas.selection = true;
-        canvas.getObjects().forEach(obj => {
-          if (!isDrawingMode || (obj.data && obj.data.type === 'drawing' && obj.data.referenceId === activeDrawingReference?.id)) {
-            obj.selectable = true;
-            obj.evented = true;
-          }
-        });
-        break;
-
-      case 'pan':
-        canvas.selection = false;
-        canvas.getObjects().forEach(obj => {
-          obj.selectable = false;
-          obj.evented = false;
-        });
-        canvas.defaultCursor = 'grab';
-        break;
-
-      case 'draw':
-        canvas.selection = false;
-        if (isDrawingMode) {
-          // In drawing mode, only the active drawing should be selectable
-          canvas.getObjects().forEach(obj => {
-            if (obj.data && obj.data.type === 'drawing' && obj.data.referenceId === activeDrawingReference?.id) {
+      // Update the canvas mode based on the selected tool
+      switch(selectedTool) {
+        case 'select':
+          canvas.selection = true;
+          canvas.isDrawingMode = false;
+          canvas.getObjects().forEach((obj: any) => {
+            if (!isDrawingMode || (obj.data && obj.data.type === 'drawing' && obj.data.referenceId === activeDrawingReference?.id)) {
               obj.selectable = true;
               obj.evented = true;
-            } else {
-              obj.selectable = false;
-              obj.evented = false;
             }
           });
-          canvas.defaultCursor = 'crosshair';
-        } else {
-          // Drawing mode is used to create drawing areas
-          canvas.getObjects().forEach(obj => {
+          break;
+
+        case 'pan':
+          canvas.selection = false;
+          canvas.isDrawingMode = false;
+          canvas.getObjects().forEach((obj: any) => {
             obj.selectable = false;
             obj.evented = false;
           });
+          canvas.defaultCursor = 'grab';
+          enablePanMode();
+          break;
+
+        case 'draw':
+          canvas.selection = false;
+          canvas.isDrawingMode = false;
+          if (isDrawingMode) {
+            // In drawing mode, only the active drawing should be selectable
+            canvas.getObjects().forEach((obj: any) => {
+              if (obj.data && obj.data.type === 'drawing' && obj.data.referenceId === activeDrawingReference?.id) {
+                obj.selectable = true;
+                obj.evented = true;
+              } else {
+                obj.selectable = false;
+                obj.evented = false;
+              }
+            });
+            canvas.defaultCursor = 'crosshair';
+          } else {
+            // Drawing mode is used to create drawing areas
+            canvas.getObjects().forEach((obj: any) => {
+              obj.selectable = false;
+              obj.evented = false;
+            });
+            canvas.defaultCursor = 'crosshair';
+          }
+          break;
+
+        case 'text':
+          canvas.isDrawingMode = false;
+          canvas.selection = false;
+          canvas.getObjects().forEach((obj: any) => {
+            obj.selectable = true;
+            obj.evented = true;
+          });
+          canvas.defaultCursor = 'text';
+          break;
+
+        case 'rectangle':
+          canvas.isDrawingMode = false;
+          canvas.selection = false;
+          canvas.getObjects().forEach((obj: any) => {
+            obj.selectable = true;
+            obj.evented = true;
+          });
           canvas.defaultCursor = 'crosshair';
-        }
-        break;
+          break;
 
-      case 'text':
-        canvas.isDrawingMode = false;
-        canvas.selection = false;
-        canvas.defaultCursor = 'text';
-        canvas.hoverCursor = 'text';
-        break;
-      case 'polygon':
-        canvas.isDrawingMode = false;
-        canvas.selection = false;
-        canvas.defaultCursor = 'crosshair';
-        canvas.hoverCursor = 'crosshair';
-        break;
-      case 'eraser':
-        canvas.isDrawingMode = false;
-        canvas.selection = false;
-        canvas.defaultCursor = 'not-allowed';
-        canvas.hoverCursor = 'not-allowed';
-        break;
-      default:
-        canvas.isDrawingMode = false;
-        canvas.selection = true;
-        canvas.defaultCursor = 'default';
-        canvas.hoverCursor = 'move';
-    }
+        case 'eraser':
+          canvas.isDrawingMode = false;
+          canvas.selection = false;
+          canvas.getObjects().forEach((obj: any) => {
+            obj.selectable = true;
+            obj.evented = true;
+          });
+          canvas.defaultCursor = 'not-allowed';
+          break;
+      }
 
-    canvas.renderAll();
+      canvas.renderAll();
+    });
   }
 
+  // Enable panning mode
   function enablePanMode() {
     if (!canvas) return;
 
-    // Store the initial position
-    let isDragging = false;
-    let lastPosX;
-    let lastPosY;
+    console.log('Enabling pan mode');
 
-    canvas.off('mouse:down');
-    canvas.off('mouse:move');
-    canvas.off('mouse:up');
+    untrack(() => {
+      // Store the initial position
+      let isDragging = false;
+      let lastPosX: number;
+      let lastPosY: number;
 
-    canvas.on('mouse:down', function(opt) {
-      if (selectedTool !== 'pan') return;
-      isActivelyDrawing = true; // Set flag to prevent reactivity loops
-      const evt = opt.e;
-      isDragging = true;
-      lastPosX = evt.clientX;
-      lastPosY = evt.clientY;
-      canvas.defaultCursor = 'grabbing';
-    });
+      // Remove existing handlers
+      canvas.off('mouse:down');
+      canvas.off('mouse:move');
+      canvas.off('mouse:up');
 
-    canvas.on('mouse:move', function(opt) {
-      if (selectedTool !== 'pan' || !isDragging) return;
-      const evt = opt.e;
+      // Add pan-specific handlers
+      canvas.on('mouse:down', function(opt: any) {
+        // Only handle pan events when the selected tool is 'pan'
+        if (selectedTool !== 'pan') {
+          console.log('Pan handler ignoring mouse down - tool is', selectedTool);
+          return;
+        }
 
-      // Use untrack to prevent reactivity when modifying viewport
-      untrack(() => {
-        const vpt = canvas.viewportTransform;
-        vpt[4] += evt.clientX - lastPosX;
-        vpt[5] += evt.clientY - lastPosY;
+        console.log('Pan mode: mouse down');
+        // Set flag to prevent reactivity loops
+        isActivelyDrawing = true;
+        const evt = opt.e;
+
+        isDragging = true;
+        lastPosX = evt.clientX;
+        lastPosY = evt.clientY;
+        canvas.defaultCursor = 'grabbing';
       });
 
-      canvas.requestRenderAll();
-      lastPosX = evt.clientX;
-      lastPosY = evt.clientY;
+      canvas.on('mouse:move', function(opt: any) {
+        if (selectedTool !== 'pan' || !isDragging) return;
 
-      // Save viewport position
-      saveViewport();
-    });
+        const evt = opt.e;
 
-    canvas.on('mouse:up', function() {
-      isDragging = false;
-      if (selectedTool === 'pan') {
+        untrack(() => {
+          const vpt = canvas.viewportTransform;
+          vpt[4] += evt.clientX - lastPosX;
+          vpt[5] += evt.clientY - lastPosY;
+
+          lastPosX = evt.clientX;
+          lastPosY = evt.clientY;
+        });
+
+        canvas.requestRenderAll();
+      });
+
+      canvas.on('mouse:up', function() {
+        if (selectedTool !== 'pan') return;
+
+        console.log('Pan mode: mouse up');
+        isDragging = false;
         canvas.defaultCursor = 'grab';
-      }
-      // Reset the flag after a short delay
-      setTimeout(() => {
-        isActivelyDrawing = false;
-      }, 100);
+        canvas.renderAll();
+
+        // Save viewport state with a flag to prevent redundant updates
+        skipNextViewportSave = true;
+        saveViewport();
+
+        // Reset flag after panning is complete
+        setTimeout(() => {
+          isActivelyDrawing = false;
+        }, 100);
+      });
     });
   }
 
-  function handleWheel(e) {
-    // Only handle wheel events with Ctrl/Cmd key for zooming
-    if (e.ctrlKey || e.metaKey) {
-      e.preventDefault();
-      const delta = e.deltaY;
+  // ======= ZOOM FUNCTIONS =======
 
-      // Get pointer position before zoom
-      const pointer = canvas.getPointer(e);
-
-      // Calculate new zoom level
-      let newZoom = zoom;
-      if (delta > 0) {
-        newZoom = Math.max(minZoom, zoom - zoomStep);
-      } else {
-        newZoom = Math.min(maxZoom, zoom + zoomStep);
-      }
-
-      // Apply zoom centered at pointer position
-      zoomToPoint(newZoom, pointer);
-    } else if (selectedTool === 'pan' || e.shiftKey) {
-      // Pan with wheel or shift+wheel
-      e.preventDefault();
-      const vpt = canvas.viewportTransform;
-
-      if (e.shiftKey) {
-        // Horizontal scroll with shift key
-        vpt[4] -= e.deltaY;
-      } else {
-        // Vertical scroll without shift
-        vpt[5] -= e.deltaY;
-      }
-
-      canvas.requestRenderAll();
-      saveViewport();
-    }
-  }
-
-  function zoomToPoint(newZoom, point) {
-    if (!canvas) return;
-
-    // Temporarily set flag to prevent reactivity loops
-    isActivelyDrawing = true;
-
-    // Store old zoom and calculate scale factor
-    const oldZoom = zoom;
-    const scaleFactor = newZoom / oldZoom;
-
-    // Get viewport transform
-    const vpt = canvas.viewportTransform;
-
-    // Calculate new viewport transform
-    vpt[0] = newZoom;
-    vpt[3] = newZoom;
-
-    // Adjust viewportTransform to zoom around point
-    const center = {
-      x: point.x / oldZoom,
-      y: point.y / oldZoom
-    };
-
-    vpt[4] = vpt[4] + center.x * (1 - scaleFactor) * oldZoom;
-    vpt[5] = vpt[5] + center.y * (1 - scaleFactor) * oldZoom;
-
-    // Update zoom value and render
-    zoom = newZoom;
-    canvas.setZoom(newZoom);
-    canvas.requestRenderAll();
-
-    // Save viewport state with a flag to prevent redundant updates
-    skipNextViewportSave = true;
-    saveViewport();
-
-    // Reset flag after zooming is complete (with a small delay to ensure other operations complete)
-    setTimeout(() => {
-      isActivelyDrawing = false;
-    }, 100);
-  }
-
-  function applyZoom(newZoom) {
-    if (!canvas) return;
-
-    // Prevent redundant updates that could cause loops
-    if (zoom === newZoom) return;
-
-    skipNextViewportSave = true;
-    zoom = newZoom;
-    canvas.setZoom(newZoom);
-    canvas.requestRenderAll();
-
-    // Only save viewport if we've completed initialization
-    if (initialized && contentLoaded) {
-      saveViewport();
-    }
-  }
-
+  // Zoom in centered on canvas
   function zoomIn() {
     const newZoom = Math.min(maxZoom, zoom + zoomStep);
     const center = {
@@ -999,6 +1053,7 @@
     zoomToPoint(newZoom, center);
   }
 
+  // Zoom out centered on canvas
   function zoomOut() {
     const newZoom = Math.max(minZoom, zoom - zoomStep);
     const center = {
@@ -1008,236 +1063,390 @@
     zoomToPoint(newZoom, center);
   }
 
+  // Reset zoom to original
   function resetZoom() {
     const center = {
       x: canvas.width / 2,
       y: canvas.height / 2
     };
-    zoomToPoint(1, center);
+    zoom = 1;
+    canvas.viewportTransform[4] = 0;
+    canvas.viewportTransform[5] = 0;
+    canvas.setZoom(1);
+    canvas.renderAll();
+
+    // Save viewport state - explicitly set skip flag before calling
+    skipNextViewportSave = true;
+    saveViewport();
+
+    // Reset flag after zooming is complete (with a small delay)
+    setTimeout(() => {
+      isActivelyDrawing = false;
+      skipNextViewportSave = false; // Ensure flag is reset here too
+    }, 100);
   }
 
-  function saveViewport() {
-    // Multiple safeguards against initialization loops
-    if (!initialized || !contentLoaded || !canvas || !localContent) return;
+  // Zoom to a specific point
+  function zoomToPoint(newZoom: number, point: {x: number, y: number}) {
+    if (!canvas) return;
 
-    // Skip this save if flag is set (prevents recursive updates)
-    if (skipNextViewportSave) {
-      skipNextViewportSave = false;
-      return;
-    }
+    // Temporarily set flag to prevent reactivity loops
+    isActivelyDrawing = true;
 
-    // Use untrack for all operations to break reactivity chains
     untrack(() => {
-      // Create a new viewport object (don't modify existing one)
-      const newViewport = {
-        zoom,
-        panX: canvas.viewportTransform?.[4] || 0,
-        panY: canvas.viewportTransform?.[5] || 0
+      // Store old zoom and calculate scale factor
+      const oldZoom = zoom;
+
+      // Get viewport transform
+      const vpt = canvas.viewportTransform;
+
+      // Calculate new viewport transform and scale factor
+      const clampedNewZoom = Math.max(minZoom, Math.min(maxZoom, newZoom));
+      const scaleFactor = clampedNewZoom / oldZoom;
+
+      vpt[0] = clampedNewZoom;
+      vpt[3] = clampedNewZoom;
+
+      // Adjust viewportTransform to zoom around point
+      const center = {
+        x: (point.x - vpt[4]) / oldZoom,
+        y: (point.y - vpt[5]) / oldZoom
       };
 
-      // Check if values have actually changed
-      const currentViewport = localContent?.viewport || {};
+      vpt[4] -= center.x * (scaleFactor - 1) * oldZoom;
+      vpt[5] -= center.y * (scaleFactor - 1) * oldZoom;
 
-      // Use a safe comparison with proper type guards
-      if (
-        currentViewport.zoom === newViewport.zoom &&
-        currentViewport.panX === newViewport.panX &&
-        currentViewport.panY === newViewport.panY
-      ) {
-        return; // No changes, don't trigger updates
-      }
+      // Update zoom value and render
+      zoom = clampedNewZoom;
 
-      // Update our local content copy instead of the prop directly
-      localContent = {
-        ...localContent,
-        viewport: newViewport
-      };
+      canvas.setZoom(clampedNewZoom);
+      canvas.requestRenderAll();
 
-      // Debounce the save to avoid too many calls
-      if (saveTimeout) {
-        clearTimeout(saveTimeout);
-      }
-
-      saveTimeout = setTimeout(() => {
-        autoSave();
-      }, 1000);
+      // Save viewport state - explicitly set skip flag before calling
+      skipNextViewportSave = true;
+      saveViewport();
     });
+
+    // Reset flag after zooming is complete (with a small delay)
+    setTimeout(() => {
+      isActivelyDrawing = false;
+      skipNextViewportSave = false; // Ensure flag is reset here too
+    }, 100);
   }
 
+  // ======= RESIZE HANDLING =======
+
+  // Handle window resize
   function handleResize() {
     // Add null checks to prevent errors
     if (!canvas || !canvasEl || !canvasContainer) return;
 
     try {
-      // Adjust canvas dimensions to fit parent
-      const parentWidth = canvasContainer.clientWidth;
-      const parentHeight = canvasContainer.clientHeight;
+      untrack(() => {
+        // Adjust canvas dimensions to fit parent
+        const parentWidth = canvasContainer.clientWidth;
+        const parentHeight = canvasContainer.clientHeight;
 
-      canvas.setDimensions({
-        width: parentWidth,
-        height: parentHeight
+        canvas.setDimensions({
+          width: parentWidth,
+          height: parentHeight
+        });
+
+        canvas.renderAll();
       });
-
-      canvas.renderAll();
     } catch (error) {
       console.error('Error resizing canvas:', error);
     }
   }
 
-  // Modified autoSave to be more careful with content updates and break reactivity loops
-  function autoSave() {
+  // ======= VIEWPORT SAVING =======
+
+  // Save viewport state (zoom/pan)
+  function saveViewport() {
+    // Multiple safeguards against initialization loops
+    if (!initialized || !contentLoaded || !canvas || !localContent) return;
+
+    // Skip this save if flag is set
+    if (skipNextViewportSave) {
+      // DO NOT reset the flag here, let the calling function manage it
+      return;
+    }
+
+    // Use untrack for all operations to break reactivity chains
+    untrack(() => {
+      const currentVpt = canvas.viewportTransform;
+      const currentZoom = canvas.getZoom(); // Read directly from canvas
+
+      // Create a new viewport object (don't modify existing one)
+      const newViewport = {
+        zoom: currentZoom,
+        panX: currentVpt?.[4] || 0,
+        panY: currentVpt?.[5] || 0
+      };
+
+      // Check if values have actually changed against the last saved state
+      const lastSavedViewport = localContent?.viewport || { zoom: 1, panX: 0, panY: 0 };
+
+      // Use a small tolerance for floating point comparisons
+      const zoomChanged = Math.abs(lastSavedViewport.zoom - newViewport.zoom) > 0.001;
+      const panXChanged = Math.abs(lastSavedViewport.panX - newViewport.panX) > 0.1;
+      const panYChanged = Math.abs(lastSavedViewport.panY - newViewport.panY) > 0.1;
+
+      if (!zoomChanged && !panXChanged && !panYChanged) {
+        return; // No significant changes, don't trigger updates
+      }
+
+      log('Viewport changed, scheduling save:', newViewport);
+
+      // Update our local content copy
+      localContent = {
+        ...localContent,
+        viewport: newViewport
+      };
+
+      // Schedule a save operation
+      scheduleAutoSave(newViewport);
+    });
+  }
+
+  // Schedule an auto-save operation
+  function scheduleAutoSave(viewportToSave?: { zoom: number; panX: number; panY: number }) {
     // Don't try to save until initialization is complete
     if (!initialized || !contentLoaded || !canvas) return;
 
+    // Clear any pending save
     if (saveTimeout) {
       clearTimeout(saveTimeout);
+      saveTimeout = null;
     }
 
-    isSaving = true; // Set flag to prevent reactivity loops
+    // Set flags
+    isSaving = true;
     onSaving(true);
     onSaveStatus('saving');
 
-    saveTimeout = setTimeout(async () => {
-      try {
-        // Use untrack to break the reactivity chain
-        const canvasJson = untrack(() => canvas.toJSON(['data']));
-
-        // Ensure viewport data is saved
-        const viewportData = untrack(() => ({
-          zoom,
-          panX: canvas.viewportTransform[4],
-          panY: canvas.viewportTransform[5]
-        }));
-
-        canvasJson.viewport = viewportData;
-
-        // Create a completely new object for the update
-        const updatedContent = safeClone(canvasJson);
-
-        // Update database first before triggering reactivity
-        const { error } = await updatePageContent(pageId, updatedContent);
-
-        if (error) {
-          console.error('Error saving canvas:', error);
-          onSaveStatus('error');
-        } else {
-          // Update local content copy without triggering reactivity loops
-          untrack(() => {
-            localContent = updatedContent;
-
-            // Update the prop reference only when necessary and after successful save
-            // This prevents unnecessary reactivity during normal operations
-            if (JSON.stringify(content) !== JSON.stringify(updatedContent)) {
-              content = updatedContent;
-            }
-          });
-
-          onSaveStatus('saved');
-        }
-      } catch (err) {
-        console.error('Unexpected error saving canvas:', err);
-        onSaveStatus('error');
-      } finally {
-        onSaving(false);
-        isSaving = false; // Reset flag after saving is complete
-      }
+    // Schedule the save
+    saveTimeout = setTimeout(() => {
+      performSave(viewportToSave);
     }, 1000);
   }
 
-  // Function to create a drawing object on the canvas
-  function createDrawingObject(drawingRef) {
-    if (!canvas || !fabricLib) return;
-
-    // Create a group for the drawing
-    const group = new fabricLib.Group([], {
-      left: drawingRef.position.x,
-      top: drawingRef.position.y,
-      width: drawingRef.position.width,
-      height: drawingRef.position.height,
-      originX: 'left',
-      originY: 'top',
-      selectable: true,
-      hasControls: true,
-      hasBorders: true,
-      data: { type: 'drawing', referenceId: drawingRef.id }
-    });
-
-    // Add a background rect
-    const rect = new fabricLib.Rect({
-      width: drawingRef.position.width,
-      height: drawingRef.position.height,
-      fill: 'rgba(255, 255, 255, 0.9)',
-      stroke: '#8888FF',
-      strokeWidth: 1,
-      originX: 'left',
-      originY: 'top'
-    });
-
-    // Add an edit button if not already in edit mode
-    const editButton = new fabricLib.Text('Edit Drawing', {
-      left: drawingRef.position.width / 2,
-      top: drawingRef.position.height / 2,
-      fontSize: 16,
-      fill: '#4444FF',
-      originX: 'center',
-      originY: 'center',
-      selectable: false,
-      fontFamily: 'Arial',
-      data: { isEditButton: true }
-    });
-
-    group.addWithUpdate(rect);
-
-    if (!drawingRef.isEditing) {
-      group.addWithUpdate(editButton);
-    }
-
-    // Add custom properties
-    group.customDrawingId = drawingRef.drawing_id;
-    group.referenceId = drawingRef.id;
-
-    // Add to canvas
-    canvas.add(group);
-    canvas.setActiveObject(group);
-    canvas.renderAll();
-
-    // Add a click handler specifically for this drawing object
-    group.on('mousedown', function(e) {
-      // Check if we're clicking on the edit button
-      const target = e.target;
-      if (target && target.data && target.data.isEditButton) {
-        // Find the drawing reference
-        const ref = content.drawings.find(d => d.id === this.referenceId);
-        if (ref) {
-          // Enter drawing mode
-          ref.isEditing = true;
-          activeDrawingId = ref.drawing_id;
-          activeDrawingReference = ref;
-          enterDrawingMode(ref);
-          autoSave();
-        }
+  // Perform the actual save operation
+  async function performSave(viewportToSave: { zoom: number; panX: number; panY: number } | undefined) {
+    try {
+      // Ensure we're not in an inconsistent state
+      if (!canvas) {
+        isSaving = false;
+        onSaving(false);
+        onSaveStatus('error');
+        return;
       }
-    });
 
-    // Animate the appearance of the drawing object
-    gsap.from(group, {
-      opacity: 0,
-      scale: 0.9,
-      duration: 0.3,
-      ease: "power2.out"
+      // Get the current selected object before saving (to restore selection after save)
+      const activeObject = canvas.getActiveObject();
+      let activeObjectId = null;
+
+      if (activeObject) {
+        // Store a unique identifier for the active object if possible
+        activeObjectId = activeObject.data?.id || (activeObject.id || null);
+      }
+
+      // Use untrack to break the reactivity chain
+      const canvasJson = untrack(() => canvas.toJSON(['data']));
+
+      // Use the provided viewport data if available, otherwise get current
+      const viewportData = viewportToSave || untrack(() => ({
+        zoom: canvas.getZoom(),
+        panX: canvas.viewportTransform?.[4] || 0,
+        panY: canvas.viewportTransform?.[5] || 0
+      }));
+
+      canvasJson.viewport = viewportData;
+
+      // Create a completely new object for the update
+      const updatedContent = safeClone(canvasJson);
+
+      // Update database
+      const { data, error } = await updatePageContent(pageId, updatedContent);
+
+      if (error) {
+        console.error('Error saving canvas:', error);
+        onSaveStatus('error');
+      } else {
+        // IMPORTANT: Update local content copy without triggering reactivity loops
+        // This prevents the canvas from being reset after save
+        untrack(() => {
+          localContent = updatedContent;
+
+          // Update the content prop directly to keep it in sync (without reloading canvas)
+          // This ensures parent component also has the latest data
+          content = data.content || updatedContent;
+        });
+
+        // If we had a selected object, try to restore the selection
+        if (activeObjectId && canvas) {
+          untrack(() => {
+            if (activeObject && canvas.contains(activeObject)) {
+              // If the original object is still there, re-select it
+              canvas.setActiveObject(activeObject);
+              canvas.renderAll();
+
+              // Make sure toolbar shows up for this object
+              handleObjectSelected({ target: activeObject });
+            }
+          });
+        }
+
+        onSaveStatus('saved');
+        log('Canvas saved successfully.');
+      }
+    } catch (err) {
+      console.error('Unexpected error saving canvas:', err);
+      onSaveStatus('error');
+    } finally {
+      // Important: Reset these flags AFTER saving is complete
+      isSaving = false;
+      onSaving(false);
+      saveTimeout = null;
+    }
+  }
+
+  // ======= DRAWING OBJECT MANAGEMENT =======
+
+  // Create a drawing object on the canvas
+  function createDrawingObject(drawingRef: any) {
+    if (!canvas || !fabricLib) return null;
+
+    // Use untrack to prevent reactivity
+    let group: any;
+
+    untrack(() => {
+      // Create a group for the drawing
+      group = new fabricLib.Group([], {
+        left: drawingRef.position.x,
+        top: drawingRef.position.y,
+        width: drawingRef.position.width,
+        height: drawingRef.position.height,
+        originX: 'left',
+        originY: 'top',
+        selectable: true,
+        hasControls: true,
+        hasBorders: true,
+        data: { type: 'drawing', referenceId: drawingRef.id }
+      });
+
+      // Add a background rect
+      const rect = new fabricLib.Rect({
+        width: drawingRef.position.width,
+        height: drawingRef.position.height,
+        fill: 'rgba(255, 255, 255, 0.9)',
+        stroke: '#8888FF',
+        strokeWidth: 1,
+        originX: 'left',
+        originY: 'top'
+      });
+
+      // Add an edit button if not already in edit mode
+      const editButton = new fabricLib.Text('Edit Drawing', {
+        left: drawingRef.position.width / 2,
+        top: drawingRef.position.height / 2,
+        fontSize: 16,
+        fill: '#4444FF',
+        originX: 'center',
+        originY: 'center',
+        selectable: false,
+        fontFamily: 'Arial',
+        data: { isEditButton: true }
+      });
+
+      group.addWithUpdate(rect);
+
+      if (!drawingRef.isEditing) {
+        group.addWithUpdate(editButton);
+      }
+
+      // Add custom properties
+      group.customDrawingId = drawingRef.drawing_id;
+      group.referenceId = drawingRef.id;
+
+      // Add to canvas
+      canvas.add(group);
+      canvas.setActiveObject(group);
+      canvas.renderAll();
+
+      // Add a click handler specifically for this drawing object
+      group.on('mousedown', function(this: any, e: any) {
+        // Check if we're clicking on the edit button
+        const target = e.target;
+        if (target && target.data && target.data.isEditButton) {
+          // Find the drawing reference
+          const ref = content.drawings.find(d => d.id === this.referenceId);
+          if (ref) {
+            // Enter drawing mode
+            untrack(() => {
+              ref.isEditing = true;
+              activeDrawingId = ref.drawing_id;
+              activeDrawingReference = ref;
+              enterDrawingMode(ref);
+              scheduleAutoSave();
+            });
+          }
+        }
+      });
+
+      // Animate the appearance of the drawing object
+      gsap.from(group, {
+        opacity: 0,
+        scale: 0.9,
+        duration: 0.3,
+        ease: "power2.out"
+      });
     });
 
     return group;
   }
 
+  // Setup a drawing object during canvas loading
+  function setupDrawingObject(obj: any) {
+    if (!obj || !obj.data || !obj.data.referenceId) return;
+
+    untrack(() => {
+      // Find the drawing reference
+      const drawingRef = content.drawings?.find(d => d.id === obj.data.referenceId);
+      if (!drawingRef) return;
+
+      // Add custom properties
+      obj.customDrawingId = drawingRef.drawing_id;
+      obj.referenceId = drawingRef.id;
+
+      // Add a click handler specifically for this drawing object
+      obj.on('mousedown', function(this: any, e: any) {
+        // Check if we're clicking on the edit button
+        const target = e.target;
+        if (target && target.data && target.data.isEditButton) {
+          // Find the drawing reference
+          const ref = content.drawings.find(d => d.id === this.referenceId);
+          if (ref) {
+            // Enter drawing mode
+            ref.isEditing = true;
+            activeDrawingId = ref.drawing_id;
+            activeDrawingReference = ref;
+            enterDrawingMode(ref);
+            scheduleAutoSave();
+          }
+        }
+      });
+    });
+  }
+
   // Function to enter drawing mode
-  async function enterDrawingMode(drawingRef) {
+  async function enterDrawingMode(drawingRef: any) {
     if (!canvas) return;
 
     isDrawingMode = true;
 
     // Find the drawing object on canvas
-    const drawingObj = canvas.getObjects().find(obj =>
+    const drawingObj = canvas.getObjects().find((obj: any) =>
       obj.data && obj.data.type === 'drawing' && obj.data.referenceId === drawingRef.id
     );
 
@@ -1246,37 +1455,40 @@
       return;
     }
 
-    // Clear any edit button
-    drawingObj._objects = drawingObj._objects.filter(obj =>
-      !(obj.data && obj.data.isEditButton)
-    );
+    // Use untrack to prevent reactivity loops when modifying objects
+    untrack(() => {
+      // Clear any edit button
+      drawingObj._objects = drawingObj._objects.filter((obj: any) =>
+        !(obj.data && obj.data.isEditButton)
+      );
 
-    // Add an exit button
-    const exitButton = new fabricLib.Text('Exit Drawing', {
-      left: 60,
-      top: 20,
-      fontSize: 14,
-      fill: '#FF4444',
-      originX: 'left',
-      originY: 'top',
-      selectable: false,
-      fontFamily: 'Arial',
-      data: { isExitButton: true }
+      // Add an exit button
+      const exitButton = new fabricLib.Text('Exit Drawing', {
+        left: 60,
+        top: 20,
+        fontSize: 14,
+        fill: '#FF4444',
+        originX: 'left',
+        originY: 'top',
+        selectable: false,
+        fontFamily: 'Arial',
+        data: { isExitButton: true }
+      });
+
+      drawingObj.addWithUpdate(exitButton);
+
+      // Disable selection on other objects
+      canvas.discardActiveObject();
+      canvas.getObjects().forEach((obj: any) => {
+        if (obj !== drawingObj) {
+          obj.selectable = false;
+          obj.evented = false;
+        }
+      });
+
+      canvas.setActiveObject(drawingObj);
+      canvas.renderAll();
     });
-
-    drawingObj.addWithUpdate(exitButton);
-
-    // Disable selection on other objects
-    canvas.discardActiveObject();
-    canvas.getObjects().forEach(obj => {
-      if (obj !== drawingObj) {
-        obj.selectable = false;
-        obj.evented = false;
-      }
-    });
-
-    canvas.setActiveObject(drawingObj);
-    canvas.renderAll();
 
     // Load the drawing content
     try {
@@ -1295,7 +1507,9 @@
       }
 
       // Store the drawing data so we can use it for rendering
-      drawingRef.drawingData = data.content;
+      untrack(() => {
+        drawingRef.drawingData = data.content;
+      });
 
       // Render existing strokes
       renderDrawingStrokes(drawingObj, data.content);
@@ -1315,418 +1529,155 @@
     isDrawingMode = false;
 
     if (activeDrawingReference) {
-      activeDrawingReference.isEditing = false;
+      untrack(() => {
+        activeDrawingReference.isEditing = false;
+      });
     }
 
     activeDrawingId = null;
 
     // Re-enable selection on all objects
-    canvas.getObjects().forEach(obj => {
-      obj.selectable = true;
-      obj.evented = true;
-    });
+    untrack(() => {
+      canvas.getObjects().forEach((obj: any) => {
+        obj.selectable = true;
+        obj.evented = true;
+      });
 
-    // Find all drawing objects and remove exit buttons, add edit buttons
-    canvas.getObjects().forEach(obj => {
-      if (obj.data && obj.data.type === 'drawing') {
-        // Remove exit button
-        obj._objects = obj._objects.filter(child =>
-          !(child.data && child.data.isExitButton)
-        );
+      // Find all drawing objects and remove exit buttons, add edit buttons
+      canvas.getObjects().forEach((obj: any) => {
+        if (obj.data && obj.data.type === 'drawing') {
+          // Remove exit button
+          obj._objects = obj._objects.filter((child: any) =>
+            !(child.data && child.data.isExitButton)
+          );
 
-        // Add edit button if it doesn't have one
-        const hasEditButton = obj._objects.some(child =>
-          child.data && child.data.isEditButton
-        );
+          // Add edit button if it doesn't have one
+          const hasEditButton = obj._objects.some((child: any) =>
+            child.data && child.data.isEditButton
+          );
 
-        if (!hasEditButton) {
-          const editButton = new fabricLib.Text('Edit Drawing', {
-            left: obj.width / 2,
-            top: obj.height / 2,
-            fontSize: 16,
-            fill: '#4444FF',
-            originX: 'center',
-            originY: 'center',
-            selectable: false,
-            fontFamily: 'Arial',
-            data: { isEditButton: true }
-          });
+          if (!hasEditButton) {
+            const editButton = new fabricLib.Text('Edit Drawing', {
+              left: obj.width / 2,
+              top: obj.height / 2,
+              fontSize: 16,
+              fill: '#4444FF',
+              originX: 'center',
+              originY: 'center',
+              selectable: false,
+              fontFamily: 'Arial',
+              data: { isEditButton: true }
+            });
 
-          obj.addWithUpdate(editButton);
+            obj.addWithUpdate(editButton);
+          }
         }
-      }
-    });
+      });
 
-    canvas.renderAll();
+      canvas.renderAll();
+    });
 
     // Save the canvas state
-    autoSave();
-  }
-
-  // Function to setup drawing event handlers
-  function setupDrawingEventHandlers(drawingObj, drawingRef) {
-    if (!canvas) return;
-
-    let isDrawing = false;
-    let currentStroke = null;
-    let isPanning = false;
-    let lastPanPoint = null;
-
-    // Get the rect boundaries for the drawing
-    const boundingRect = drawingObj._objects.find(obj => obj.type === 'rect');
-
-    // Handle mouse down
-    drawingObj.on('mousedown', function(e) {
-      if (!isDrawingMode) return;
-
-      // Check if clicking on exit button
-      const target = e.target;
-      if (target && target.data && target.data.isExitButton) {
-        exitDrawingMode();
-        return;
-      }
-
-      // Handle different tool actions
-      switch (selectedTool) {
-        case 'draw':
-          startDrawing(e);
-          break;
-        case 'eraser':
-          startErasing(e);
-          break;
-        case 'pan':
-          startPanning(e);
-          break;
-        default:
-          // Other tools not implemented yet
-          break;
-      }
-    });
-
-    // Handle mouse move
-    drawingObj.on('mousemove', function(e) {
-      if (!isDrawingMode) return;
-
-      // Handle different tool actions
-      if (isPanning && lastPanPoint) {
-        continuePanning(e);
-      } else if (isDrawing && currentStroke) {
-        continueDrawing(e);
-      }
-    });
-
-    // Handle mouse up
-    drawingObj.on('mouseup', function() {
-      if (!isDrawingMode) return;
-
-      if (isPanning) {
-        endPanning();
-      } else if (isDrawing) {
-        finishDrawing();
-      }
-    });
-
-    // Function to start drawing
-    function startDrawing(e) {
-      isDrawing = true;
-
-      // Calculate the point relative to the drawing
-      const pointer = canvas.getPointer(e.e);
-      const x = pointer.x - drawingObj.left;
-      const y = pointer.y - drawingObj.top;
-
-      // Check if within bounds
-      if (x < 0 || y < 0 || x > boundingRect.width || y > boundingRect.height) {
-        isDrawing = false;
-        return;
-      }
-
-      // Create new stroke
-      currentStroke = {
-        points: [{ x, y, pressure: 0.5 }],
-        color: '#000000', // Default color, can be customized
-        size: 3, // Default size, can be customized
-        opacity: 1,
-        tool: 'pen'
-      };
-    }
-
-    // Function to continue drawing
-    function continueDrawing(e) {
-      if (!isDrawing || !currentStroke) return;
-
-      isActivelyDrawing = true; // Set flag to prevent reactivity loops during drawing
-
-      // Calculate the point relative to the drawing
-      const pointer = canvas.getPointer(e.e);
-      const x = pointer.x - drawingObj.left;
-      const y = pointer.y - drawingObj.top;
-
-      // Add point to current stroke
-      currentStroke.points.push({ x, y, pressure: 0.5 });
-
-      // Render current stroke
-      renderCurrentStroke(drawingObj, currentStroke, drawingRef);
-    }
-
-    // Function to finish drawing
-    function finishDrawing() {
-      if (!isDrawing || !currentStroke) return;
-
-      isDrawing = false;
-
-      // Add the current stroke to drawing data if it's not an eraser stroke
-      if (currentStroke.tool !== 'eraser') {
-        if (!drawingRef.drawingData) {
-          drawingRef.drawingData = { strokes: [] };
-        }
-
-        if (!drawingRef.drawingData.strokes) {
-          drawingRef.drawingData.strokes = [];
-        }
-
-        if (currentStroke.points.length > 1) {
-          drawingRef.drawingData.strokes.push(currentStroke);
-
-          // Save the drawing
-          saveDrawing(drawingRef);
-        }
-      } else {
-        // Process eraser strokes
-        processEraserStroke(drawingObj, currentStroke, drawingRef);
-      }
-
-      currentStroke = null;
-      isActivelyDrawing = false; // Reset flag after drawing is complete
-    }
-
-    // Function to start erasing
-    function startErasing(e) {
-      isDrawing = true;
-
-      // Calculate the point relative to the drawing
-      const pointer = canvas.getPointer(e.e);
-      const x = pointer.x - drawingObj.left;
-      const y = pointer.y - drawingObj.top;
-
-      // Check if within bounds
-      if (x < 0 || y < 0 || x > boundingRect.width || y > boundingRect.height) {
-        isDrawing = false;
-        return;
-      }
-
-      // Create new eraser stroke
-      currentStroke = {
-        points: [{ x, y, pressure: 0.5 }],
-        color: 'rgba(255, 0, 0, 0.2)', // Red for eraser preview
-        size: 20, // Larger size for eraser
-        opacity: 0.5,
-        tool: 'eraser'
-      };
-    }
-
-    // Function to start panning
-    function startPanning(e) {
-      isPanning = true;
-
-      // Calculate the point relative to the drawing
-      const pointer = canvas.getPointer(e.e);
-      lastPanPoint = {
-        x: pointer.x,
-        y: pointer.y
-      };
-
-      // Change cursor
-      canvas.defaultCursor = 'grabbing';
-      canvas.renderAll();
-    }
-
-    // Function to continue panning
-    function continuePanning(e) {
-      if (!isPanning || !lastPanPoint) return;
-
-      // Calculate the point relative to the drawing
-      const pointer = canvas.getPointer(e.e);
-      const currentPoint = {
-        x: pointer.x,
-        y: pointer.y
-      };
-
-      // Calculate the difference
-      const dx = currentPoint.x - lastPanPoint.x;
-      const dy = currentPoint.y - lastPanPoint.y;
-
-      // Update the drawing object position
-      drawingObj.left += dx;
-      drawingObj.top += dy;
-      drawingObj.setCoords();
-
-      // Update last point
-      lastPanPoint = currentPoint;
-
-      // Update canvas
-      canvas.renderAll();
-    }
-
-    // Function to end panning
-    function endPanning() {
-      isPanning = false;
-      lastPanPoint = null;
-
-      // Reset cursor
-      canvas.defaultCursor = 'default';
-      canvas.renderAll();
-
-      // Update the drawingRef position
-      drawingRef.position = {
-        x: drawingObj.left,
-        y: drawingObj.top,
-        width: drawingRef.position.width,
-        height: drawingRef.position.height
-      };
-
-      // Save the canvas state
-      autoSave();
-    }
+    scheduleAutoSave();
   }
 
   // Function to render existing strokes
-  function renderDrawingStrokes(drawingObj, content) {
+  function renderDrawingStrokes(drawingObj: any, content: any) {
     if (!canvas || !fabricLib || !content || !content.strokes) return;
 
-    // Remove any existing stroke paths
-    drawingObj._objects = drawingObj._objects.filter(obj =>
-      !(obj.data && obj.data.isStroke)
-    );
-
-    // Render each stroke
-    content.strokes.forEach(stroke => {
-      // Skip strokes with less than 2 points
-      if (stroke.points.length < 2) return;
-
-      // Map points from our format to perfect-freehand's format [x, y, pressure]
-      const points = stroke.points.map(point => [point.x, point.y, point.pressure || 0.5]);
-
-      // Generate perfect-freehand options based on the stroke tool type
-      const options = getPerfectFreehandOptions(
-        stroke.size,
-        stroke.tool === 'highlighter' ? -0.5 : 0.5, // Negative thinning for highlighters
-        0.5, // smoothing
-        0.5, // streamline
-        true, // simulatePressure
-        true, // capStart
-        true, // capEnd
-        0,    // taperStart
-        0     // taperEnd
+    // Use untrack to prevent reactivity loops
+    untrack(() => {
+      // Remove any existing stroke paths
+      drawingObj._objects = drawingObj._objects.filter((obj: any) =>
+        !(obj.data && obj.data.isStroke)
       );
 
-      // Generate the stroke with perfect-freehand
-      const freehandStroke = getStroke(points, options);
+      // Render each stroke
+      content.strokes.forEach((stroke: any) => {
+        // Skip strokes with less than 2 points
+        if (stroke.points.length < 2) return;
 
-      // Create path for the stroke
-      const path = getSvgPathFromStroke(freehandStroke);
+        // Map points to the format expected by perfect-freehand
+        const points = stroke.points.map((point: any) =>
+          [point.x, point.y, point.pressure || 0.5]
+        );
 
-      // Skip if path couldn't be generated
-      if (!path) return;
+        // Generate perfect-freehand options
+        const options = getPerfectFreehandOptions(
+          stroke.size,
+          stroke.tool === 'highlighter' ? -0.5 : 0.5,
+          0.5,
+          0.5,
+          true,
+          true,
+          true,
+          0,
+          0
+        );
 
-      // Create Fabric.js path object
-      const fabricPath = new fabricLib.Path(path, {
-        fill: stroke.color,
-        opacity: stroke.tool === 'highlighter' ? 0.4 : stroke.opacity, // Highlighters are semi-transparent
-        selectable: false,
-        evented: false,
-        originX: 'left',
-        originY: 'top',
-        data: { isStroke: true, toolType: stroke.tool }
+        // Generate the stroke
+        const freehandStroke = getStroke(points, options);
+
+        // Convert to SVG path
+        const path = getSvgPathFromStroke(freehandStroke);
+
+        // Skip if path couldn't be generated
+        if (!path) return;
+
+        // Create Fabric.js path object
+        const fabricPath = new fabricLib.Path(path, {
+          fill: stroke.color,
+          opacity: stroke.tool === 'highlighter' ? 0.4 : stroke.opacity,
+          selectable: false,
+          evented: false,
+          originX: 'left',
+          originY: 'top',
+          data: {
+            isStroke: true,
+            strokeId: stroke.id || fabricLib.util.uuid(),
+            toolType: stroke.tool
+          }
+        });
+
+        drawingObj.addWithUpdate(fabricPath);
       });
 
-      drawingObj.addWithUpdate(fabricPath);
+      canvas.renderAll();
     });
-
-    canvas.renderAll();
   }
 
-  // Function to render the current stroke
-  function renderCurrentStroke(drawingObj, stroke, drawingRef) {
-    if (!canvas || !fabricLib) return;
-
-    // Remove any temporary stroke
-    drawingObj._objects = drawingObj._objects.filter(obj =>
-      !(obj.data && obj.data.isTemporaryStroke)
-    );
-
-    // Skip if points are too few
-    if (stroke.points.length < 2) return;
-
-    // Map points from our format to perfect-freehand's format [x, y, pressure]
-    const points = stroke.points.map(point => [point.x, point.y, point.pressure || 0.5]);
-
-    // Generate perfect-freehand options based on the stroke tool type
-    const options = getPerfectFreehandOptions(
-      stroke.size,
-      stroke.tool === 'highlighter' ? -0.5 : 0.5, // Negative thinning for highlighters
-      0.5, // smoothing
-      0.5, // streamline
-      true, // simulatePressure
-      true, // capStart
-      true, // capEnd
-      0,    // taperStart
-      0     // taperEnd
-    );
-
-    // Generate the stroke with perfect-freehand
-    const freehandStroke = getStroke(points, options);
-
-    // Create path for the stroke
-    const path = getSvgPathFromStroke(freehandStroke);
-
-    // Skip if path couldn't be generated
-    if (!path) return;
-
-    // Create Fabric.js path object with appropriate styling based on tool type
-    let pathOptions;
-
-    if (stroke.tool === 'eraser') {
-      // For eraser preview, show a translucent red path
-      pathOptions = {
-        fill: 'rgba(255, 0, 0, 0.2)',
-        opacity: 0.5,
-        selectable: false,
-        evented: false,
-        originX: 'left',
-        originY: 'top',
-        data: { isTemporaryStroke: true, toolType: 'eraser' }
-      };
-    } else if (stroke.tool === 'highlighter') {
-      pathOptions = {
-        fill: stroke.color,
-        opacity: 0.4, // Highlighters are semi-transparent
-        selectable: false,
-        evented: false,
-        originX: 'left',
-        originY: 'top',
-        data: { isTemporaryStroke: true, toolType: 'highlighter' }
-      };
-    } else {
-      // Regular pen
-      pathOptions = {
-        fill: stroke.color,
-        opacity: stroke.opacity,
-        selectable: false,
-        evented: false,
-        originX: 'left',
-        originY: 'top',
-        data: { isTemporaryStroke: true, toolType: 'pen' }
-      };
-    }
-
-    const fabricPath = new fabricLib.Path(path, pathOptions);
-    drawingObj.addWithUpdate(fabricPath);
-    canvas.renderAll();
+  // Generate options for perfect-freehand
+  function getPerfectFreehandOptions(
+    size: number,
+    thinning: number,
+    smoothing: number,
+    streamline: number,
+    simulatePressure = true,
+    capStart = true,
+    capEnd = true,
+    taperStart = 0,
+    taperEnd = 0
+  ): StrokeOptions {
+    return {
+      size: size || 3,
+      thinning: thinning || 0.5,
+      smoothing: smoothing || 0.5,
+      streamline: streamline || 0.5,
+      simulatePressure,
+      last: capEnd,
+      start: {
+        taper: taperStart,
+        cap: capStart
+      },
+      end: {
+        taper: taperEnd,
+        cap: capEnd
+      }
+    };
   }
 
   // Function to save the drawing data
-  async function saveDrawing(drawingRef) {
+  async function saveDrawing(drawingRef: any) {
     if (!drawingRef || !drawingRef.drawingData || !drawingRef.drawing_id) return;
 
     try {
@@ -1754,21 +1705,492 @@
     }
   }
 
-  // Add a function to handle eraser in drawing mode
-  function processEraserStroke(drawingObj, eraserStroke, drawingRef) {
+  // ======= REACTIVITY MANAGEMENT =======
+
+  // Handle content changes and reactivity
+  $: {
+    if (initialized && contentLoaded && content) {
+      untrack(() => {
+        // Only process external content changes when they're genuinely different
+        // and not during active operations
+        const contentStr = JSON.stringify(content);
+        const localContentStr = JSON.stringify(localContent);
+
+        if (contentStr !== localContentStr && !isActivelyDrawing && !isSaving) {
+          log('External content change detected');
+
+          // Check if this is a complete refresh needed or a minor update
+          const currentObjects = canvas ? canvas.getObjects().length : 0;
+          const incomingObjectCount = content.objects ? content.objects.length : 0;
+
+          // If objects are similar in count, we can do a more careful update
+          // to preserve selection state
+          if (Math.abs(currentObjects - incomingObjectCount) <= 1 && canvas) {
+            // Save current state
+            const activeObject = canvas.getActiveObject();
+            let activeObjectId = activeObject ? (activeObject.data?.id || activeObject.id) : null;
+
+            // Update local content reference
+            localContent = safeClone(content);
+
+            // Set flag to prevent viewport save
+            skipNextViewportSave = true;
+
+            // Don't reload the entire canvas, just update viewport if needed
+            if (content.viewport && canvas) {
+              zoom = content.viewport.zoom || 1;
+              canvas.setViewportTransform([
+                zoom, 0, 0, zoom,
+                content.viewport.panX || 0,
+                content.viewport.panY || 0
+              ]);
+              canvas.renderAll();
+            }
+
+            log('Soft refresh with selection preservation');
+          } else {
+            log('Full canvas refresh needed');
+            // Major change - need full refresh
+            // Set to prevent circular updates
+            skipNextViewportSave = true;
+            localContent = safeClone(content);
+
+            // Update canvas with new content
+            if (canvas) {
+              canvas.clear();
+              canvas.loadFromJSON(localContent, () => {
+                canvas.forEachObject((obj: any) => {
+                  if (obj.data?.type === 'drawing') {
+                    setupDrawingObject(obj);
+                  }
+                });
+
+                // Restore viewport
+                if (localContent.viewport) {
+                  zoom = localContent.viewport.zoom || 1;
+                  canvas.setViewportTransform([
+                    zoom, 0, 0, zoom,
+                    localContent.viewport.panX || 0,
+                    localContent.viewport.panY || 0
+                  ]);
+                }
+
+                canvas.renderAll();
+              });
+            }
+          }
+        }
+      });
+    }
+  }
+
+  // Update tool mode when drawing mode changes
+  $: {
+    if (canvas && isDrawingMode !== undefined) {
+      updateToolMode();
+    }
+  }
+
+  // ======= DRAWING EVENT HANDLERS =======
+
+  // Setup drawing-specific event handlers
+  function setupDrawingEventHandlers(drawingObj: any, drawingRef: any) {
+    if (!canvas) return;
+
+    let isDrawing = false;
+    let currentStroke: any = null;
+    let isPanning = false;
+    let lastPanPoint: any = null;
+
+    // Get the rect boundaries for the drawing
+    const boundingRect = drawingObj._objects.find((obj: any) => obj.type === 'rect');
+
+    // Handle mouse down
+    drawingObj.on('mousedown', function(e: any) {
+      if (!isDrawingMode) return;
+
+      // Check if clicking on exit button
+      const target = e.target;
+      if (target && target.data && target.data.isExitButton) {
+        exitDrawingMode();
+        return;
+      }
+
+      // Handle different tool actions
+      switch (selectedTool) {
+        case 'draw':
+          startDrawing(e);
+          break;
+        case 'eraser':
+          startErasing(e);
+          break;
+        case 'pan':
+          startPanning(e);
+          break;
+        default:
+          // Other tools not implemented yet
+          break;
+      }
+    });
+
+    // Handle mouse move
+    drawingObj.on('mousemove', function(e: any) {
+      if (!isDrawingMode) return;
+
+      // Handle different tool actions
+      if (isPanning && lastPanPoint) {
+        continuePanning(e);
+      } else if (isDrawing && currentStroke) {
+        continueDrawing(e);
+      }
+    });
+
+    // Handle mouse up
+    drawingObj.on('mouseup', function() {
+      if (!isDrawingMode) return;
+
+      if (isPanning) {
+        endPanning();
+      } else if (isDrawing) {
+        finishDrawing();
+      }
+    });
+
+    // Function to start drawing
+    function startDrawing(e: any) {
+      isDrawing = true;
+
+      // Calculate the point relative to the drawing
+      const pointer = canvas.getPointer(e.e);
+      const x = pointer.x - drawingObj.left;
+      const y = pointer.y - drawingObj.top;
+
+      // Check if within bounds
+      if (x < 0 || y < 0 || x > boundingRect.width || y > boundingRect.height) {
+        isDrawing = false;
+        return;
+      }
+
+      // Create new stroke
+      currentStroke = {
+        points: [{ x, y, pressure: 0.5 }],
+        color: drawingSettings.color,
+        size: drawingSettings.size,
+        opacity: drawingSettings.opacity,
+        tool: 'pen'
+      };
+    }
+
+    // Function to continue drawing
+    function continueDrawing(e: any) {
+      if (!isDrawing || !currentStroke) return;
+
+      try {
+        // Wrap the whole function in untrack to prevent reactivity issues
+        untrack(() => {
+          // Calculate the point relative to the drawing
+          const pointer = canvas.getPointer(e.e);
+          const x = pointer.x - drawingObj.left;
+          const y = pointer.y - drawingObj.top;
+
+          // Add point to current stroke
+          currentStroke.points.push({ x, y, pressure: 0.5 });
+        });
+
+        // Render current stroke - this function now has its own rate limiting
+        renderCurrentStroke(drawingObj, currentStroke);
+      } catch (error) {
+        console.error('Error in continueDrawing:', error);
+
+        // Ensure we don't get stuck in drawing mode on error
+        isDrawing = false;
+        isActivelyDrawing = false;
+      }
+    }
+
+    // Function to finish drawing
+    function finishDrawing() {
+      if (!isDrawing || !currentStroke) return;
+
+      try {
+        // First set local flag to prevent any more drawing
+        isDrawing = false;
+
+        // Handle according to tool type
+        if (currentStroke.tool !== 'eraser') {
+          // Only add and save strokes that have meaningful content
+          if (currentStroke.points.length > 1) {
+            untrack(() => {
+              // Initialize drawing data if needed
+              if (!drawingRef.drawingData) {
+                drawingRef.drawingData = { strokes: [] };
+              }
+
+              if (!drawingRef.drawingData.strokes) {
+                drawingRef.drawingData.strokes = [];
+              }
+
+              // Add the current stroke to the permanent drawing data
+              drawingRef.drawingData.strokes.push({...currentStroke}); // Clone to avoid references
+            });
+
+            // Save the drawing - outside of untrack to allow saving to work
+            saveDrawing(drawingRef);
+          }
+        } else {
+          // Process eraser strokes
+          processEraserStroke(drawingObj, currentStroke, drawingRef);
+        }
+      } catch (error) {
+        console.error('Error in finishDrawing:', error);
+      } finally {
+        // Clear current stroke and reset flags
+        currentStroke = null;
+
+        // Let the flag reset happen naturally via timeout in renderCurrentStroke
+        // This prevents immediate switching back and possible race conditions
+      }
+    }
+
+    // Function to start erasing
+    function startErasing(e: any) {
+      isDrawing = true;
+
+      // Calculate the point relative to the drawing
+      const pointer = canvas.getPointer(e.e);
+      const x = pointer.x - drawingObj.left;
+      const y = pointer.y - drawingObj.top;
+
+      // Check if within bounds
+      if (x < 0 || y < 0 || x > boundingRect.width || y > boundingRect.height) {
+        isDrawing = false;
+        return;
+      }
+
+      // Create new eraser stroke
+      currentStroke = {
+        points: [{ x, y, pressure: 0.5 }],
+        color: 'rgba(255, 0, 0, 0.2)', // Red for eraser preview
+        size: 20, // Larger size for eraser
+        opacity: 0.5,
+        tool: 'eraser'
+      };
+    }
+
+    // Function to start panning
+    function startPanning(e: any) {
+      isPanning = true;
+
+      // Calculate the point relative to the drawing
+      const pointer = canvas.getPointer(e.e);
+      lastPanPoint = {
+        x: pointer.x,
+        y: pointer.y
+      };
+
+      // Change cursor
+      canvas.defaultCursor = 'grabbing';
+      canvas.renderAll();
+    }
+
+    // Function to continue panning
+    function continuePanning(e: any) {
+      if (!isPanning || !lastPanPoint) return;
+
+      // Calculate the point relative to the drawing
+      const pointer = canvas.getPointer(e.e);
+      const currentPoint = {
+        x: pointer.x,
+        y: pointer.y
+      };
+
+      // Calculate the difference
+      const dx = currentPoint.x - lastPanPoint.x;
+      const dy = currentPoint.y - lastPanPoint.y;
+
+      // Update the drawing object position using untrack
+      untrack(() => {
+        drawingObj.left += dx;
+        drawingObj.top += dy;
+        drawingObj.setCoords();
+
+        // Update last point
+        lastPanPoint = currentPoint;
+      });
+
+      // Update canvas
+      canvas.renderAll();
+    }
+
+    // Function to end panning
+    function endPanning() {
+      isPanning = false;
+      lastPanPoint = null;
+
+      // Reset cursor
+      canvas.defaultCursor = 'default';
+      canvas.renderAll();
+
+      // Update the drawingRef position using untrack
+      untrack(() => {
+        drawingRef.position = {
+          x: drawingObj.left,
+          y: drawingObj.top,
+          width: drawingRef.position.width,
+          height: drawingRef.position.height
+        };
+      });
+
+      // Save the canvas state
+      scheduleAutoSave();
+    }
+  }
+
+  // Function to render the current stroke
+  function renderCurrentStroke(drawingObj: any, stroke: any) {
+    if (!canvas || !fabricLib) return;
+
+    // Early out if needed
+    if (!stroke || !stroke.points || stroke.points.length < 2) return;
+
+    // Implement rate limiting - don't re-render too frequently
+    const now = Date.now();
+    const timeSinceLastRender = now - lastRenderTimestamp;
+    if (timeSinceLastRender < 16) { // ~60fps max
+      return; // Skip this render cycle
+    }
+
+    // Set active drawing flag
+    isActivelyDrawing = true;
+    lastRenderTimestamp = now;
+
+    try {
+      // Use untrack to prevent reactivity loops
+      untrack(() => {
+        // Remove any temporary stroke
+        drawingObj._objects = drawingObj._objects.filter((obj: any) =>
+          !(obj.data && obj.data.isTemporaryStroke)
+        );
+
+        // Map points to the format expected by perfect-freehand
+        const points = stroke.points.map((point: any) =>
+          [point.x, point.y, point.pressure || 0.5]
+        );
+
+        // Generate perfect-freehand options
+        const options = getPerfectFreehandOptions(
+          stroke.size,
+          stroke.tool === 'highlighter' ? -0.5 : 0.5,
+          0.5,
+          0.5,
+          true,
+          true,
+          true,
+          0,
+          0
+        );
+
+        // Generate the stroke
+        const freehandStroke = getStroke(points, options);
+
+        // Convert to SVG path
+        const path = getSvgPathFromStroke(freehandStroke);
+
+        // Skip if path couldn't be generated
+        if (!path) return;
+
+        // Create Fabric.js path object with appropriate styling
+        let pathOptions: any;
+
+        if (stroke.tool === 'eraser') {
+          // For eraser preview, show a translucent red path
+          pathOptions = {
+            fill: 'rgba(255, 0, 0, 0.2)',
+            opacity: 0.5,
+            selectable: false,
+            evented: false,
+            originX: 'left',
+            originY: 'top',
+            data: { isTemporaryStroke: true, toolType: 'eraser' }
+          };
+        } else if (stroke.tool === 'highlighter') {
+          pathOptions = {
+            fill: stroke.color,
+            opacity: 0.4, // Highlighters are semi-transparent
+            selectable: false,
+            evented: false,
+            originX: 'left',
+            originY: 'top',
+            data: { isTemporaryStroke: true, toolType: 'highlighter' }
+          };
+        } else {
+          // Regular pen
+          pathOptions = {
+            fill: stroke.color,
+            opacity: stroke.opacity,
+            selectable: false,
+            evented: false,
+            originX: 'left',
+            originY: 'top',
+            data: { isTemporaryStroke: true, toolType: 'pen' }
+          };
+        }
+
+        const fabricPath = new fabricLib.Path(path, pathOptions);
+        drawingObj.addWithUpdate(fabricPath);
+      });
+
+      // Render outside of untrack but still rate limited
+      canvas.requestRenderAll();
+
+    } catch (error) {
+      console.error('Error in renderCurrentStroke:', error);
+    }
+
+    // Reset the drawing flag after a short delay
+    if (renderFlagResetTimeout) {
+      clearTimeout(renderFlagResetTimeout);
+    }
+
+    renderFlagResetTimeout = setTimeout(() => {
+      isActivelyDrawing = false;
+      renderFlagResetTimeout = null;
+    }, 100);
+  }
+
+  // Helper function for eraser collision detection
+  function isPointInStroke(eraserPoint: any, stroke: any, eraserSize: number): boolean {
+    // Check if any point in the stroke is within eraser radius
+    for (const point of stroke.points) {
+      const dx = eraserPoint.x - point.x;
+      const dy = eraserPoint.y - point.y;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+
+      // If distance is less than combined radius, collision happened
+      if (distance < (eraserSize + (stroke.size || 3)) / 2) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  // Function to handle eraser strokes
+  function processEraserStroke(drawingObj: any, eraserStroke: any, drawingRef: any) {
     if (!eraserStroke || !drawingRef || !drawingRef.drawingData) return;
 
     // Skip if the drawing doesn't have strokes yet
     if (!drawingRef.drawingData.strokes) {
-      drawingRef.drawingData.strokes = [];
+      untrack(() => {
+        drawingRef.drawingData.strokes = [];
+      });
       return;
     }
 
     // The eraser size to use for collision detection
     const eraserSize = eraserStroke.size;
 
-    // Filter out strokes that intersect with the eraser stroke
-    const newStrokes = drawingRef.drawingData.strokes.filter(stroke => {
+    // Filter out strokes that intersect with the eraser
+    const newStrokes = drawingRef.drawingData.strokes.filter((stroke: any) => {
       // Skip tiny strokes
       if (stroke.points.length < 2) return true;
 
@@ -1784,7 +2206,9 @@
 
     // If strokes were removed, update the drawing data
     if (newStrokes.length < drawingRef.drawingData.strokes.length) {
-      drawingRef.drawingData.strokes = newStrokes;
+      untrack(() => {
+        drawingRef.drawingData.strokes = newStrokes;
+      });
 
       // Re-render the strokes
       renderDrawingStrokes(drawingObj, drawingRef.drawingData);
@@ -1794,53 +2218,456 @@
     }
   }
 
-  // Make sure to update tool mode when drawing mode changes
-  $: {
-    if (canvas && isDrawingMode !== undefined) {
-      updateToolMode();
+  // Add a flag to track internal tool changes
+  let internalToolChange = false;
+
+  // Set tool function - export to make it accessible to parent components
+  export function setTool(tool: Tool) {
+    // Set the flag to indicate this is an internal change
+    internalToolChange = true;
+
+    console.log('setTool called with:', tool, 'previous tool:', selectedTool);
+
+    // Update the selected tool
+    selectedTool = tool;
+    isDrawingMode = tool === 'draw';
+
+    // Log for debugging
+    log('Tool changed to:', tool, 'isDrawingMode:', isDrawingMode);
+
+    // Update cursor and event handlers
+    updateToolMode();
+    setupEventHandlers();
+
+    // If canvas is finished loading, save state
+    if (canvas && initialized && contentLoaded) {
+      saveCanvas();
+    }
+
+    // The selectedTool reactive binding will automatically update the parent
+    // Additional notification for non-binding scenarios
+    onToolChange(tool);
+
+    // Reset the flag after a short delay to allow for Svelte's reactivity to process
+    setTimeout(() => {
+      internalToolChange = false;
+    }, 0);
+  }
+
+  // Handler for toolbar tool change events
+  // Keep this function for internal use even though the toolbar is now external
+  function handleToolChange(event: CustomEvent) {
+    const { tool } = event.detail;
+    setTool(tool);
+  }
+
+  // Export method to save canvas state
+  export function saveCanvas() {
+    if (initialized && contentLoaded && canvas) {
+      scheduleAutoSave();
     }
   }
 
-  // Reactive block that manages content updates - replace with this version
-  $: {
-    if (initialized && contentLoaded && content) {
-      // Only process external content changes when they're genuinely different
-      untrack(() => {
-        const contentStr = JSON.stringify(content);
-        const localContentStr = JSON.stringify(localContent);
+  // Add a reactive statement to handle selectedTool changes from external sources
+  $: if (initialized && canvas && selectedTool && !internalToolChange) {
+    console.log('Canvas component detected external selectedTool change:', selectedTool);
+    // Update tool mode and reattach handlers
+    updateToolMode();
+    setupEventHandlers();
+  }
 
-        if (contentStr !== localContentStr && !isActivelyDrawing && !isSaving) {
-          console.log('External content change detected, updating canvas');
-          // Set to prevent circular updates
-          skipNextViewportSave = true;
-          localContent = safeClone(content);
+  // Reset active drawing flag to clear state
+  function resetActiveDrawingFlag() {
+    if (renderFlagResetTimeout) {
+      clearTimeout(renderFlagResetTimeout);
+    }
 
-          // Update canvas with new content if necessary
-          if (canvas) {
-            canvas.clear();
-            canvas.loadFromJSON(localContent, () => {
-              canvas.forEachObject((obj: fabric.Object) => {
-                if (obj.data?.type === 'drawing') {
-                  createDrawingObject(obj);
-                }
+    renderFlagResetTimeout = setTimeout(() => {
+      isActivelyDrawing = false;
+    }, 50);
+  }
+
+  // Enable select mode handlers
+  function enableSelectMode() {
+    if (!canvas) return;
+
+    // Reset cursor
+    canvas.defaultCursor = 'default';
+
+    // Make all objects selectable except for drawing objects when in drawing mode
+    makeObjectsSelectable();
+
+    // Mouse down in select mode
+    canvas.on('mouse:down', (event: any) => {
+      // Just track for debugging
+      isActivelyDrawing = true;
+      console.log('Select mode: mouse down');
+
+      // If clicking on an object, we don't need to do anything special
+      // Fabric.js will handle the selection
+
+      // Reset flag for reactivity
+      resetActiveDrawingFlag();
+    });
+
+    // Add double-click handler for text editing
+    canvas.on('mouse:dblclick', (event: any) => {
+      if (!event.target) return;
+
+      // Handle double-click on text objects
+      if (event.target.type === 'i-text' || event.target.type === 'text') {
+        console.log('Double-click on text object');
+
+        // Enter editing mode directly
+        event.target.enterEditing();
+        canvas.renderAll();
+      }
+    });
+
+    // Additional handler for exiting text editing
+    canvas.on('text:editing:exited', (e: any) => {
+      console.log('Text editing exited');
+
+      // Schedule save after text editing
+      scheduleAutoSave();
+    });
+
+    // Handle object modification
+    canvas.on('object:modified', (e: any) => {
+      console.log('Object modified:', e.target?.type);
+
+      // Set flag to false after completion
+      isActivelyDrawing = false;
+
+      // Save changes
+      scheduleAutoSave();
+    });
+  }
+
+  // Enable rectangle creation mode
+  function enableRectangleMode() {
+    if (!canvas) return;
+
+    // Set cursor
+    canvas.defaultCursor = 'crosshair';
+
+    // Make objects selectable
+    makeObjectsSelectable();
+
+    // Mouse down in rectangle mode
+    canvas.on('mouse:down', (event: any) => {
+      // Set flag to prevent reactivity loops
+      isActivelyDrawing = true;
+
+      // Only create rectangle when clicking on empty canvas
+      if (event.target) {
+        // If clicking on an existing object, select it and change to select tool
+        setTool('select');
+        isActivelyDrawing = false;
+        return;
+      }
+
+      // Create rectangle at click point
+      const pointer = canvas.getPointer(event.e);
+      console.log('Creating rectangle at:', pointer.x, pointer.y);
+      createRectangle(pointer);
+    });
+  }
+
+  // Enable text creation mode
+  function enableTextMode() {
+    if (!canvas) return;
+
+    // Set cursor
+    canvas.defaultCursor = 'text';
+
+    // Make objects selectable
+    makeObjectsSelectable();
+
+    // Mouse down in text mode
+    canvas.on('mouse:down', (event: any) => {
+      // Set flag to prevent reactivity loops
+      isActivelyDrawing = true;
+
+      // Only create text when clicking on empty canvas
+      if (event.target) {
+        // If clicking on an existing object, select it and change to select tool
+        setTool('select');
+        isActivelyDrawing = false;
+        return;
+      }
+
+      // Create text at click point
+      const pointer = canvas.getPointer(event.e);
+      console.log('Creating text at:', pointer.x, pointer.y);
+      createText(pointer);
+    });
+  }
+
+  // Enable draw mode
+  function enableDrawMode() {
+    if (!canvas) return;
+
+    // Set cursor
+    canvas.defaultCursor = 'crosshair';
+
+    // In draw mode, make most objects non-selectable except drawing objects
+    canvas.getObjects().forEach((obj: any) => {
+      if (obj.data?.type === 'drawing') {
+        obj.selectable = true;
+        obj.evented = true;
+      } else {
+        obj.selectable = false;
+        obj.evented = false;
+      }
+    });
+
+    canvas.renderAll();
+
+    // Mouse down in draw mode
+    canvas.on('mouse:down', (event: any) => {
+      // Set flag to prevent reactivity loops
+      isActivelyDrawing = true;
+
+      // If we're already editing a drawing, ignore
+      if (isDrawingMode) {
+        isActivelyDrawing = false;
+        return;
+      }
+
+      // If clicking on a drawing object, enter drawing mode for it
+      if (event.target && event.target.data?.type === 'drawing') {
+        console.log('Clicking on drawing object, enter drawing mode');
+
+        // Find the drawing reference for this object
+        const drawingRef = content.drawings?.find((d: any) =>
+          d.id === event.target.data.referenceId
+        );
+
+        if (drawingRef) {
+          // Enter drawing mode for this drawing
+          enterDrawingMode(drawingRef);
+        }
+
+        isActivelyDrawing = false;
+        return;
+      }
+
+      // If not already creating a drawing area, start creating one
+      if (!isCreatingDrawingArea && !activeDrawingId) {
+        // Start creating drawing area
+        isCreatingDrawingArea = true;
+        const pointer = canvas.getPointer(event.e);
+        drawingAreaStart = { x: pointer.x, y: pointer.y };
+
+        // Create a rectangle to represent the drawing area
+        untrack(() => {
+          drawingAreaRect = new fabricLib.Rect({
+            left: pointer.x,
+            top: pointer.y,
+            width: 0,
+            height: 0,
+            fill: 'rgba(200, 200, 255, 0.2)',
+            stroke: '#8888FF',
+            strokeWidth: 1,
+            selectable: false,
+            evented: false
+          });
+
+          canvas.add(drawingAreaRect);
+          canvas.renderAll();
+        });
+      }
+    });
+
+    // Mouse move in draw mode
+    canvas.on('mouse:move', (event: any) => {
+      // Drawing area sizing logic
+      if (isCreatingDrawingArea && drawingAreaRect) {
+        const pointer = canvas.getPointer(event.e);
+
+        // Update rectangle dimensions
+        const width = pointer.x - drawingAreaStart.x;
+        const height = pointer.y - drawingAreaStart.y;
+
+        // Use untrack to prevent reactivity issues when modifying objects
+        untrack(() => {
+          if (drawingAreaRect) {
+            drawingAreaRect.set({
+              width: width,
+              height: height
+            });
+            canvas.renderAll();
+          }
+        });
+      }
+    });
+
+    // Mouse up in draw mode
+    canvas.on('mouse:up', async (event: any) => {
+      try {
+        // Drawing area finalization logic
+        if (isCreatingDrawingArea && drawingAreaRect) {
+          // Finish creating drawing area
+          isCreatingDrawingArea = false;
+          const pointer = canvas.getPointer(event.e);
+
+          // Make sure the rectangle has positive dimensions
+          const width = Math.abs(pointer.x - drawingAreaStart.x);
+          const height = Math.abs(pointer.y - drawingAreaStart.y);
+
+          // Don't create tiny drawing areas
+          if (width < 50 || height < 50) {
+            untrack(() => {
+              if (drawingAreaRect) {
+                canvas.remove(drawingAreaRect);
+                drawingAreaRect = null;
+                canvas.renderAll();
+              }
+            });
+            isActivelyDrawing = false; // Reset flag
+            return;
+          }
+
+          // Position correctly for negative dimensions
+          const left = pointer.x < drawingAreaStart.x ? pointer.x : drawingAreaStart.x;
+          const top = pointer.y < drawingAreaStart.y ? pointer.y : drawingAreaStart.y;
+
+          untrack(() => {
+            if (drawingAreaRect) {
+              drawingAreaRect.set({
+                left: left,
+                top: top,
+                width: width,
+                height: height,
+                selectable: true
               });
+              canvas.renderAll();
+            }
+          });
 
-              // Restore viewport
-              if (localContent.viewport) {
-                zoom = localContent.viewport.zoom || 1;
-                canvas.setViewportTransform([
-                  zoom, 0, 0, zoom,
-                  localContent.viewport.panX || 0,
-                  localContent.viewport.panY || 0
-                ]);
+          // Create a new drawing page in the database
+          try {
+            if (!$user) {
+              console.error('User not authenticated');
+              isActivelyDrawing = false;
+              return;
+            }
+
+            // Create a new drawing page
+            const { data: newDrawing, error } = await createPage(
+              $user.id,
+              'drawing',
+              `Drawing ${Math.floor(Math.random() * 10000)}`,
+              { strokes: [] }
+            );
+
+            if (error) {
+              console.error('Error creating drawing page:', error);
+              isActivelyDrawing = false; // Make sure to reset flag
+              return;
+            }
+
+            if (!newDrawing) {
+              console.error('Failed to create drawing page');
+              isActivelyDrawing = false; // Make sure to reset flag
+              return;
+            }
+
+            // Add the new page to our store
+            pages.update((currentPages: any[]) => [...currentPages, newDrawing]);
+
+            // Create a drawing reference for this canvas
+            const drawingRef = {
+              id: fabricLib.util.uuid(),
+              drawing_id: newDrawing.id,
+              position: {
+                x: left,
+                y: top,
+                width: width,
+                height: height
+              },
+              isEditing: true
+            };
+
+            // Use untrack to prevent reactivity loops when modifying content
+            untrack(() => {
+              if (!content.drawings) {
+                content.drawings = [];
+              }
+              content.drawings.push(drawingRef);
+
+              // Set the active drawing
+              activeDrawingId = newDrawing.id;
+              activeDrawingReference = drawingRef;
+
+              // Remove placeholder rectangle
+              if (drawingAreaRect) {
+                canvas.remove(drawingAreaRect);
+                drawingAreaRect = null;
               }
 
-              canvas.renderAll();
+              // Create the drawing object
+              const group = createDrawingObject(drawingRef);
+
+              // Enter drawing mode
+              enterDrawingMode(drawingRef);
+
+              // Save the canvas state
+              scheduleAutoSave();
             });
+          } catch (err) {
+            console.error('Error setting up drawing:', err);
+            untrack(() => {
+              if (drawingAreaRect) {
+                canvas.remove(drawingAreaRect);
+                drawingAreaRect = null;
+                canvas.renderAll();
+              }
+            });
+            isActivelyDrawing = false; // Make sure to reset flag
           }
+        } else {
+          // For other mouse up events, just reset the flag
+          isActivelyDrawing = false;
         }
-      });
-    }
+      } finally {
+        // Always reset the drawing flag when mouse up completes
+        isActivelyDrawing = false;
+      }
+    });
+  }
+
+  // Enable eraser mode
+  function enableEraserMode() {
+    if (!canvas) return;
+
+    // Set cursor
+    canvas.defaultCursor = 'not-allowed';
+
+    // Make all objects selectable
+    makeObjectsSelectable();
+
+    // Mouse down in eraser mode
+    canvas.on('mouse:down', (event: any) => {
+      // Set flag to prevent reactivity loops
+      isActivelyDrawing = true;
+
+      // Handle eraser functionality - only work when clicking on an object
+      if (event.target) {
+        untrack(() => {
+          console.log('Erasing object:', event.target.type);
+          canvas.remove(event.target);
+          canvas.renderAll();
+
+          // Save after erasing
+          scheduleAutoSave();
+        });
+      }
+
+      // Reset flag for reactivity
+      resetActiveDrawingFlag();
+    });
   }
 </script>
 
@@ -1851,11 +2678,11 @@
     <!-- Tool instructions -->
     {#if selectedTool === 'draw'}
       <div class="instructions">
-        Free drawing mode. Click and drag to draw.
+        Free drawing mode. Click and drag to create a drawing area.
       </div>
     {/if}
 
-    {#if selectedTool === 'polygon'}
+    {#if selectedTool === 'rectangle'}
       <div class="instructions">
         Click to add a rectangle.
       </div>
@@ -1879,14 +2706,81 @@
       </div>
     {/if}
 
+    <!-- Drawing mode instruction -->
+    {#if isDrawingMode}
+      <div class="instructions">
+        Drawing mode active. Use tools to draw within the drawing area.
+      </div>
+    {/if}
+
+    <!-- Loading indicator -->
+    {#if !contentLoaded}
+      <div class="loading-indicator">
+        <div class="spinner"></div>
+        <div>Loading canvas...</div>
+      </div>
+    {/if}
+
+    <!-- Zoom control -->
+    <ZoomControl
+      {zoom}
+      on:resetZoom={resetZoom}
+      on:zoomIn={zoomIn}
+      on:zoomOut={zoomOut}
+    />
+
+    <!-- Selected Object Info -->
+    {#if selectedObject}
+      <div class="object-info" transition:slide={{ duration: 300, easing: cubicOut }}>
+        <div class="info-title">Selected Object</div>
+        <div class="info-row">
+          <span class="info-label">Type:</span>
+          <span class="info-value">{objectType}</span>
+        </div>
+        <div class="info-row">
+          <span class="info-label">ID:</span>
+          <span class="info-value">{getObjectId(selectedObject)}</span>
+        </div>
+        <div class="info-row">
+          <span class="info-label">Position:</span>
+          <span class="info-value">x: {Math.round(selectedObject.left || 0)}, y: {Math.round(selectedObject.top || 0)}</span>
+        </div>
+        {#if selectedObject.width !== undefined && selectedObject.height !== undefined}
+          <div class="info-row">
+            <span class="info-label">Size:</span>
+            <span class="info-value">{Math.round(selectedObject.width || 0)} × {Math.round(selectedObject.height || 0)}</span>
+          </div>
+        {/if}
+      </div>
+    {:else}
+      <div class="object-info" transition:slide={{ duration: 300, easing: cubicOut }}>
+        <div class="info-title">Active Tool</div>
+        <div class="info-row">
+          <span class="info-label">Tool:</span>
+          <span class="info-value tool-value">{selectedTool}</span>
+        </div>
+        {#if isDrawingMode}
+          <div class="info-row">
+            <span class="info-label">Mode:</span>
+            <span class="info-value">Drawing</span>
+          </div>
+        {/if}
+      </div>
+    {/if}
+
     <!-- Contextual toolbar for selected objects -->
-    {#if showToolbar && selectedObject}
-      <div class="object-toolbar" style="top: {toolbarPosition.top}px; left: {toolbarPosition.left}px;">
+    {#if selectedObject}
+      <div
+        class="object-toolbar"
+        style="top: {toolbarPosition.top}px; left: {toolbarPosition.left}px;"
+        transition:slide={{ duration: 300, easing: cubicOut }}
+        class:visible={showToolbar}
+      >
         {#if objectType === 'text' || objectType === 'i-text'}
           <div class="text-toolbar">
             <select
               value={textProps.fontFamily}
-              on:change={(e) => applyTextProperties('fontFamily', e.target.value)}>
+              on:change={(e) => applyTextProperties('fontFamily', (e.target as HTMLSelectElement)?.value)}>
               {#each fontFamilies as family}
                 <option value={family}>{family}</option>
               {/each}
@@ -1894,7 +2788,7 @@
 
             <select
               value={textProps.fontSize}
-              on:change={(e) => applyTextProperties('fontSize', Number(e.target.value))}>
+              on:change={(e) => applyTextProperties('fontSize', Number((e.target as HTMLSelectElement)?.value))}>
               {#each fontSizes as size}
                 <option value={size}>{size}</option>
               {/each}
@@ -1907,14 +2801,12 @@
                 title="Bold">
                 B
               </button>
-
               <button
                 class={textProps.fontStyle === 'italic' ? 'active' : ''}
                 on:click={() => applyTextProperties('fontStyle', textProps.fontStyle === 'italic' ? 'normal' : 'italic')}
                 title="Italic">
                 I
               </button>
-
               <button
                 class={textProps.underline ? 'active' : ''}
                 on:click={() => applyTextProperties('underline', !textProps.underline)}
@@ -1928,69 +2820,70 @@
                 class={textProps.textAlign === 'left' ? 'active' : ''}
                 on:click={() => applyTextProperties('textAlign', 'left')}
                 title="Align Left">
-                ←
+                <span class="material-icons">format_align_left</span>
               </button>
-
               <button
                 class={textProps.textAlign === 'center' ? 'active' : ''}
                 on:click={() => applyTextProperties('textAlign', 'center')}
                 title="Align Center">
-                ↔
+                <span class="material-icons">format_align_center</span>
               </button>
-
               <button
                 class={textProps.textAlign === 'right' ? 'active' : ''}
                 on:click={() => applyTextProperties('textAlign', 'right')}
                 title="Align Right">
-                →
+                <span class="material-icons">format_align_right</span>
               </button>
             </div>
 
-            <input
-              type="color"
-              value={textProps.color}
-              on:input={(e) => applyTextProperties('fill', e.target.value)}
-              title="Text Color"
-            />
+            <div class="color-picker">
+              <input
+                type="color"
+                value={textProps.color}
+                on:input={(e) => applyTextProperties('fill', (e.target as HTMLInputElement)?.value)}
+                title="Text Color"
+              />
+            </div>
           </div>
         {:else}
           <div class="shape-toolbar">
-            <input
-              type="color"
-              value={shapeProps.fill}
-              on:input={(e) => applyShapeProperties('fill', e.target.value)}
-              title="Fill Color"
-            />
-
-            <input
-              type="color"
-              value={shapeProps.stroke}
-              on:input={(e) => applyShapeProperties('stroke', e.target.value)}
-              title="Stroke Color"
-            />
-
-            <div class="slider-group">
-              <label>Stroke:</label>
+            <div class="color-picker">
+              <input
+                type="color"
+                value={shapeProps.fill}
+                on:input={(e) => applyShapeProperties('fill', (e.target as HTMLInputElement)?.value)}
+                title="Fill Color"
+              />
+            </div>
+            <div class="color-picker">
+              <input
+                type="color"
+                value={shapeProps.stroke}
+                on:input={(e) => applyShapeProperties('stroke', (e.target as HTMLInputElement)?.value)}
+                title="Stroke Color"
+              />
+            </div>
+            <div class="range-slider">
+              <label>Stroke width:</label>
               <input
                 type="range"
-                min="0"
-                max="20"
+                min="0.5"
+                max="10"
                 step="0.5"
                 value={shapeProps.strokeWidth}
-                on:input={(e) => applyShapeProperties('strokeWidth', Number(e.target.value))}
+                on:input={(e) => applyShapeProperties('strokeWidth', Number((e.target as HTMLInputElement)?.value))}
               />
               <span>{shapeProps.strokeWidth}px</span>
             </div>
-
-            <div class="slider-group">
+            <div class="range-slider">
               <label>Opacity:</label>
               <input
                 type="range"
-                min="0"
+                min="0.1"
                 max="1"
                 step="0.05"
                 value={shapeProps.opacity}
-                on:input={(e) => applyShapeProperties('opacity', Number(e.target.value))}
+                on:input={(e) => applyShapeProperties('opacity', Number((e.target as HTMLInputElement)?.value))}
               />
               <span>{Math.round(shapeProps.opacity * 100)}%</span>
             </div>
@@ -1998,185 +2891,223 @@
         {/if}
       </div>
     {/if}
-
-    <!-- Zoom controls -->
-    <ZoomControl
-      zoom={zoom}
-      on:resetZoom={resetZoom}
-      on:zoomIn={zoomIn}
-      on:zoomOut={zoomOut}
-    />
   </div>
 </div>
 
 <style lang="scss">
   .canvas-container {
     position: relative;
-    flex: 1;
-    overflow: hidden;
-    background-color: #f0f0f0;
-    width: 100%;
-    height: 100%;
-  }
-
-  .canvas-wrapper {
-    position: absolute;
-    top: 0;
-    left: 0;
     width: 100%;
     height: 100%;
     overflow: hidden;
+    background: #f5f5f5;
+    display: flex;
+
+    .canvas-wrapper {
+      position: relative;
+      flex: 1;
+      height: 100%;
+    }
+
+    canvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+    }
+
+    .instructions {
+      position: absolute;
+      top: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0, 0, 0, 0.7);
+      color: white;
+      padding: 8px 16px;
+      border-radius: 4px;
+      font-size: 14px;
+      pointer-events: none;
+      z-index: 100;
+    }
+
+    .loading-indicator {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 16px;
+
+      .spinner {
+        width: 32px;
+        height: 32px;
+        border: 3px solid rgba(0, 0, 0, 0.1);
+        border-top-color: #3498db;
+        border-radius: 50%;
+        animation: spin 1s ease-in-out infinite;
+      }
+    }
+
+    .object-toolbar {
+      position: absolute;
+      background: white;
+      border-radius: 8px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+      padding: 16px;
+      z-index: 100;
+      transform: translateX(-50%);
+      /* Remove these properties as we're using Svelte's slide transition */
+      /* opacity: 0;
+      transition: opacity 0.2s ease-out, transform 0.2s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+      transform: translateX(-50%) translateY(-10px); */
+
+      /* Base transform to center horizontally */
+      transform: translateX(-50%);
+
+      /* Better border and modern styling */
+      border: 1px solid rgba(0, 0, 0, 0.08);
+      backdrop-filter: blur(4px);
+
+      &.visible {
+        /* We don't need these with Svelte transitions */
+        /* opacity: 1;
+        transform: translateX(-50%) translateY(0); */
+      }
+
+      /* Rest of the styling remains the same */
+      .text-toolbar, .shape-toolbar {
+        display: flex;
+        gap: 12px;
+        align-items: center;
+
+        select {
+          padding: 4px 8px;
+          border-radius: 4px;
+          border: 1px solid #ddd;
+        }
+
+        .toolbar-button-group {
+          display: flex;
+          gap: 2px;
+
+          button {
+            width: 32px;
+            height: 32px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #f5f5f5;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-weight: bold;
+            cursor: pointer;
+
+            &.active {
+              background: #e0e0e0;
+              border-color: #aaa;
+            }
+
+            &:hover {
+              background: #e9e9e9;
+            }
+          }
+        }
+
+        .color-picker {
+          input {
+            width: 32px;
+            height: 32px;
+            padding: 0;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            cursor: pointer;
+          }
+        }
+
+        .range-slider {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+
+          label {
+            font-size: 12px;
+            white-space: nowrap;
+          }
+
+          input {
+            width: 100px;
+          }
+
+          span {
+            font-size: 12px;
+            width: 36px;
+          }
+        }
+      }
+    }
   }
 
-  canvas {
-    width: 100%;
-    height: 100%;
-    position: relative;
+  @keyframes spin {
+    to { transform: rotate(360deg); }
   }
 
-  .instructions {
-    position: absolute;
-    top: 16px;
+  .object-info {
+    position: fixed;
+    top: 15px;
     left: 50%;
-    transform: translateX(-50%);
-    background: rgba(0, 0, 0, 0.7);
-    color: white;
-    padding: 8px 16px;
-    border-radius: 20px;
-    font-size: 14px;
-    pointer-events: none;
-    z-index: 100;
-  }
-
-  .object-toolbar {
-    position: absolute;
     transform: translateX(-50%);
     background: white;
     border-radius: 8px;
-    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
-    padding: 8px;
-    z-index: 1000;
-    min-width: 300px;
-
-    .text-toolbar, .shape-toolbar {
-      display: flex;
-      align-items: center;
-      flex-wrap: wrap;
-      gap: 8px;
-    }
-
-    select {
-      border: 1px solid #ddd;
-      padding: 4px 8px;
-      border-radius: 4px;
-      font-size: 14px;
-    }
-
-    input[type="color"] {
-      width: 32px;
-      height: 32px;
-      border: none;
-      border-radius: 4px;
-      cursor: pointer;
-      padding: 0;
-      background: none;
-    }
-
-    .toolbar-button-group {
-      display: flex;
-      border: 1px solid #ddd;
-      border-radius: 4px;
-      overflow: hidden;
-
-      button {
-        border: none;
-        background: white;
-        padding: 4px 8px;
-        font-size: 14px;
-        cursor: pointer;
-        min-width: 32px;
-
-        &:not(:last-child) {
-          border-right: 1px solid #ddd;
-        }
-
-        &:hover {
-          background: #f5f5f5;
-        }
-
-        &.active {
-          background: #e0e0e0;
-          font-weight: bold;
-        }
-      }
-    }
-
-    .slider-group {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      width: 100%;
-
-      label {
-        min-width: 60px;
-        font-size: 14px;
-      }
-
-      input[type="range"] {
-        flex: 1;
-      }
-
-      span {
-        min-width: 40px;
-        text-align: right;
-        font-size: 14px;
-      }
-    }
-  }
-
-  .zoom-controls {
-    position: absolute;
-    bottom: 16px;
-    right: 16px;
-    display: flex;
-    align-items: center;
-    background: rgba(255, 255, 255, 0.9);
-    padding: 4px 8px;
-    border-radius: 20px;
-    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+    padding: 10px 15px;
     z-index: 100;
+    font-size: 13px;
+    border: 1px solid rgba(0, 0, 0, 0.08);
+    max-width: 300px;
+    backdrop-filter: blur(4px);
+    display: none;
+    flex-direction: column;
+    gap: 4px;
   }
 
-  .zoom-button {
-    width: 28px;
-    height: 28px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    border: none;
-    background: rgba(0, 0, 0, 0.05);
-    border-radius: 50%;
-    cursor: pointer;
+  .info-title {
+    font-weight: 600;
+    margin-bottom: 5px;
+    color: #333;
     font-size: 14px;
-    transition: all 0.2s;
-
-    &:hover {
-      background: rgba(0, 0, 0, 0.1);
-    }
-
-    &.reset {
-      width: auto;
-      border-radius: 14px;
-      padding: 0 8px;
-      margin-left: 8px;
-      font-size: 12px;
-    }
+    border-bottom: 1px solid #eee;
+    padding-bottom: 5px;
   }
 
-  .zoom-text {
-    margin: 0 8px;
+  .info-row {
+    display: flex;
+    margin-bottom: 2px;
+    align-items: center;
     font-size: 12px;
-    min-width: 40px;
-    text-align: center;
+  }
+
+  .info-label {
+    font-weight: 500;
+    min-width: 60px;
+    color: #666;
+  }
+
+  .info-value {
+    color: #333;
+    word-break: break-word;
+    max-width: 220px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-family: 'Roboto Mono', monospace, system-ui;
+    background: #f8f8f8;
+    padding: 1px 4px;
+    border-radius: 3px;
+    font-size: 11px;
+  }
+
+  .tool-value {
+    color: #333;
+    font-weight: bold;
   }
 </style>

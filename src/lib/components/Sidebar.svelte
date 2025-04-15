@@ -118,13 +118,19 @@
 <style lang="scss">
   .sidebar {
     background-color: $sidebar-bg;
-    border-right: 1px solid $border-color;
+    //border-right: 1px solid $border-color;
+    background-color: #fff;
     height: 100%;
-    width: 250px;
+
+    box-sizing: border-box;
+    width: 220px;
     transition: width $transition-normal;
     display: flex;
     flex-direction: column;
     overflow-y: auto;
+
+    box-shadow: -8px 18px 32px rgba(black, 0.2), inset -2px -6px 12px rgba(black, 0.03);
+    border-radius: $border-radius-lg;
 
     &.collapsed {
       width: 60px;
@@ -242,22 +248,24 @@
       font-weight: 500;
       display: flex;
       align-items: center;
-      gap: 8px;
-      padding: 6px 8px;
-      margin: 4px 12px;
+      gap: 4px;
+      padding: 4px 6px;
+      margin: 2px 12px;
       cursor: pointer;
       border-radius: $border-radius-md;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
+      transition: .1s ease;
 
       &:hover {
         background-color: rgba($text-color, 0.05);
       }
 
       &.active {
-        background-color: rgba($primary-color, 0.1);
+        background-color: rgba($primary-color, 0.08);
         color: $primary-color;
+        font-weight: 600;
       }
     }
   }

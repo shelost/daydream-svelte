@@ -11,6 +11,7 @@
   export let pageId: string;
   export let content: DrawingContent;
   export let selectedTool: Tool = 'draw';
+  export let isDrawingMode: boolean = true;
   export let onSaving: (status: boolean) => void;
   export let onSaveStatus: (status: 'saved' | 'saving' | 'error') => void;
 

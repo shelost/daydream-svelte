@@ -12,7 +12,7 @@
     { id: 'pan', label: 'Pan', icon: '✋' },
     { id: 'text', label: 'Text', icon: 'T' },
     { id: 'draw', label: 'Draw', icon: '✏️' },
-    { id: 'polygon', label: 'Shape', icon: '⬡' },
+    { id: 'rectangle', label: 'Shape', icon: '⬡' },
     { id: 'eraser', label: 'Eraser', icon: '🧹' }
   ];
 
@@ -49,16 +49,17 @@
 
 <style lang="scss">
   .toolbar {
-    background-color: $toolbar-bg;
-    border-right: 1px solid $border-color;
+    background-color: #ffffff;
+    border-right: 1px solid #e0e0e0;
     padding: 0.5rem;
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
     width: 60px;
     height: 100%;
-    backdrop-filter: blur(10px);
     overflow-y: auto;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+    z-index: 10;
   }
 
   .tools-container {
@@ -75,17 +76,17 @@
     padding: 0.5rem;
     border: none;
     background-color: transparent;
-    border-radius: $border-radius-sm;
+    border-radius: 4px;
     cursor: pointer;
-    transition: all $transition-fast;
+    transition: all 0.2s ease;
 
     &:hover {
-      background-color: rgba($text-color, 0.05);
+      background-color: rgba(0, 0, 0, 0.05);
     }
 
     &.active {
-      background-color: rgba($primary-color, 0.1);
-      color: $primary-color;
+      background-color: rgba(66, 133, 244, 0.1);
+      color: #4285f4;
     }
   }
 

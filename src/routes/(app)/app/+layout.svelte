@@ -37,14 +37,25 @@
 
 <div class="app-layout">
   <Sidebar currentPageId={currentPageId} />
-  <slot />
+  <div class="main-content">
+    <slot />
+  </div>
 </div>
 
 <style lang="scss">
   .app-layout {
     width: 100%;
-    height: 100vh;
+    height: calc(100vh);
+    padding: 12px;
+    gap: 12px;
     display: flex;
     overflow: hidden;
+  }
+
+  .main-content {
+    flex: 1;
+    box-shadow: -2px 18px 32px rgba(black, 0.2);
+    overflow: hidden;
+    border-radius: $border-radius-lg;
   }
 </style>

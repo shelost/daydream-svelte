@@ -67,7 +67,7 @@
 <style lang="scss">
   .zoom-control {
     position: fixed;
-    top: 15px;
+    top: 70px;
     right: 15px;
     background: white;
     border-radius: 4px;

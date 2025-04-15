@@ -7,6 +7,8 @@
   import type { Tool } from '$lib/types';
   import { afterNavigate, disableScrollHandling } from '$app/navigation';
 
+  import type { ComponentType } from 'svelte';
+
   import Toolbar from '$lib/components/Toolbar.svelte';
   import TitleBar from '$lib/components/TitleBar.svelte';
   import Canvas from '$lib/components/Canvas.svelte';
@@ -15,10 +17,16 @@
   let loading = true;
   let error = '';
   let selectedTool: Tool = 'select';
+  let isDrawingMode = false;
   let saving = false;
   let saveStatus: 'saved' | 'saving' | 'error' = 'saved';
   let pageId: string;
   let unsubscribe: () => void;
+  let canvasComponent: { setTool?: (tool: Tool) => void } | undefined;
+
+  // Add variables for selected object information
+  let selectedObjectType: string | null = null;
+  let selectedObjectId: string | null = null;
 
   // This function loads the page data based on the current pageId
   async function loadPageData(id: string) {
@@ -107,7 +115,15 @@
   }
 
   function handleToolChange(tool: Tool) {
+    console.log('Parent: Tool selected:', tool);
     selectedTool = tool;
+    isDrawingMode = tool === 'draw';
+  }
+
+  // Add a reactive statement to ensure tool changes propagate to the Canvas
+  $: if (canvasComponent && canvasComponent.setTool && selectedTool) {
+    console.log('Parent: Updating canvas tool to:', selectedTool);
+    canvasComponent.setTool(selectedTool);
   }
 </script>
 
@@ -127,7 +143,15 @@
         <button on:click={() => goto('/app')}>Back to Home</button>
       </div>
     {:else}
-      <TitleBar page={pageData} saving={saving} saveStatus={saveStatus} />
+      <TitleBar
+        page={pageData}
+        saving={saving}
+        saveStatus={saveStatus}
+        selectedTool={selectedTool}
+        isDrawingMode={isDrawingMode}
+        selectedObjectType={selectedObjectType}
+        selectedObjectId={selectedObjectId}
+      />
 
       <div class="workspace">
         <Toolbar
@@ -141,8 +165,12 @@
           pageId={pageData.id}
           content={pageData.content}
           bind:selectedTool={selectedTool}
+          bind:isDrawingMode={isDrawingMode}
+          bind:selectedObjectType={selectedObjectType}
+          bind:selectedObjectId={selectedObjectId}
           onSaving={handleSaving}
           onSaveStatus={handleSaveStatus}
+          bind:this={canvasComponent}
         />
         {/key}
       </div>

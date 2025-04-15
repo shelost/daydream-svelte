@@ -264,7 +264,7 @@
     padding: 1.5rem;
     border: 1px solid $border-color;
     transition: all $transition-fast;
-    box-shadow: $shadow-sm;
+    box-shadow: -8px 8px 16px rgba(black, 0.1);
 
     &:hover {
       transform: translateY(-3px);

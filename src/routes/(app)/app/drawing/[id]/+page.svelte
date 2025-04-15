@@ -15,6 +15,7 @@
   let loading = true;
   let error = '';
   let selectedTool: Tool = 'draw';
+  let isDrawingMode = true; // Drawings are always in drawing mode
   let saving = false;
   let saveStatus: 'saved' | 'saving' | 'error' = 'saved';
   let pageId: string;
@@ -108,6 +109,7 @@
 
   function handleToolChange(tool: Tool) {
     selectedTool = tool;
+    isDrawingMode = true; // Drawings are always in drawing mode
   }
 </script>
 
@@ -127,7 +129,13 @@
         <button on:click={() => goto('/app')}>Back to Home</button>
       </div>
     {:else}
-      <TitleBar page={pageData} saving={saving} saveStatus={saveStatus} />
+      <TitleBar
+        page={pageData}
+        saving={saving}
+        saveStatus={saveStatus}
+        selectedTool={selectedTool}
+        isDrawingMode={isDrawingMode}
+      />
 
       <div class="workspace">
         <Toolbar
@@ -141,6 +149,7 @@
           pageId={pageData.id}
           content={pageData.content}
           bind:selectedTool={selectedTool}
+          bind:isDrawingMode={isDrawingMode}
           onSaving={handleSaving}
           onSaveStatus={handleSaveStatus}
         />

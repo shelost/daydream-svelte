@@ -92,6 +92,7 @@ export type Tool =
   | 'pan'
   | 'draw'
   | 'polygon'
+  | 'rectangle'
   | 'text'
   | 'eraser'
   | 'move';
