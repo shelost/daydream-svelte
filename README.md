@@ -1,38 +1,74 @@
-# sv
+# Daydream - Canvas Drawing App
 
-Everything you need to build a Svelte project, powered by [`sv`](https://github.com/sveltejs/cli).
+A sophisticated canvas drawing application built with SvelteKit, Fabric.js, Perfect-freehand, and Supabase.
 
-## Creating a project
+## Features
 
-If you're seeing this, you've probably already done this step. Congrats!
+- **Authentication**: Sign up and log in with email/password or Google OAuth
+- **Canvas Drawing**: Create and edit canvas pages with Fabric.js
+- **Freehand Drawing**: Create beautiful freehand drawings with Perfect-freehand
+- **Nested Documents**: Create drawings within canvas pages
+- **Real-time Autosave**: Automatic saving of all changes
+- **Minimalist UI**: Clean, simple interface inspired by MUJI and Apple design
 
-```bash
-# create a new project in the current directory
-npx sv create
+## Tech Stack
 
-# create a new project in my-app
-npx sv create my-app
-```
+- **SvelteKit**: Front-end framework with server-side rendering
+- **Supabase**: Backend-as-a-Service for authentication and data storage
+- **Fabric.js**: Canvas manipulation library
+- **Perfect-freehand**: Smooth, realistic drawing algorithm
+- **GSAP**: Animation library for smooth UI transitions
+- **SCSS**: Styling with variables and nested rules
 
-## Developing
+## Getting Started
 
-Once you've created a project and installed dependencies with `npm install` (or `pnpm install` or `yarn`), start a development server:
+### Prerequisites
 
-```bash
-npm run dev
+- Node.js (v16+)
+- npm or yarn
+- Supabase account and project
 
-# or start the server and open the app in a new browser tab
-npm run dev -- --open
-```
+### Installation
 
-## Building
+1. Clone the repository
+   ```
+   git clone https://github.com/yourusername/daydream-svelte.git
+   cd daydream-svelte
+   ```
 
-To create a production version of your app:
+2. Install dependencies
+   ```
+   npm install
+   ```
 
-```bash
-npm run build
-```
+3. Set up environment variables
+   Create a `.env` file in the root directory with the following variables:
+   ```
+   PUBLIC_SUPABASE_URL=https://your-supabase-project.supabase.co
+   PUBLIC_SUPABASE_ANON_KEY=your-anon-key
+   ```
 
-You can preview the production build with `npm run preview`.
+4. Run the SQL schema in your Supabase project
+   Copy the contents of `schema.sql` and run it in the Supabase SQL editor
 
-> To deploy your app, you may need to install an [adapter](https://svelte.dev/docs/kit/adapters) for your target environment.
+5. Start the development server
+   ```
+   npm run dev
+   ```
+
+## Project Structure
+
+- `src/routes/(public)`: Public routes (landing page, auth pages)
+- `src/routes/(app)`: Protected app routes (require authentication)
+- `src/lib/components`: Reusable UI components
+- `src/lib/supabase`: Supabase client and utility functions
+- `src/lib/canvas`: Canvas and drawing utilities
+- `src/lib/stores`: Svelte stores for state management
+
+## Deployment
+
+This project can be deployed to any platform that supports SvelteKit, such as Vercel, Netlify, or Cloudflare Pages.
+
+## License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
