@@ -81,6 +81,16 @@ CREATE POLICY "Anyone can upload an avatar." ON storage.objects
 CREATE POLICY "Users can update their own avatar." ON storage.objects
   FOR UPDATE USING (auth.uid() = owner) WITH CHECK (bucket_id = 'avatars');
 
+-- Storage policies for thumbnails
+CREATE POLICY "Thumbnail images are publicly accessible." ON storage.objects
+  FOR SELECT USING (bucket_id = 'thumbnails');
+
+CREATE POLICY "Any authenticated user can upload thumbnails." ON storage.objects
+  FOR INSERT WITH CHECK (bucket_id = 'thumbnails' AND auth.role() = 'authenticated');
+
+CREATE POLICY "Users can update thumbnails they own." ON storage.objects
+  FOR UPDATE USING (auth.uid() = owner) WITH CHECK (bucket_id = 'thumbnails');
+
 -- Function to create a user profile after signup
 CREATE OR REPLACE FUNCTION handle_new_user()
 RETURNS TRIGGER AS $$

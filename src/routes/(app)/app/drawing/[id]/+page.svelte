@@ -3,7 +3,7 @@
   import { page } from '$app/stores';
   import { goto } from '$app/navigation';
   import { user } from '$lib/stores/appStore';
-  import { getPage } from '$lib/supabase/pages';
+  import { getPage, updatePage } from '$lib/supabase/pages';
   import type { Tool } from '$lib/types';
   import { afterNavigate, disableScrollHandling } from '$app/navigation';
 
@@ -11,15 +11,16 @@
   import TitleBar from '$lib/components/TitleBar.svelte';
   import Drawing from '$lib/components/Drawing.svelte';
 
-  let pageData: any;
+  let pageData: any = null;
   let loading = true;
   let error = '';
   let selectedTool: Tool = 'draw';
   let isDrawingMode = true; // Drawings are always in drawing mode
   let saving = false;
   let saveStatus: 'saved' | 'saving' | 'error' = 'saved';
-  let pageId: string;
+  let pageId = '';
   let unsubscribe: () => void;
+  let drawingComponent: Drawing; // Add reference to the drawing component
 
   // This function loads the page data based on the current pageId
   async function loadPageData(id: string) {
@@ -54,6 +55,15 @@
       }
 
       pageData = data;
+
+      // Generate a thumbnail if one doesn't exist yet
+      setTimeout(() => {
+        if (drawingComponent && (!pageData.thumbnail_url || pageData.thumbnail_url === '')) {
+          console.log('Generating initial thumbnail for drawing');
+          drawingComponent.generateThumbnail();
+        }
+      }, 5000); // Wait 5 seconds for drawing to fully load
+
     } catch (err) {
       console.error('Unexpected error loading page:', err);
       error = err instanceof Error ? err.message : 'Failed to load page';
@@ -99,8 +109,8 @@
     disableScrollHandling();
   });
 
-  function handleSaving(status: boolean) {
-    saving = status;
+  function handleSaving(isSaving: boolean) {
+    saving = isSaving;
   }
 
   function handleSaveStatus(status: 'saved' | 'saving' | 'error') {
@@ -110,6 +120,13 @@
   function handleToolChange(tool: Tool) {
     selectedTool = tool;
     isDrawingMode = true; // Drawings are always in drawing mode
+  }
+
+  function handleGenerateThumbnail() {
+    if (drawingComponent && drawingComponent.generateThumbnail) {
+      console.log('Manually generating thumbnail');
+      drawingComponent.generateThumbnail();
+    }
   }
 </script>
 
@@ -135,6 +152,7 @@
         saveStatus={saveStatus}
         selectedTool={selectedTool}
         isDrawingMode={isDrawingMode}
+        on:generateThumbnail={handleGenerateThumbnail}
       />
 
       <div class="workspace">
@@ -144,16 +162,18 @@
           on:toolChange={(e) => handleToolChange(e.detail.tool)}
         />
 
-        {#key pageData.id}
-        <Drawing
-          pageId={pageData.id}
-          content={pageData.content}
-          bind:selectedTool={selectedTool}
-          bind:isDrawingMode={isDrawingMode}
-          onSaving={handleSaving}
-          onSaveStatus={handleSaveStatus}
-        />
-        {/key}
+        <div class="drawing-area">
+          {#key pageData?.id}
+          <Drawing
+            pageId={pageData.id}
+            content={pageData.content}
+            selectedTool={selectedTool}
+            onSaving={handleSaving}
+            onSaveStatus={handleSaveStatus}
+            bind:this={drawingComponent}
+          />
+          {/key}
+        </div>
       </div>
     {/if}
   </div>
@@ -210,5 +230,13 @@
     p {
       color: $error-color;
     }
+  }
+
+  .drawing-area {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    position: relative;
   }
 </style>

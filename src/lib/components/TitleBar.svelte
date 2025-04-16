@@ -3,25 +3,37 @@
   import { goto } from '$app/navigation';
   import { updatePage } from '$lib/supabase/pages';
   import { gsap } from 'gsap';
+  import { createEventDispatcher } from 'svelte';
+  import type { SaveStatus, PageType, Tool } from '$lib/types';
 
   export let page: any; // Page data
   export let saving: boolean = false;
-  export let saveStatus: 'saved' | 'saving' | 'error' = 'saved';
-  export let selectedTool: string = 'select'; // Add prop for selected tool
+  export let saveStatus: SaveStatus = 'saved';
+  export let selectedTool: Tool | null = null;
   export let isDrawingMode: boolean = false; // Add prop for drawing mode
   // Add props for selected object information
   export let selectedObjectType: string | null = null;
   export let selectedObjectId: string | null = null;
+
+  const dispatch = createEventDispatcher();
 
   let editingTitle = false;
   let titleInput: HTMLInputElement;
   let newTitle = '';
 
   let editingIcon = false;
-  let iconInput: HTMLInputElement;
   let newIcon = '';
 
-  const commonIcons = ['📄', '✏️', '📝', '📑', '📋', '📌', '🗂️', '🗒️', '📚', '🎨', '🖌️', '💻', '📊', '📈', '🚀', '💡', '🔍'];
+  const commonIcons = [
+    'description', 'edit', 'article', 'note', 'assignment',
+    'push_pin', 'folder', 'notes', 'book', 'palette',
+    'brush', 'computer', 'bar_chart', 'trending_up', 'rocket',
+    'lightbulb', 'search'
+  ];
+
+  function getDefaultIcon(type: PageType): string {
+    return type === 'canvas' ? 'dashboard' : 'edit';
+  }
 
   function startEditingTitle() {
     editingTitle = true;
@@ -38,15 +50,9 @@
 
   function startEditingIcon() {
     editingIcon = true;
-    newIcon = page.icon || (page.type === 'canvas' ? '📄' : '✏️');
+    newIcon = page.icon || getDefaultIcon(page.type);
 
-    // Focus the input after the DOM updates
-    setTimeout(() => {
-      if (iconInput) {
-        iconInput.focus();
-        iconInput.select();
-      }
-    }, 0);
+    // We're not focusing an input anymore since we're using icon buttons
   }
 
   async function saveTitle() {
@@ -150,7 +156,17 @@
   function navigateToHome() {
     goto('/app');
   }
+
+  function generateThumbnail() {
+    dispatch('generateThumbnail');
+  }
+
+  $: defaultIcon = getDefaultIcon(page.type);
 </script>
+
+<svelte:head>
+  <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+</svelte:head>
 
 <div class="title-bar">
   <div class="breadcrumbs">
@@ -163,23 +179,17 @@
     <div class="icon-section">
       {#if editingIcon}
         <div class="icon-editor">
-          <input
-            bind:this={iconInput}
-            bind:value={newIcon}
-            type="text"
-            maxlength="2"
-            on:blur={saveIcon}
-            on:keydown={handleIconKeydown}
-          />
           <div class="icon-picker">
             {#each commonIcons as icon}
-              <button class="icon-option" on:click={() => selectIcon(icon)}>{icon}</button>
+              <button class="icon-option" on:click={() => selectIcon(icon)}>
+                <span class="material-icons">{icon}</span>
+              </button>
             {/each}
           </div>
         </div>
       {:else}
         <button on:click={startEditingIcon} class="page-icon">
-          {page.icon || (page.type === 'canvas' ? '📄' : '✏️')}
+          <span class="material-icons">{page.icon || defaultIcon}</span>
         </button>
       {/if}
     </div>
@@ -229,6 +239,17 @@
     {:else}
       <span class="status-indicator saved">All changes saved</span>
     {/if}
+  </div>
+
+  <div class="actions">
+    <button class="back-button" on:click={() => goto('/app')}>
+      <span class="material-icons">arrow_back</span>
+      <span>Back</span>
+    </button>
+
+    <button class="action-button" on:click={generateThumbnail} title="Generate thumbnail">
+      <span class="material-icons">image</span>
+    </button>
   </div>
 </div>
 
@@ -464,5 +485,43 @@
     background: rgba(0, 0, 0, 0.2);
     padding: 1px 4px;
     border-radius: 2px;
+  }
+
+  .actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .back-button {
+    background: none;
+    border: none;
+    padding: 0;
+    font: inherit;
+    cursor: pointer;
+    outline: inherit;
+    color: rgba($text-color, 0.6);
+    font-size: 12px;
+    transition: color 0.2s ease;
+
+    &:hover {
+      color: rgba($text-color, 0.8);
+    }
+  }
+
+  .action-button {
+    background: none;
+    border: none;
+    padding: 0;
+    font: inherit;
+    cursor: pointer;
+    outline: inherit;
+    color: rgba($text-color, 0.6);
+    font-size: 12px;
+    transition: color 0.2s ease;
+
+    &:hover {
+      color: rgba($text-color, 0.8);
+    }
   }
 </style>

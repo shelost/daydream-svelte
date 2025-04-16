@@ -7,6 +7,12 @@
 
   export let currentPageId: string;
 
+  // Helper function to get the appropriate Material Icon based on page type
+  function getPageIcon(type: 'canvas' | 'drawing', icon?: string): string {
+    if (icon) return icon;
+    return type === 'canvas' ? 'dashboard' : 'edit';
+  }
+
   function toggleSidebar() {
     isSidebarOpen.update(value => !value);
   }
@@ -46,17 +52,24 @@
   }
 </script>
 
+<svelte:head>
+  <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+</svelte:head>
+
 <aside class:collapsed={!$isSidebarOpen} class="sidebar">
   <div class="sidebar-header">
+    <img src="/arachne-icon.png" alt="Arachne" class="sidebar-logo" />
     <h2>Daydream</h2>
     <button on:click={toggleSidebar} class="toggle-button">
-      {$isSidebarOpen ? '◀' : '▶'}
+      <span class="material-icons">
+        {$isSidebarOpen ? 'chevron_left' : 'chevron_right'}
+      </span>
     </button>
   </div>
 
   <nav class="sidebar-nav">
     <a href="/app" class="nav-home">
-      <span class="icon">🏠</span>
+      <span class="material-icons">home</span>
       {#if $isSidebarOpen}<span class="text">Home</span>{/if}
     </a>
 
@@ -65,10 +78,10 @@
         <h3>Pages</h3>
         <div class="create-buttons">
           <button on:click={() => createNewPage('canvas')} class="create-button">
-            <span class="plus">+</span> Canvas
+            <span class="material-icons">add</span> Canvas
           </button>
           <button on:click={() => createNewPage('drawing')} class="create-button">
-            <span class="plus">+</span> Drawing
+            <span class="material-icons">add</span> Drawing
           </button>
         </div>
       </div>
@@ -82,7 +95,7 @@
           on:keydown={(e) => e.key === 'Enter' && navigateToPage(page.id)}
           tabindex="0"
         >
-          <span class="icon">{page.icon || (page.type === 'canvas' ? '📄' : '✏️')}</span>
+          <span class="material-icons">{getPageIcon(page.type, page.icon)}</span>
           {#if $isSidebarOpen}<span class="text">{page.title}</span>{/if}
         </li>
       {/each}
@@ -107,6 +120,7 @@
         <div class="profile-info">
           <span class="profile-name">{$profile?.full_name || 'User'}</span>
           <button class="sign-out-button" on:click|stopPropagation={() => supabase.auth.signOut()}>
+            <span class="material-icons" style="font-size: 16px; margin-right: 4px;">logout</span>
             Sign out
           </button>
         </div>
@@ -116,6 +130,10 @@
 </aside>
 
 <style lang="scss">
+  .material-icons {
+    font-size: 20px;
+  }
+
   .sidebar {
     background-color: $sidebar-bg;
     //border-right: 1px solid $border-color;
@@ -123,13 +141,13 @@
     height: 100%;
 
     box-sizing: border-box;
-    width: 220px;
+    width: 200px;
     transition: width $transition-normal;
     display: flex;
     flex-direction: column;
     overflow-y: auto;
 
-    box-shadow: -8px 18px 32px rgba(black, 0.2), inset -2px -6px 12px rgba(black, 0.03);
+    //box-shadow: -8px 18px 32px rgba(black, 0.2), inset -2px -6px 12px rgba(black, 0.03);
     border-radius: $border-radius-lg;
 
     &.collapsed {
@@ -143,6 +161,10 @@
     justify-content: space-between;
     padding: 1rem;
     border-bottom: 1px solid $border-color;
+
+    img{
+      height: 24px;
+    }
 
     h2 {
       font-size: 1.2rem;

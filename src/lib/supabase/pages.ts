@@ -130,3 +130,33 @@ export async function reorderPages(orderedPages: Array<{ id: string, order_index
   const { error } = await supabase.rpc('reorder_pages', { pages: orderedPages });
   return { error };
 }
+
+// Upload thumbnail for a page
+export async function uploadThumbnail(pageId: string, thumbnailBlob: Blob) {
+  const fileName = `${pageId}-${Date.now()}.png`;
+  const filePath = `thumbnails/${fileName}`;
+
+  // Upload to Supabase storage
+  const { error: uploadError } = await supabase.storage
+    .from('thumbnails')
+    .upload(filePath, thumbnailBlob, {
+      contentType: 'image/png',
+      upsert: true
+    });
+
+  if (uploadError) {
+    console.error('Error uploading thumbnail:', uploadError);
+    return { error: uploadError };
+  }
+
+  // Get public URL
+  const { data } = supabase.storage.from('thumbnails').getPublicUrl(filePath);
+
+  // Update page with new thumbnail URL
+  const { error: updateError } = await supabase
+    .from('pages')
+    .update({ thumbnail_url: data.publicUrl })
+    .eq('id', pageId);
+
+  return { url: data.publicUrl, error: updateError };
+}

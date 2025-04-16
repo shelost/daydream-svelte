@@ -2,7 +2,7 @@
   import { onMount, onDestroy, afterUpdate } from 'svelte';
   import { fade } from 'svelte/transition';
   import type { Tool, DrawingContent, Stroke, StrokePoint } from '$lib/types';
-  import { updatePageContent } from '$lib/supabase/pages';
+  import { updatePageContent, uploadThumbnail } from '$lib/supabase/pages';
   import { getStroke } from 'perfect-freehand';
   import { getSvgPathFromStroke, getPerfectFreehandOptions, calculatePressureFromVelocity } from '$lib/utils/drawingUtils';
   import FloatingToolbar from './Drawing/FloatingToolbar.svelte';
@@ -824,6 +824,226 @@
   function onTaperEndChange(event: CustomEvent) {
     taperEnd = event.detail.taperEnd;
     renderCurrentStroke();
+  }
+
+  // Add a function to save with thumbnails
+  async function saveDrawingContent(generateThumbnail = false) {
+    if (!pageId) return;
+
+    let isSaving = true; // Local variable to track saving state
+    onSaving(true);
+    onSaveStatus('saving');
+
+    try {
+      // Create a copy of the content to avoid reactivity issues
+      const contentToSave = JSON.parse(JSON.stringify(content));
+
+      // Update the page content in the database
+      const { error } = await updatePageContent(pageId, contentToSave);
+
+      if (error) {
+        console.error('Error saving drawing:', error);
+        onSaveStatus('error');
+        return;
+      }
+
+      // Generate thumbnail if requested
+      if (generateThumbnail && canvas && ctx) {
+        try {
+          console.log("Generating drawing thumbnail...");
+          // Define thumbnail dimensions
+          const thumbnailWidth = 320;
+          const thumbnailHeight = 180;
+
+          // Create a temporary canvas for the thumbnail
+          const thumbnailCanvas = document.createElement('canvas');
+          thumbnailCanvas.width = thumbnailWidth;
+          thumbnailCanvas.height = thumbnailHeight;
+          const thumbCtx = thumbnailCanvas.getContext('2d');
+
+          if (thumbCtx) {
+            // Fill with a white background
+            thumbCtx.fillStyle = '#ffffff';
+            thumbCtx.fillRect(0, 0, thumbnailWidth, thumbnailHeight);
+
+            // Calculate stroke bounds to center content
+            let minX = Infinity;
+            let minY = Infinity;
+            let maxX = -Infinity;
+            let maxY = -Infinity;
+
+            // Only consider strokes with at least 2 points
+            const validStrokes = content.strokes.filter(stroke => stroke.points.length >= 2);
+            console.log(`Found ${validStrokes.length} valid strokes for thumbnail`);
+
+            validStrokes.forEach(stroke => {
+              stroke.points.forEach(point => {
+                minX = Math.min(minX, point.x);
+                minY = Math.min(minY, point.y);
+                maxX = Math.max(maxX, point.x);
+                maxY = Math.max(maxY, point.y);
+              });
+            });
+
+            // Handle empty canvas case or invalid bounds
+            const hasValidContent = validStrokes.length > 0 &&
+                                   minX !== Infinity && minY !== Infinity &&
+                                   maxX !== -Infinity && maxY !== -Infinity;
+
+            if (hasValidContent) {
+              console.log("Drawing has valid strokes, rendering to thumbnail");
+              try {
+                // Calculate dimensions
+                const contentWidth = maxX - minX;
+                const contentHeight = maxY - minY;
+
+                // Add padding to content dimensions to ensure strokes aren't cut off
+                const paddingFactor = 0.1; // 10% padding
+                const paddedWidth = contentWidth * (1 + paddingFactor);
+                const paddedHeight = contentHeight * (1 + paddingFactor);
+
+                // Calculate scale to fit content in thumbnail
+                const scaleX = thumbnailWidth / paddedWidth;
+                const scaleY = thumbnailHeight / paddedHeight;
+                const scale = Math.min(scaleX, scaleY); // Use the smaller scale to fit everything
+
+                // Center the content
+                const offsetX = (thumbnailWidth / scale - contentWidth) / 2 - minX + (contentWidth * paddingFactor / 2);
+                const offsetY = (thumbnailHeight / scale - contentHeight) / 2 - minY + (contentHeight * paddingFactor / 2);
+
+                // Apply transformations
+                thumbCtx.save();
+                thumbCtx.scale(scale, scale);
+                thumbCtx.translate(offsetX, offsetY);
+
+                // Render each stroke
+                for (const stroke of validStrokes) {
+                  const perfectFreehandOptions = getPerfectFreehandOptions(
+                    stroke.size,
+                    stroke.tool === 'highlighter' ? -0.5 : thinning,
+                    smoothing,
+                    streamline,
+                    simulatePressure,
+                    capStart,
+                    capEnd,
+                    taperStart,
+                    taperEnd
+                  );
+
+                  const freehandStroke = getStroke(
+                    stroke.points.map(p => [p.x, p.y, p.pressure || 0.5]),
+                    perfectFreehandOptions
+                  );
+
+                  // Get SVG path
+                  const pathData = getSvgPathFromStroke(freehandStroke);
+
+                  if (!pathData) continue;
+
+                  // Create a path from the SVG data
+                  const path = new Path2D(pathData);
+
+                  // Set fill style based on stroke tool
+                  if (stroke.tool === 'highlighter') {
+                    thumbCtx.fillStyle = stroke.color;
+                    thumbCtx.globalAlpha = 0.4; // Highlighters are semi-transparent
+                  } else {
+                    thumbCtx.fillStyle = stroke.color;
+                    thumbCtx.globalAlpha = stroke.opacity;
+                  }
+
+                  // Fill the path
+                  thumbCtx.fill(path);
+                }
+
+                // Reset alpha
+                thumbCtx.globalAlpha = 1;
+                thumbCtx.restore();
+
+                // Add a subtle border to make it clearer
+                thumbCtx.strokeStyle = '#e0e0e0';
+                thumbCtx.lineWidth = 1;
+                thumbCtx.strokeRect(0, 0, thumbnailWidth, thumbnailHeight);
+
+                // Convert the thumbnail to a blob and upload
+                const thumbnailBlob = await new Promise<Blob | null>(resolve => {
+                  thumbnailCanvas.toBlob(blob => resolve(blob), 'image/png', 0.8);
+                });
+
+                // Upload the thumbnail
+                if (thumbnailBlob) {
+                  const result = await uploadThumbnail(pageId, thumbnailBlob);
+                  console.log("Drawing thumbnail uploaded successfully", result);
+                }
+              } catch (err) {
+                console.error("Error rendering drawing thumbnail:", err);
+                renderFallbackThumbnail(thumbCtx, thumbnailWidth, thumbnailHeight);
+              }
+            } else {
+              console.log("Drawing has no valid strokes, rendering fallback");
+              renderFallbackThumbnail(thumbCtx, thumbnailWidth, thumbnailHeight);
+            }
+          }
+        } catch (err) {
+          console.error('Error generating thumbnail:', err);
+          // Don't fail the save operation if thumbnail generation fails
+        }
+      }
+
+      // Set saved status
+      onSaveStatus('saved');
+    } catch (err) {
+      console.error('Error in save operation:', err);
+      onSaveStatus('error');
+    } finally {
+      isSaving = false;
+      onSaving(false);
+    }
+  }
+
+  // Helper function to render a fallback thumbnail
+  function renderFallbackThumbnail(ctx: CanvasRenderingContext2D, width: number, height: number) {
+    // Draw a placeholder for empty drawings
+    ctx.fillStyle = '#f5f5f5';
+    ctx.fillRect(0, 0, width, height);
+
+    ctx.fillStyle = '#999999';
+    ctx.font = '16px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('Drawing Preview', width / 2, height / 2);
+
+    // Use Material Icons for the drawing icon instead of emoji
+    ctx.font = '24px "Material Icons"';
+    ctx.fillText('edit', width / 2, height / 2 - 30);
+
+    // Instead of using thumbnailCanvas which is not defined, we'll create a blob directly
+    // from the canvas that was provided to our function
+    canvas.toBlob(async (blob: Blob | null) => {
+      if (blob && pageId) {
+        await uploadThumbnail(pageId, blob);
+      }
+    }, 'image/png', 0.8);
+  }
+
+  // Add a debounced save function
+  function debouncedSave() {
+    clearTimeout(saveTimeout);
+
+    saveTimeout = setTimeout(() => {
+      saveDrawingContent(true); // Generate thumbnail when saving
+    }, 2000); // 2 second debounce
+  }
+
+  // Call this function after making significant changes to the drawing content
+  function triggerManualSave() {
+    debouncedSave();
+  }
+
+  // Explicit function to trigger thumbnail generation
+  export function generateThumbnail() {
+    if (canvas && pageId) {
+      saveDrawingContent(true);
+    }
   }
 </script>
 

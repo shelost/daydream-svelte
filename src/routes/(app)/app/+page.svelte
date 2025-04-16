@@ -3,13 +3,20 @@
   import { goto } from '$app/navigation';
   import { gsap } from 'gsap';
   import { pages, pagesByType, user } from '$lib/stores/appStore';
-  import { getPages, createPage } from '$lib/supabase/pages';
+  import { getPages, createPage, uploadThumbnail } from '$lib/supabase/pages';
   import { supabase } from '$lib/supabase/client';
   import type { Page } from '$lib/types';
+  import PageCard from '$lib/components/PageCard.svelte';
 
   let loading = true;
   let error = '';
   let creatingPage = false;
+
+  // Helper function to get the appropriate Material Icon based on page type
+  function getPageIcon(type: 'canvas' | 'drawing', icon?: string): string {
+    if (icon) return icon;
+    return type === 'canvas' ? 'dashboard' : 'edit';
+  }
 
   onMount(async () => {
     try {
@@ -30,6 +37,19 @@
         }
 
         if (data) {
+          // Check for pages without thumbnails
+          let needsThumbnails = false;
+          data.forEach(page => {
+            if (!page.thumbnail_url) {
+              console.log(`Page ${page.id} has no thumbnail`);
+              needsThumbnails = true;
+            }
+          });
+
+          if (needsThumbnails) {
+            console.log('Some pages need thumbnails. Visit them to generate their thumbnails.');
+          }
+
           pages.set(data);
         }
       }
@@ -74,6 +94,101 @@
         return;
       }
 
+      // Create default thumbnail placeholder for new pages
+      try {
+        // Create canvas for thumbnail generation
+        const canvas = document.createElement('canvas');
+        canvas.width = 320;
+        canvas.height = 180;
+        const ctx = canvas.getContext('2d');
+
+        if (ctx) {
+          // Draw a placeholder thumbnail
+          // Background
+          ctx.fillStyle = '#ffffff';
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+          // Light background pattern
+          ctx.fillStyle = '#f5f5f5';
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+          // Add a simple icon based on page type
+          ctx.fillStyle = '#cccccc';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+
+          // Draw material design-like icon
+          if (type === 'canvas') {
+            // Draw dashboard icon
+            const iconSize = 60;
+            const x = canvas.width / 2;
+            const y = canvas.height / 2 - 20;
+
+            // Draw grid squares for dashboard icon
+            const gridSize = iconSize / 3;
+
+            // Draw icon frame
+            ctx.strokeStyle = '#cccccc';
+            ctx.lineWidth = 4;
+            ctx.strokeRect(x - iconSize/2, y - iconSize/2, iconSize, iconSize);
+
+            // Top-left square
+            ctx.fillRect(x - iconSize/2 + 6, y - iconSize/2 + 6, gridSize - 6, gridSize - 6);
+
+            // Top-right square
+            ctx.fillRect(x - iconSize/2 + gridSize + 6, y - iconSize/2 + 6, gridSize - 6, gridSize - 6);
+
+            // Bottom-left square
+            ctx.fillRect(x - iconSize/2 + 6, y - iconSize/2 + gridSize + 6, gridSize - 6, gridSize - 6);
+
+            // Bottom-right square
+            ctx.fillRect(x - iconSize/2 + gridSize + 6, y - iconSize/2 + gridSize + 6, gridSize - 6, gridSize - 6);
+          } else {
+            // Draw edit icon
+            const iconSize = 60;
+            const x = canvas.width / 2;
+            const y = canvas.height / 2 - 20;
+
+            // Draw pencil icon
+            // Pencil body
+            ctx.save();
+            ctx.translate(x, y);
+            ctx.rotate(Math.PI / 4); // 45 degree rotation
+
+            // Pencil body
+            ctx.fillRect(-iconSize/8, -iconSize/2, iconSize/4, iconSize*0.7);
+
+            // Pencil tip
+            ctx.beginPath();
+            ctx.moveTo(-iconSize/8, iconSize*0.2);
+            ctx.lineTo(iconSize/8, iconSize*0.2);
+            ctx.lineTo(0, iconSize*0.3);
+            ctx.fill();
+
+            // Eraser part
+            ctx.fillStyle = '#e0e0e0';
+            ctx.fillRect(-iconSize/8, -iconSize/2, iconSize/4, iconSize*0.15);
+
+            ctx.restore();
+          }
+
+          // Add text
+          ctx.fillStyle = '#999999';
+          ctx.font = '16px sans-serif';
+          ctx.fillText(`New ${type}`, canvas.width / 2, canvas.height / 2 + 40);
+
+          // Convert to blob and upload
+          canvas.toBlob(async (blob) => {
+            if (blob && data.id) {
+              await uploadThumbnail(data.id, blob);
+            }
+          }, 'image/png', 0.8);
+        }
+      } catch (err) {
+        // Don't block page creation if thumbnail generation fails
+        console.error('Error generating initial thumbnail:', err);
+      }
+
       // Add the new page to our store
       pages.update(currentPages => [...currentPages, data]);
 
@@ -95,6 +210,7 @@
 
 <svelte:head>
   <title>Daydream - My Pages</title>
+  <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
 </svelte:head>
 
 <div class="app-content">
@@ -127,15 +243,7 @@
             <h2>Canvas Pages</h2>
             <div class="pages-grid">
               {#each $pagesByType.canvasPages as page}
-                <div class="page-item" on:click={() => handlePageClick(page)}>
-                  <div class="page-card">
-                    <div class="page-icon">{page.icon || '📄'}</div>
-                    <div class="page-title">{page.title}</div>
-                    <div class="page-updated">
-                      Updated {new Date(page.updated_at).toLocaleDateString()}
-                    </div>
-                  </div>
-                </div>
+                <PageCard {page} />
               {/each}
             </div>
           </div>
@@ -146,15 +254,7 @@
             <h2>Drawing Pages</h2>
             <div class="pages-grid">
               {#each $pagesByType.drawingPages as page}
-                <div class="page-item" on:click={() => handlePageClick(page)}>
-                  <div class="page-card">
-                    <div class="page-icon">{page.icon || '✏️'}</div>
-                    <div class="page-title">{page.title}</div>
-                    <div class="page-updated">
-                      Updated {new Date(page.updated_at).toLocaleDateString()}
-                    </div>
-                  </div>
-                </div>
+                <PageCard {page} />
               {/each}
             </div>
           </div>
@@ -168,6 +268,7 @@
   .app-content {
     flex: 1;
     overflow: auto;
+    height: 100%;
   }
 
   .app-home {
@@ -175,6 +276,8 @@
     max-width: 1200px;
     margin: 0 auto;
     width: 100%;
+    height: 100%;
+    overflow-y: scroll;
   }
 
   .app-header {
@@ -261,10 +364,10 @@
   .page-card {
     background-color: white;
     border-radius: $border-radius-md;
-    padding: 1.5rem;
+    padding: 1rem;
     border: 1px solid $border-color;
     transition: all $transition-fast;
-    box-shadow: -8px 8px 16px rgba(black, 0.1);
+    box-shadow: 0 4px 12px rgba(black, 0.05);
 
     &:hover {
       transform: translateY(-3px);
@@ -273,16 +376,54 @@
     }
   }
 
-  .page-icon {
-    font-size: 2rem;
+  .page-thumbnail {
+    width: 100%;
+    height: 140px;
+    border-radius: $border-radius-sm;
+    overflow: hidden;
     margin-bottom: 1rem;
+    border: 1px solid $border-color;
+    background-color: white;
+    position: relative;
+
+    img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+  }
+
+  .thumbnail-placeholder {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    background-color: rgba($text-color, 0.03);
+
+    span {
+      font-size: 2.5rem;
+      opacity: 0.7;
+    }
+
+    .placeholder-label {
+      margin-top: 8px;
+      font-size: 0.8rem;
+      color: rgba($text-color, 0.4);
+      font-weight: 500;
+    }
   }
 
   .page-title {
-    font-size: 1.1rem;
+    font-size: 1rem;
     font-weight: 500;
     margin-bottom: 0.5rem;
     color: $text-color;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .page-updated {

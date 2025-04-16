@@ -7,7 +7,7 @@
   import { gsap } from 'gsap';
   import { pages } from '$lib/stores/pages';
   import type { Tool, CanvasContent, DrawingContent } from '$lib/types';
-  import { updatePageContent, createPage, getPage } from '$lib/supabase/pages';
+  import { updatePageContent, createPage, getPage, uploadThumbnail } from '$lib/supabase/pages';
   import { getSvgPathFromStroke } from '$lib/utils/drawingUtils';
   import { user } from '$lib/stores/auth';
   import ZoomControl from './ZoomControl.svelte';
@@ -52,6 +52,7 @@
 
   // Prevent loops with explicit flags
   let skipNextViewportSave = false;
+  let skipNextContentSave = false;
   let saveTimeout: any = null;
 
   // Internal non-reactive state copy - critical for loop prevention
@@ -83,13 +84,13 @@
   }
 
   // Styling presets for toolbar
-  const fontFamilies = ['Arial', 'Times New Roman', 'Courier New', 'Georgia', 'Verdana'];
+  const fontFamilies = ['Inter', 'Arial', 'Times New Roman', 'Courier New', 'Georgia', 'Verdana'];
   const fontSizes = [8, 10, 12, 14, 16, 18, 20, 24, 28, 32, 36, 40, 48, 56, 64, 72];
 
   // Text properties for selected object
   let textProps = {
-    fontFamily: 'Arial',
-    fontSize: 20,
+    fontFamily: 'Inter',
+    fontSize: 18,
     fontWeight: 'normal',
     fontStyle: 'normal',
     textAlign: 'left',
@@ -134,8 +135,9 @@
       strokeWidth: 1
     },
     text: {
-      fontFamily: 'Arial',
-      fontSize: 20,
+      fontFamily: 'Inter',
+      fontSize: 18,
+      charSpacing: -20,
       fill: '#333333'
     },
     welcomeText: {
@@ -156,174 +158,146 @@
   }
 
   // Main component initialization
-  onMount(async () => {
-    try {
-      log('Canvas component mounting...');
+  onMount(() => {
+    const initPromise = async () => {
+      try {
+        log('Canvas component mounting...');
 
-      // Dynamically import fabric.js to avoid SSR issues
-      const { fabric } = await import('fabric');
-      fabricLib = fabric;
-      fabricLoaded = true;
+        // Dynamically import fabric.js to avoid SSR issues
+        const { fabric } = await import('fabric');
+        fabricLib = fabric;
+        fabricLoaded = true;
 
-      // Validate DOM elements
-      if (!canvasEl) {
-        console.error('Canvas element is not defined');
-        return;
-      }
+        // Validate DOM elements
+        if (!canvasEl) {
+          console.error('Canvas element is not defined');
+          return;
+        }
 
-      if (!canvasContainer) {
-        console.error('Canvas container is not defined');
-        return;
-      }
+        if (!canvasContainer) {
+          console.error('Canvas container is not defined');
+          return;
+        }
 
-      log('Initializing canvas with dimensions:',
-        canvasContainer.clientWidth, canvasContainer.clientHeight);
+        log('Initializing canvas with dimensions:',
+          canvasContainer.clientWidth, canvasContainer.clientHeight);
 
-      // Initialize the canvas with proper size and options
-      canvas = new fabric.Canvas(canvasEl, {
-        backgroundColor: '#ffffff',
-        width: canvasContainer.clientWidth || 800,
-        height: canvasContainer.clientHeight || 600,
-        preserveObjectStacking: true,
-        selection: true,
-        centeredScaling: true,
-        stopContextMenu: true,
-        fireRightClick: true,
-        // Improve selection behavior
-        selectionKey: '', // Allow selection without modifier keys (empty string instead of null)
-        selectionColor: 'rgba(65, 105, 225, 0.2)', // Better selection visibility
-        selectionLineWidth: 1.5,
-        selectionBorderColor: 'rgba(65, 105, 225, 0.75)',
-        selectionFullyContained: false,
-        // Handle right-click events
-        skipTargetFind: false
-      });
+        // Initialize the canvas with proper size and options
+        canvas = new fabric.Canvas(canvasEl, {
+          backgroundColor: '#ffffff',
+          width: canvasContainer.clientWidth || 800,
+          height: canvasContainer.clientHeight || 600,
+          preserveObjectStacking: true,
+          selection: true,
+          centeredScaling: true,
+          stopContextMenu: true,
+          fireRightClick: true,
+          // Improve selection behavior
+          selectionKey: '', // Allow selection without modifier keys (empty string instead of null)
+          selectionColor: 'rgba(65, 105, 225, 0.2)', // Better selection visibility
+          selectionLineWidth: 1.5,
+          selectionBorderColor: 'rgba(65, 105, 225, 0.75)',
+          selectionFullyContained: false,
+          // Handle right-click events
+          skipTargetFind: false
+        });
 
-      // Using untrack for all initialization that shouldn't trigger reactivity
-      untrack(() => {
-        // Initialize local content from props (if available) to avoid reactivity
-        if (content && !localContent) {
-          localContent = safeClone(content);
+        // Using untrack for all initialization that shouldn't trigger reactivity
+        untrack(() => {
+          // Initialize local content from props (if available) to avoid reactivity
+          if (content && !localContent) {
+            localContent = safeClone(content);
 
-          // Extract viewport settings from content if available
-          if (localContent.viewport) {
-            initialViewport = {
-              zoom: localContent.viewport.zoom || 1,
-              panX: localContent.viewport.panX || 0,
-              panY: localContent.viewport.panY || 0
-            };
+            // Extract viewport settings from content if available
+            if (localContent.viewport) {
+              initialViewport = {
+                zoom: localContent.viewport.zoom || 1,
+                panX: localContent.viewport.panX || 0,
+                panY: localContent.viewport.panY || 0
+              };
+            }
           }
+
+          // Set initial zoom from viewport
+          zoom = initialViewport.zoom || 1;
+          canvas.setZoom(zoom);
+
+          // Set initial position if available
+          if (initialViewport.panX !== undefined && initialViewport.panY !== undefined) {
+            canvas.viewportTransform[4] = initialViewport.panX;
+            canvas.viewportTransform[5] = initialViewport.panY;
+          }
+
+          canvas.renderAll();
+        });
+
+        // Load saved content (if available)
+        if (localContent && Object.keys(localContent).length > 0) {
+          await loadCanvasContent(localContent);
+        } else {
+          // No content to load, just mark as initialized
+          contentLoaded = true;
+          initialized = true;
         }
 
-        // Set initial zoom from viewport
-        zoom = initialViewport.zoom || 1;
-        canvas.setZoom(zoom);
+        // Set up event handlers
+        setupEventHandlers();
+        setupSelectionHandlers();
 
-        // Set initial position if available
-        if (initialViewport.panX !== undefined && initialViewport.panY !== undefined) {
-          canvas.viewportTransform[4] = initialViewport.panX;
-          canvas.viewportTransform[5] = initialViewport.panY;
-        }
+        // Set up wheel zoom handler - this preserves cursor position during zoom
+        canvasContainer.addEventListener('wheel', (e) => {
+          if (e.ctrlKey || e.metaKey) {
+            e.preventDefault();
+            const delta = e.deltaY;
+            let newZoom = zoom;
 
+            if (delta < 0) {
+              // Zoom in
+              newZoom = Math.min(maxZoom, zoom + zoomStep);
+            } else {
+              // Zoom out
+              newZoom = Math.max(minZoom, zoom - zoomStep);
+            }
+
+            if (newZoom !== zoom) {
+              // Get mouse position relative to canvas
+              const rect = canvasEl.getBoundingClientRect();
+              const point = {
+                x: e.clientX - rect.left,
+                y: e.clientY - rect.top
+              };
+
+              zoomToPoint(newZoom, point);
+            }
+          }
+        }, { passive: false });
+
+        // Set up resize handler
+        window.addEventListener('resize', handleResize);
+
+        // Update tool mode for initial setup
+        updateToolMode();
+
+        // Initial render
         canvas.renderAll();
-      });
 
-      // Load saved content (if available)
-      if (localContent && Object.keys(localContent).length > 0) {
-        await loadCanvasContent(localContent);
-      } else {
-        // No content to load, just mark as initialized
+        // After a short delay, mark initialization as complete
+        setTimeout(() => {
+          initialized = true;
+          log('Canvas initialization complete');
+        }, 500);
+      } catch (error) {
+        console.error('Error initializing canvas:', error);
+        initialized = true; // Ensure we don't block future operations
         contentLoaded = true;
-        initialized = true;
       }
-
-      // Set up event handlers
-      setupEventHandlers();
-      setupSelectionHandlers();
-
-      // Set up wheel zoom handler - this preserves cursor position during zoom
-      canvasContainer.addEventListener('wheel', (e) => {
-        if (e.ctrlKey || e.metaKey) {
-          e.preventDefault();
-          const delta = e.deltaY;
-          let newZoom = zoom;
-
-          if (delta < 0) {
-            // Zoom in
-            newZoom = Math.min(maxZoom, zoom + zoomStep);
-          } else {
-            // Zoom out
-            newZoom = Math.max(minZoom, zoom - zoomStep);
-          }
-
-          if (newZoom !== zoom) {
-            // Get mouse position relative to canvas
-            const rect = canvasEl.getBoundingClientRect();
-            const point = {
-              x: e.clientX - rect.left,
-              y: e.clientY - rect.top
-            };
-
-            zoomToPoint(newZoom, point);
-          }
-        }
-      }, { passive: false });
-
-      // Set up resize handler
-      window.addEventListener('resize', handleResize);
-
-      // Update tool mode for initial setup
-      updateToolMode();
-
-      // Initial render
-      canvas.renderAll();
-
-      // After a short delay, mark initialization as complete
-      setTimeout(() => {
-        initialized = true;
-        log('Canvas initialization complete');
-      }, 500);
-    } catch (error) {
-      console.error('Error initializing canvas:', error);
-      initialized = true; // Ensure we don't block future operations
-      contentLoaded = true;
-    }
-
-    // Return cleanup function
-    return () => {
-      log('Canvas component cleanup...');
-
-      // Clean up all resources
-      untrack(() => {
-        // Cancel any pending save operations
-        if (saveTimeout) {
-          clearTimeout(saveTimeout);
-          saveTimeout = null;
-        }
-
-        // Clean up canvas
-        if (canvas) {
-          // Remove all event listeners explicitly
-          canvas.off();
-          canvas.dispose();
-          canvas = null;
-        }
-
-        // Remove DOM event listeners
-        if (canvasContainer) {
-          // We're using an inline function for wheel events, so we can't use removeEventListener directly
-          // Instead, we'll remove all wheel event listeners with the capture option
-          const wheelEventOptions = { capture: true };
-          canvasContainer.removeEventListener('wheel', (e) => {}, wheelEventOptions);
-        }
-
-        window.removeEventListener('resize', handleResize);
-      });
     };
+
+    return initPromise();
   });
 
   // Load canvas content with proper untracking to avoid reactivity
-  async function loadCanvasContent(contentToLoad: any) {
+  async function loadCanvasContent(contentToLoad: any): Promise<void> {
     if (!canvas || !contentToLoad) return;
 
     // Use untrack to prevent loops during content loading
@@ -2669,7 +2643,509 @@
       resetActiveDrawingFlag();
     });
   }
+
+  // Save canvas content to database
+  async function saveCanvasContent(shouldGenerateThumbnail = false) {
+    if (!pageId || !$user || !initialized || !contentLoaded) return false;
+
+    try {
+      // Set saving state
+      isSaving = true;
+      onSaving(true);
+      onSaveStatus('saving');
+
+      // Export canvas content as JSON
+      const data = canvas.toJSON(['id', 'data']);
+
+      // Add viewport data to content
+      const viewportData = {
+        zoom: zoom || 1,
+        panX: canvas.viewportTransform ? canvas.viewportTransform[4] : 0,
+        panY: canvas.viewportTransform ? canvas.viewportTransform[5] : 0,
+      };
+
+      const contentToSave = {
+        ...data,
+        viewport: viewportData
+      };
+
+      // Update local reference
+      localContent = safeClone(contentToSave);
+
+      // Save to database
+      const { error } = await updatePageContent(pageId, contentToSave);
+
+      if (error) {
+        console.error('Error saving canvas:', error);
+        onSaveStatus('error');
+        return false;
+      }
+
+      // Generate and upload thumbnail if requested
+      if (shouldGenerateThumbnail && canvas) {
+        await generateThumbnail();
+      }
+
+      return true;
+    } catch (err) {
+      console.error('Error saving canvas:', err);
+      onSaveStatus('error');
+      return false;
+    } finally {
+      // Update save status
+      isSaving = false;
+      onSaving(false);
+      onSaveStatus('saved');
+    }
+  }
+
+  // Debounced version of the save function to prevent too many saves
+  function saveDebouncedContent() {
+    clearTimeout(saveTimeout);
+    saveTimeout = setTimeout(() => {
+      saveCanvasContent(true); // Generate thumbnail on debounced save
+    }, 2000); // 2 second debounce
+  }
+
+  // Content update handler
+  function handleContentUpdated() {
+    log('Content updated - should save');
+
+    if (!pageId || !$user || !initialized || !contentLoaded) return;
+
+    // Skip if this update is from loading initial content
+    if (skipNextContentSave) {
+      skipNextContentSave = false;
+      return;
+    }
+
+    // Schedule a save
+    saveDebouncedContent();
+  }
+
+  // Exported function to trigger thumbnail generation from parent components
+  export function generateThumbnail() {
+    if (!canvas || !pageId) return;
+
+    try {
+      console.log("Starting Canvas thumbnail generation...");
+
+      // Create a new Fabric StaticCanvas for the thumbnail
+      const thumbnailWidth = 320;
+      const thumbnailHeight = 180;
+      const thumbnailCanvas = document.createElement('canvas');
+      thumbnailCanvas.width = thumbnailWidth;
+      thumbnailCanvas.height = thumbnailHeight;
+
+      // Create a fabric static canvas for the thumbnail
+      const thumbnailFabricCanvas = new fabric.StaticCanvas(thumbnailCanvas, {
+        width: thumbnailWidth,
+        height: thumbnailHeight,
+        backgroundColor: '#ffffff'
+      });
+
+      // Get visible objects
+      const visibleObjects = canvas.getObjects().filter((obj: any) => obj.visible !== false);
+
+      if (visibleObjects.length > 0) {
+        // Calculate bounds to get proper scaling
+        const bounds = calculateContentBounds(visibleObjects);
+
+        // Add padding (10%)
+        const padding = 0.1;
+        const paddedWidth = (bounds.maxX - bounds.minX) * (1 + padding);
+        const paddedHeight = (bounds.maxY - bounds.minY) * (1 + padding);
+
+        // Calculate scale to fit the content
+        const scaleX = thumbnailWidth / paddedWidth;
+        const scaleY = thumbnailHeight / paddedHeight;
+        const scale = Math.min(scaleX, scaleY);
+
+        // Calculate offsets to center content
+        const offsetX = (thumbnailWidth / scale - (bounds.maxX - bounds.minX)) / 2 - bounds.minX;
+        const offsetY = (thumbnailHeight / scale - (bounds.maxY - bounds.minY)) / 2 - bounds.minY;
+
+        // Clone objects to the thumbnail canvas
+        visibleObjects.forEach((obj: any) => {
+          try {
+            // Clone the object
+            const clonedObj = fabric.util.object.clone(obj);
+
+            // Make it non-interactive
+            clonedObj.selectable = false;
+            clonedObj.evented = false;
+
+            // Add it to the thumbnail canvas
+            thumbnailFabricCanvas.add(clonedObj);
+          } catch (err) {
+            console.error("Error cloning object for thumbnail:", err);
+          }
+        });
+
+        // Set viewport transform
+        thumbnailFabricCanvas.setViewportTransform([
+          scale, 0, 0, scale,
+          offsetX * scale, offsetY * scale
+        ]);
+
+        // Render the thumbnail
+        thumbnailFabricCanvas.renderAll();
+      } else {
+        // Render fallback
+        renderFallbackThumbnail(thumbnailFabricCanvas);
+      }
+
+      // Convert to blob and upload
+      return new Promise<void>((resolve) => {
+        thumbnailCanvas.toBlob(async (blob) => {
+          if (blob) {
+            try {
+              const result = await uploadThumbnail(pageId, blob);
+              console.log("Canvas thumbnail uploaded successfully", result);
+
+              // Cleanup
+              thumbnailFabricCanvas.dispose();
+
+              resolve();
+            } catch (err) {
+              console.error("Error uploading canvas thumbnail:", err);
+              thumbnailFabricCanvas.dispose();
+              resolve();
+            }
+          } else {
+            console.error("Failed to create blob from thumbnail canvas");
+            thumbnailFabricCanvas.dispose();
+            resolve();
+          }
+        }, 'image/png', 0.8);
+      });
+    } catch (err) {
+      console.error("Error in thumbnail generation:", err);
+    }
+  }
+
+  // Render fallback thumbnail for empty canvas
+  function renderFallbackThumbnail(fabricCanvas: fabric.StaticCanvas) {
+    // Clear the canvas
+    fabricCanvas.clear();
+
+    // Set background color
+    fabricCanvas.setBackgroundColor('#f5f5f5', fabricCanvas.renderAll.bind(fabricCanvas));
+
+    // Create centered text
+    const titleText = new fabric.Text('Canvas Preview', {
+      left: fabricCanvas.width / 2,
+      top: fabricCanvas.height / 2 + 20,
+      fontFamily: 'Arial',
+      fontSize: 14,
+      fill: '#666666',
+      textAlign: 'center',
+      originX: 'center',
+      originY: 'center'
+    });
+
+    // Create an icon
+    const icon = new fabric.Text('dashboard', {
+      left: fabricCanvas.width / 2,
+      top: fabricCanvas.height / 2 - 15,
+      fontFamily: 'Material Icons',
+      fontSize: 30,
+      fill: '#cccccc',
+      textAlign: 'center',
+      originX: 'center',
+      originY: 'center'
+    });
+
+    // Add the elements to the canvas
+    fabricCanvas.add(icon, titleText);
+    fabricCanvas.renderAll();
+  }
+
+  // Helper function to calculate content bounds
+  function calculateContentBounds(objects: any[]) {
+    // Default bounds - use canvas dimensions as fallback
+    const bounds = {
+      minX: Infinity,
+      minY: Infinity,
+      maxX: -Infinity,
+      maxY: -Infinity
+    };
+
+    // Calculate combined bounds of all objects
+    for (const obj of objects) {
+      // Skip objects without position
+      if (typeof obj.left !== 'number' || typeof obj.top !== 'number') continue;
+
+      let objWidth = 100; // Default width
+      let objHeight = 100; // Default height
+
+      // Determine object dimensions based on type
+      if (obj.type === 'textbox' || obj.type === 'i-text') {
+        // For text, use the width and height
+        objWidth = obj.width || (obj.getScaledWidth ? obj.getScaledWidth() : 100);
+        objHeight = obj.height || (obj.getScaledHeight ? obj.getScaledHeight() : 20);
+      } else if (obj.type === 'image') {
+        // For images, use image dimensions
+        objWidth = obj.width || (obj.getScaledWidth ? obj.getScaledWidth() : 100);
+        objHeight = obj.height || (obj.getScaledHeight ? obj.getScaledHeight() : 100);
+      } else {
+        // For other objects, use width/height or calculate from bounding rect
+        objWidth = obj.width || (obj.getScaledWidth ? obj.getScaledWidth() : 100);
+        objHeight = obj.height || (obj.getScaledHeight ? obj.getScaledHeight() : 100);
+      }
+
+      // Calculate object bounds with rotation
+      const angle = obj.angle || 0;
+      const points = [
+        { x: obj.left, y: obj.top },
+        { x: obj.left + objWidth, y: obj.top },
+        { x: obj.left + objWidth, y: obj.top + objHeight },
+        { x: obj.left, y: obj.top + objHeight }
+      ];
+
+      const originX = obj.left + (objWidth / 2);
+      const originY = obj.top + (objHeight / 2);
+
+      // Apply rotation to each point
+      for (const point of points) {
+        const rotated = rotatePoint(point, { x: originX, y: originY }, angle);
+        bounds.minX = Math.min(bounds.minX, rotated.x);
+        bounds.minY = Math.min(bounds.minY, rotated.y);
+        bounds.maxX = Math.max(bounds.maxX, rotated.x);
+        bounds.maxY = Math.max(bounds.maxY, rotated.y);
+      }
+    }
+
+    // If no valid bounds were calculated, use fallback values
+    if (bounds.minX === Infinity || bounds.minY === Infinity ||
+        bounds.maxX === -Infinity || bounds.maxY === -Infinity) {
+      return {
+        minX: 0,
+        minY: 0,
+        maxX: canvas.width || 800,
+        maxY: canvas.height || 600
+      };
+    }
+
+    return bounds;
+  }
+
+  // Helper function to rotate a point around an origin
+  function rotatePoint(point: {x: number, y: number}, origin: {x: number, y: number}, angle: number) {
+    const angleRad = (angle * Math.PI) / 180;
+    const cos = Math.cos(angleRad);
+    const sin = Math.sin(angleRad);
+
+    // Translate point to origin
+    const x = point.x - origin.x;
+    const y = point.y - origin.y;
+
+    // Rotate and translate back
+    return {
+      x: x * cos - y * sin + origin.x,
+      y: x * sin + y * cos + origin.y
+    };
+  }
+
+  // Helper function to render an object to the thumbnail context
+  function renderObjectToContext(ctx: CanvasRenderingContext2D, obj: any) {
+    try {
+      // Skip invisible objects
+      if (obj.visible === false) return;
+
+      // Draw based on object type
+      if (obj.type === 'textbox' || obj.type === 'i-text') {
+        // Text object
+        ctx.save();
+
+        // Apply rotation if needed
+        if (obj.angle) {
+          const centerX = obj.left + obj.width / 2;
+          const centerY = obj.top + obj.height / 2;
+          ctx.translate(centerX, centerY);
+          ctx.rotate((obj.angle * Math.PI) / 180);
+          ctx.translate(-centerX, -centerY);
+        }
+
+        // Set text properties
+        ctx.font = `${obj.fontStyle || ''} ${obj.fontWeight || ''} ${obj.fontSize || 16}px ${obj.fontFamily || 'Arial'}`;
+        ctx.fillStyle = obj.fill || '#000000';
+        ctx.textAlign = obj.textAlign || 'left';
+
+        // Draw text
+        ctx.fillText(obj.text || '', obj.left, obj.top + obj.fontSize);
+
+        ctx.restore();
+      } else if (obj.type === 'rect') {
+        // Rectangle
+        ctx.save();
+
+        // Apply rotation if needed
+        if (obj.angle) {
+          const centerX = obj.left + obj.width / 2;
+          const centerY = obj.top + obj.height / 2;
+          ctx.translate(centerX, centerY);
+          ctx.rotate((obj.angle * Math.PI) / 180);
+          ctx.translate(-centerX, -centerY);
+        }
+
+        // Set fill and stroke
+        ctx.fillStyle = obj.fill || 'rgba(0,0,0,0)';
+        ctx.strokeStyle = obj.stroke || '#000000';
+        ctx.lineWidth = obj.strokeWidth || 1;
+
+        // Draw rectangle
+        ctx.fillRect(obj.left, obj.top, obj.width, obj.height);
+        if (obj.strokeWidth > 0) {
+          ctx.strokeRect(obj.left, obj.top, obj.width, obj.height);
+        }
+
+        ctx.restore();
+      } else if (obj.type === 'circle') {
+        // Circle
+        ctx.save();
+
+        const centerX = obj.left + obj.radius;
+        const centerY = obj.top + obj.radius;
+
+        // Apply rotation if needed
+        if (obj.angle) {
+          ctx.translate(centerX, centerY);
+          ctx.rotate((obj.angle * Math.PI) / 180);
+          ctx.translate(-centerX, -centerY);
+        }
+
+        // Set fill and stroke
+        ctx.fillStyle = obj.fill || 'rgba(0,0,0,0)';
+        ctx.strokeStyle = obj.stroke || '#000000';
+        ctx.lineWidth = obj.strokeWidth || 1;
+
+        // Draw circle
+        ctx.beginPath();
+        ctx.arc(centerX, centerY, obj.radius, 0, 2 * Math.PI);
+        ctx.fill();
+        if (obj.strokeWidth > 0) {
+          ctx.stroke();
+        }
+
+        ctx.restore();
+      } else if (obj.type === 'path') {
+        // Path object (like freehand drawing)
+        ctx.save();
+
+        // Apply transformation
+        if (obj.angle) {
+          const centerX = obj.left + obj.width / 2;
+          const centerY = obj.top + obj.height / 2;
+          ctx.translate(centerX, centerY);
+          ctx.rotate((obj.angle * Math.PI) / 180);
+          ctx.translate(-centerX, -centerY);
+        }
+
+        // Set path properties
+        ctx.strokeStyle = obj.stroke || '#000000';
+        ctx.lineWidth = obj.strokeWidth || 1;
+        ctx.lineJoin = 'round';
+        ctx.lineCap = 'round';
+
+        // Draw path
+        if (obj.path) {
+          ctx.beginPath();
+
+          // Fabric.js paths are complex - this is a simplified version
+          const path = obj.path;
+          let first = true;
+
+          for (let i = 0; i < path.length; i++) {
+            const item = path[i];
+            if (!item || !Array.isArray(item) || item.length === 0) continue;
+
+            const cmd = item[0]; // Command is the first element of the array
+
+            if (cmd === 'M') { // Move to
+              ctx.moveTo(item[1] + obj.left, item[2] + obj.top);
+              first = false;
+            } else if (cmd === 'L') { // Line to
+              ctx.lineTo(item[1] + obj.left, item[2] + obj.top);
+            } else if (cmd === 'Q') { // Quadratic curve
+              ctx.quadraticCurveTo(
+                item[1] + obj.left, item[2] + obj.top,
+                item[3] + obj.left, item[4] + obj.top
+              );
+            } else if (cmd === 'C') { // Cubic curve
+              ctx.bezierCurveTo(
+                item[1] + obj.left, item[2] + obj.top,
+                item[3] + obj.left, item[4] + obj.top,
+                item[5] + obj.left, item[6] + obj.top
+              );
+            }
+          }
+
+          // Apply fill and stroke
+          if (obj.fill && obj.fill !== 'rgba(0,0,0,0)') {
+            ctx.fillStyle = obj.fill;
+            ctx.fill();
+          }
+
+          ctx.stroke();
+        }
+
+        ctx.restore();
+      } else if (obj.type === 'image') {
+        // For images, we can't directly render them
+        ctx.save();
+
+        // Apply rotation if needed
+        if (obj.angle) {
+          const centerX = obj.left + obj.width / 2;
+          const centerY = obj.top + obj.height / 2;
+          ctx.translate(centerX, centerY);
+          ctx.rotate((obj.angle * Math.PI) / 180);
+          ctx.translate(-centerX, -centerY);
+        }
+
+        // Draw a placeholder rectangle
+        ctx.strokeStyle = '#cccccc';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(obj.left, obj.top, obj.width, obj.height);
+
+        // Add an image icon
+        ctx.fillStyle = '#999999';
+        ctx.font = '16px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+
+        // Draw a simple icon instead of emoji
+        drawImageIcon(ctx, obj.left + obj.width / 2, obj.top + obj.height / 2);
+
+        ctx.restore();
+      }
+      // Add more object type handlers as needed
+    } catch (err) {
+      console.error("Error rendering object to thumbnail:", err);
+    }
+  }
+
+  // Helper function to draw an image icon
+  function drawImageIcon(ctx: CanvasRenderingContext2D, x: number, y: number) {
+    // Save current context state
+    ctx.save();
+
+    // Use Material Icons for the image icon
+    ctx.font = '16px "Material Icons"';
+    ctx.fillStyle = '#999999';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('image', x, y);
+
+    // Restore context state
+    ctx.restore();
+  }
 </script>
+
+<svelte:head>
+  <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+</svelte:head>
 
 <div class="canvas-container" bind:this={canvasContainer}>
   <div class="canvas-wrapper">

@@ -54,7 +54,7 @@
 
   .main-content {
     flex: 1;
-    box-shadow: -2px 18px 32px rgba(black, 0.2);
+    box-shadow: -2px 24px 48px rgba(#030025, 0.16);
     overflow: hidden;
     border-radius: $border-radius-lg;
   }

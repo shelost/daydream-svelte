@@ -3,83 +3,116 @@ import type { StrokeOptions } from 'perfect-freehand';
 import type { Stroke, StrokePoint } from '$lib/types';
 
 /**
- * Convert perfect-freehand stroke points to SVG path data
+ * Create a date formatter function
  */
-export function getSvgPathFromStroke(
-  points: number[][],
-  closed = true
-): string {
-  const len = points.length;
+export function formatDate(date: string | Date): string {
+  if (!date) return '';
 
-  if (len < 4) {
-    return '';
+  const dateObj = typeof date === 'string' ? new Date(date) : date;
+
+  // If date is less than 24 hours ago, show relative time
+  const now = new Date();
+  const diffMs = now.getTime() - dateObj.getTime();
+  const diffHrs = diffMs / (1000 * 60 * 60);
+
+  if (diffHrs < 24) {
+    if (diffHrs < 1) {
+      const diffMins = Math.round(diffMs / (1000 * 60));
+      return `${diffMins} min${diffMins !== 1 ? 's' : ''} ago`;
+    }
+
+    const hours = Math.floor(diffHrs);
+    return `${hours} hour${hours !== 1 ? 's' : ''} ago`;
   }
 
-  let a = points[0];
-  let b = points[1];
-  const c = points[2];
-
-  let result = `M${a[0].toFixed(2)},${a[1].toFixed(2)} Q${b[0].toFixed(
-    2
-  )},${b[1].toFixed(2)} ${average(b[0], c[0]).toFixed(2)},${average(
-    b[1],
-    c[1]
-  ).toFixed(2)} T`;
-
-  for (let i = 2, max = len - 1; i < max; i++) {
-    a = points[i];
-    b = points[i + 1];
-    result += `${average(a[0], b[0]).toFixed(2)},${average(a[1], b[1]).toFixed(
-      2
-    )} `;
-  }
-
-  if (closed) {
-    result += 'Z';
-  }
-
-  return result;
+  // Otherwise show the date
+  return dateObj.toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: dateObj.getFullYear() !== now.getFullYear() ? 'numeric' : undefined
+  });
 }
 
 /**
- * Helper function to calculate the average of two numbers
+ * Create an SVG path from a Perfect Freehand stroke
  */
-function average(a: number, b: number): number {
-  return (a + b) / 2;
+export function getSvgPathFromStroke(stroke: number[][]): string {
+  if (!stroke.length) return '';
+
+  const d = stroke.reduce(
+    (acc, [x0, y0], i, arr) => {
+      const [x1, y1] = arr[(i + 1) % arr.length];
+
+      acc.push(x0, y0, (x0 + x1) / 2, (y0 + y1) / 2);
+      return acc;
+    },
+    ['M', ...stroke[0], 'Q']
+  );
+
+  d.push('Z');
+  return d.join(' ');
 }
 
 /**
- * Get perfect-freehand options based on stroke settings
+ * Get options for Perfect Freehand strokes
  */
 export function getPerfectFreehandOptions(
   size: number,
-  thinning: number = 0.5,
-  smoothing: number = 0.5,
-  streamline: number = 0.5,
-  simulatePressure: boolean = true,
-  capStart: boolean = true,
-  capEnd: boolean = true,
-  taperStart: number = 0,
-  taperEnd: number = 0
+  thinning: number,
+  smoothing: number,
+  streamline: number,
+  simulatePressure: boolean,
+  capStart: boolean,
+  capEnd: boolean,
+  taperStart: number,
+  taperEnd: number
 ): StrokeOptions {
   return {
     size,
     thinning,
     smoothing,
     streamline,
-    simulatePressure,
-    last: true,
+    easing: (t) => t,
     start: {
-      cap: capStart,
-      taper: taperStart > 0 ? taperStart : false,
-      easing: (t) => t,
+      taper: taperStart,
+      cap: capStart
     },
     end: {
-      cap: capEnd,
-      taper: taperEnd > 0 ? taperEnd : false,
-      easing: (t) => t,
+      taper: taperEnd,
+      cap: capEnd
     },
+    simulatePressure
   };
+}
+
+/**
+ * Calculate pressure based on the velocity of a stroke
+ */
+export function calculatePressureFromVelocity(
+  points: Array<{ x: number; y: number }>,
+  index: number,
+  velocityScale = 0.2
+): number {
+  // If we're at the first point or not enough points to calculate velocity
+  if (index <= 0 || points.length < 2) {
+    return 0.5;
+  }
+
+  // Get current and previous points
+  const current = points[index];
+  const prev = points[index - 1];
+
+  // Calculate distance between points
+  const dx = current.x - prev.x;
+  const dy = current.y - prev.y;
+  const distance = Math.sqrt(dx * dx + dy * dy);
+
+  // Map distance to pressure (inverse relationship - faster = less pressure)
+  // Range clamp between 0.2 and 0.8
+  const velocity = Math.min(distance * velocityScale, 1.0);
+
+  // Inverse relationship - fast velocity = lower pressure
+  return Math.max(0.2, Math.min(0.8, 1 - velocity));
 }
 
 /**
@@ -97,7 +130,7 @@ export function strokeToPerfectFreehand(
   ]);
 
   // Get default options
-  const defaultOptions = getPerfectFreehandOptions(stroke.size);
+  const defaultOptions = getPerfectFreehandOptions(stroke.size, 0.5, 0.5, 0.5, true, true, true, 0, 0);
 
   // Merge with custom options
   const mergedOptions = { ...defaultOptions, ...options };
@@ -126,33 +159,4 @@ export function isPointInStroke(
   }
 
   return false;
-}
-
-/**
- * Calculates a pressure value based on stroke velocity
- */
-export function calculatePressureFromVelocity(
-  points: StrokePoint[],
-  index: number,
-  maxVelocity: number = 10
-): number {
-  if (index <= 1 || index >= points.length - 1) {
-    return 0.5; // Default pressure for endpoints
-  }
-
-  const currentPoint = points[index];
-  const prevPoint = points[index - 1];
-
-  // Calculate distance between points
-  const dx = currentPoint.x - prevPoint.x;
-  const dy = currentPoint.y - prevPoint.y;
-  const distance = Math.sqrt(dx * dx + dy * dy);
-
-  // Simple velocity (distance without time factor)
-  // For real velocity we would need time information
-  const velocity = Math.min(distance, maxVelocity);
-
-  // Convert velocity to pressure (inverse relationship)
-  // Higher velocity = lower pressure
-  return 1 - velocity / maxVelocity;
 }

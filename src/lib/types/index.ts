@@ -19,6 +19,8 @@ export interface BasePage {
   user_id: string;
   parent_id?: string;
   icon?: string;
+  thumbnail_url?: string;
+  thumbnail_updated_at?: string;
   order_index: number;
   created_at: string;
   updated_at: string;

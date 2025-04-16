@@ -4,5 +4,7 @@ export {
   getPerfectFreehandOptions,
   strokeToPerfectFreehand,
   isPointInStroke,
-  calculatePressureFromVelocity
+  calculatePressureFromVelocity,
+  formatDate
 } from './drawingUtils';
+

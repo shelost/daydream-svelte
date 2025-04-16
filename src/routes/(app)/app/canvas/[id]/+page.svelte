@@ -21,8 +21,11 @@
   let saving = false;
   let saveStatus: 'saved' | 'saving' | 'error' = 'saved';
   let pageId: string;
-  let unsubscribe: () => void;
-  let canvasComponent: { setTool?: (tool: Tool) => void } | undefined;
+  let unsubscribe: () => void = () => {};
+  let canvasComponent: {
+    setTool?: (tool: Tool) => void;
+    generateThumbnail?: () => void;
+  } | undefined;
 
   // Add variables for selected object information
   let selectedObjectType: string | null = null;
@@ -69,23 +72,63 @@
     }
   }
 
-  onMount(() => {
-    if (!$user) {
-      goto('/auth/login');
-      return;
-    }
+  onMount(async () => {
+    try {
+      loading = true;
+      error = '';
 
-    // Subscribe to page store changes
-    unsubscribe = page.subscribe(($page) => {
-      const newPageId = $page.params.id;
-      if (newPageId && newPageId !== pageId) {
-        pageId = newPageId;
-        loadPageData(pageId);
+      if (!$user) {
+        goto('/');
+        return;
       }
-    });
 
-    // Disable scroll handling to prevent jumping
-    disableScrollHandling();
+      // Set the page ID from the URL parameter
+      pageId = $page.params.id;
+
+      // Get page data from database
+      const { data, error: pageError } = await getPage($page.params.id);
+
+      if (pageError) {
+        error = pageError.message;
+        return;
+      }
+
+      if (!data) {
+        error = 'Page not found';
+        return;
+      }
+
+      // Verify the page belongs to the current user
+      if (data.user_id !== $user.id) {
+        error = 'You do not have permission to view this page';
+        return;
+      }
+
+      // Validate that this is a canvas page
+      if (data.type !== 'canvas') {
+        goto(`/app/${data.type}/${data.id}`);
+        return;
+      }
+
+      // Update local page data
+      pageData = data;
+
+      // Generate a thumbnail if one doesn't exist yet
+      setTimeout(() => {
+        if (canvasComponent && canvasComponent.generateThumbnail &&
+           (!pageData.thumbnail_url || pageData.thumbnail_url === '')) {
+          console.log('Generating initial thumbnail for canvas');
+          canvasComponent.generateThumbnail();
+        }
+      }, 5000); // Wait 5 seconds for canvas to fully load
+
+    } catch (err) {
+      if (err instanceof Error) {
+        error = err.message;
+      }
+    } finally {
+      loading = false;
+    }
   });
 
   onDestroy(() => {
@@ -106,8 +149,8 @@
     disableScrollHandling();
   });
 
-  function handleSaving(status: boolean) {
-    saving = status;
+  function handleSaving(isSaving: boolean) {
+    saving = isSaving;
   }
 
   function handleSaveStatus(status: 'saved' | 'saving' | 'error') {
@@ -120,6 +163,13 @@
     isDrawingMode = tool === 'draw';
   }
 
+  function handleGenerateThumbnail() {
+    if (canvasComponent && typeof canvasComponent.generateThumbnail === 'function') {
+      console.log('Manually generating thumbnail');
+      canvasComponent.generateThumbnail();
+    }
+  }
+
   // Add a reactive statement to ensure tool changes propagate to the Canvas
   $: if (canvasComponent && canvasComponent.setTool && selectedTool) {
     console.log('Parent: Updating canvas tool to:', selectedTool);
@@ -129,6 +179,7 @@
 
 <svelte:head>
   <title>{pageData ? pageData.title : 'Canvas'} - Daydream</title>
+  <link rel="icon" href="/square.png" />
 </svelte:head>
 
 <div class="editor-layout">
@@ -151,6 +202,7 @@
         isDrawingMode={isDrawingMode}
         selectedObjectType={selectedObjectType}
         selectedObjectId={selectedObjectId}
+        on:generateThumbnail={handleGenerateThumbnail}
       />
 
       <div class="workspace">
@@ -160,19 +212,21 @@
           on:toolChange={(e) => handleToolChange(e.detail.tool)}
         />
 
-        {#key pageData.id}
-        <Canvas
-          pageId={pageData.id}
-          content={pageData.content}
-          bind:selectedTool={selectedTool}
-          bind:isDrawingMode={isDrawingMode}
-          bind:selectedObjectType={selectedObjectType}
-          bind:selectedObjectId={selectedObjectId}
-          onSaving={handleSaving}
-          onSaveStatus={handleSaveStatus}
-          bind:this={canvasComponent}
-        />
-        {/key}
+        <div class="canvas-area">
+          {#key pageData.id}
+          <Canvas
+            pageId={pageData.id}
+            content={pageData.content}
+            bind:selectedTool={selectedTool}
+            bind:isDrawingMode={isDrawingMode}
+            bind:selectedObjectType={selectedObjectType}
+            bind:selectedObjectId={selectedObjectId}
+            onSaving={handleSaving}
+            onSaveStatus={handleSaveStatus}
+            bind:this={canvasComponent}
+          />
+          {/key}
+        </div>
       </div>
     {/if}
   </div>
@@ -229,5 +283,13 @@
     p {
       color: $error-color;
     }
+  }
+
+  .canvas-area {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    position: relative;
   }
 </style>
