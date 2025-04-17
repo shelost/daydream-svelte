@@ -186,6 +186,13 @@
           try {
             fabricLib = await import('fabric');
             fabricLoaded = true;
+
+            // Set higher precision for object properties to ensure better scaling preservation
+            if (fabricLib && fabricLib.fabric && fabricLib.fabric.Object) {
+              // Set NUM_FRACTION_DIGITS to higher precision for better scaling preservation
+              fabricLib.fabric.Object.NUM_FRACTION_DIGITS = 4;
+            }
+
             log('Fabric.js loaded');
           } catch (importErr) {
             console.error('Failed to import fabric.js:', importErr);
@@ -207,6 +214,10 @@
             stopContextMenu: true,
             fireRightClick: true
           });
+
+          // Initialize fabric canvas event handlers for text scaling fix
+          initializeFabricCanvas();
+
         } catch (canvasErr) {
           console.error('Failed to initialize fabric canvas:', canvasErr);
           return;
@@ -447,10 +458,82 @@
     // Add mouse up handler to verify selection state
     canvas.on('mouse:up', verifySelectionState);
 
-    // When objects are modified, update toolbar properties
-    canvas.on('object:modified', () => {
+    // When objects are modified, update toolbar properties and handle text scaling
+    canvas.on('object:modified', (event: any) => {
+      if (!event.target) return;
+
+      const obj = event.target;
+
+      // Special handling for text objects to convert scaling to font size
+      if ((obj.type === 'text' || obj.type === 'i-text') && (obj.scaleX !== 1 || obj.scaleY !== 1)) {
+        untrack(() => {
+          // Calculate new font size based on scaling
+          const newFontSize = Math.round(obj.fontSize * obj.scaleX);
+
+          // Apply the new font size
+          obj.set({
+            fontSize: newFontSize,
+            // Reset scaling to avoid double-scaling
+            scaleX: 1,
+            scaleY: 1
+          });
+
+          // Force object to clear its cache and update
+          obj._clearCache();
+          if (obj.setCoords) obj.setCoords();
+
+          // Update the canvas
+          canvas.renderAll();
+        });
+      }
+
+      // Update toolbar properties if this is the selected object
       if (selectedObject) {
         updateToolbarProperties();
+      }
+
+      // Always schedule an autosave after modifications
+      scheduleAutoSave();
+    });
+
+    // Handle text editing events
+    canvas.on('text:changed', function(event: any) {
+      if (!event.target) return;
+
+      // Schedule an autosave when text content changes
+      scheduleAutoSave();
+    });
+
+    // Handle exiting text edit mode to ensure proper object dimensions
+    canvas.on('text:editing:exited', function(event: any) {
+      if (!event.target) return;
+
+      const obj = event.target;
+
+      // Ensure the object has proper scaling
+      if (obj.scaleX !== 1 || obj.scaleY !== 1) {
+        untrack(() => {
+          // Convert scaling to font size
+          const newFontSize = Math.round(obj.fontSize * obj.scaleX);
+
+          // Apply the new font size and reset scaling
+          obj.set({
+            fontSize: newFontSize,
+            scaleX: 1,
+            scaleY: 1
+          });
+
+          // Clear cache and update
+          obj._clearCache();
+          if (obj.setCoords) obj.setCoords();
+          canvas.renderAll();
+
+          // Schedule autosave
+          scheduleAutoSave();
+        });
+      } else {
+        // Just schedule an autosave if no scaling changes
+        scheduleAutoSave();
       }
     });
 
@@ -699,15 +782,19 @@
 
   // ======= TOOLBAR FUNCTIONS =======
 
-  // Create text object
+  // Function to create text object
   function createText(pointer: {x: number, y: number}) {
     if (!canvas || !fabricLib) return;
 
     untrack(() => {
-      const text = new fabricLib.IText('Double-click to edit', {
+      // Use fabricLib.fabric.IText instead of fabricLib.IText
+      const text = new fabricLib.fabric.IText('Double-click to edit', {
         left: pointer.x,
         top: pointer.y,
         ...defaultStyles.text,
+        // Ensure scale is explicitly set to 1 to prevent scaling issues
+        scaleX: 1,
+        scaleY: 1,
         // Use default origins (top-left) to ensure object appears exactly where clicked
         originX: 'left',
         originY: 'top'
@@ -717,20 +804,23 @@
       canvas.setActiveObject(text);
       canvas.renderAll();
 
+      // Schedule save before entering edit mode
+      scheduleAutoSave();
+
       // Set isActivelyDrawing to false to ensure tool update works
       isActivelyDrawing = false;
 
-      // Change tool to select after creating text
-      // This ensures we stay in select mode for moving the text
-      // Double-click will be needed to edit
-      setTool('select');
-
-      // Manually call handleObjectSelected to update toolbar
-      handleObjectSelected({ target: text });
-
       // For newly created text, automatically enter editing mode
       setTimeout(() => {
+        // Change tool to select after creating text
+        setTool('select');
+
+        // Manually call handleObjectSelected to update toolbar
+        handleObjectSelected({ target: text });
+
+        // Enter edit mode immediately
         text.enterEditing();
+        canvas.requestRenderAll();
 
         // Simulate a click to position cursor at the end
         if (text.hiddenTextarea) {
@@ -739,9 +829,6 @@
           text.selectionEnd = text.text.length;
         }
       }, 50);
-
-      // Save changes
-      scheduleAutoSave();
     });
   }
 
@@ -750,7 +837,8 @@
     if (!canvas || !fabricLib) return;
 
     untrack(() => {
-      const rect = new fabricLib.Rect({
+      // Use fabricLib.fabric.Rect instead of fabricLib.Rect
+      const rect = new fabricLib.fabric.Rect({
         left: pointer.x,
         top: pointer.y,
         width: 100,
@@ -765,19 +853,23 @@
       canvas.setActiveObject(rect);
       canvas.renderAll();
 
+      // Save changes
+      scheduleAutoSave();
+
       // Set isActivelyDrawing to false to ensure tool update works
       isActivelyDrawing = false;
 
       // Change tool to select after creating rectangle
-      // This ensures we stay in select mode for moving the rectangle
-      // Double-click will be needed to edit properties via the toolbar
-      setTool('select');
+      setTimeout(() => {
+        setTool('select');
 
-      // Manually call handleObjectSelected to update toolbar
-      handleObjectSelected({ target: rect });
+        // Manually call handleObjectSelected to update toolbar
+        handleObjectSelected({ target: rect });
 
-      // Save changes
-      scheduleAutoSave();
+        // Make sure the rect is selected and controls are visible
+        canvas.setActiveObject(rect);
+        canvas.requestRenderAll();
+      }, 50);
     });
   }
 
@@ -789,7 +881,7 @@
       const canvasWidth = canvas.width;
       const canvasHeight = canvas.height;
 
-      const welcomeText = new fabricLib.IText('hello there', {
+      const welcomeText = new fabricLib.fabric.IText('hello there', {
         left: canvasWidth / 2,
         top: canvasHeight / 2,
         ...defaultStyles.welcomeText
@@ -812,6 +904,9 @@
     untrack(() => {
       // Reset cursor
       canvas.defaultCursor = 'default';
+
+      // Reset all event handlers to prevent overlap
+      setupEventHandlers();
 
       // Update the canvas mode based on the selected tool
       switch(selectedTool) {
@@ -860,6 +955,7 @@
             });
             canvas.defaultCursor = 'crosshair';
           }
+          enableDrawMode();
           break;
 
         case 'text':
@@ -870,6 +966,7 @@
             obj.evented = true;
           });
           canvas.defaultCursor = 'text';
+          enableTextMode();
           break;
 
         case 'rectangle':
@@ -880,6 +977,7 @@
             obj.evented = true;
           });
           canvas.defaultCursor = 'crosshair';
+          enableRectangleMode();
           break;
 
         case 'eraser':
@@ -890,6 +988,7 @@
             obj.evented = true;
           });
           canvas.defaultCursor = 'not-allowed';
+          enableEraserMode();
           break;
       }
 
@@ -1272,7 +1371,7 @@
 
     untrack(() => {
       // Create a group for the drawing
-      group = new fabricLib.Group([], {
+      group = new fabricLib.fabric.Group([], {
         left: drawingRef.position.x,
         top: drawingRef.position.y,
         width: drawingRef.position.width,
@@ -1286,7 +1385,7 @@
       });
 
       // Add a background rect
-      const rect = new fabricLib.Rect({
+      const rect = new fabricLib.fabric.Rect({
         width: drawingRef.position.width,
         height: drawingRef.position.height,
         fill: 'rgba(255, 255, 255, 0.9)',
@@ -1297,7 +1396,7 @@
       });
 
       // Add an edit button if not already in edit mode
-      const editButton = new fabricLib.Text('Edit Drawing', {
+      const editButton = new fabricLib.fabric.Text('Edit Drawing', {
         left: drawingRef.position.width / 2,
         top: drawingRef.position.height / 2,
         fontSize: 16,
@@ -1413,7 +1512,7 @@
       );
 
       // Add an exit button
-      const exitButton = new fabricLib.Text('Exit Drawing', {
+      const exitButton = new fabricLib.fabric.Text('Exit Drawing', {
         left: 60,
         top: 20,
         fontSize: 14,
@@ -1507,7 +1606,7 @@
           );
 
           if (!hasEditButton) {
-            const editButton = new fabricLib.Text('Edit Drawing', {
+            const editButton = new fabricLib.fabric.Text('Edit Drawing', {
               left: obj.width / 2,
               top: obj.height / 2,
               fontSize: 16,
@@ -1575,7 +1674,7 @@
         if (!path) return;
 
         // Create Fabric.js path object
-        const fabricPath = new fabricLib.Path(path, {
+        const fabricPath = new fabricLib.fabric.Path(path, {
           fill: stroke.color,
           opacity: stroke.tool === 'highlighter' ? 0.4 : stroke.opacity,
           selectable: false,
@@ -1584,7 +1683,7 @@
           originY: 'top',
           data: {
             isStroke: true,
-            strokeId: stroke.id || fabricLib.util.uuid(),
+            strokeId: stroke.id || fabricLib.fabric.util.uuid(),
             toolType: stroke.tool
           }
         });
@@ -2086,7 +2185,7 @@
           };
         }
 
-        const fabricPath = new fabricLib.Path(path, pathOptions);
+        const fabricPath = new fabricLib.fabric.Path(path, pathOptions);
         drawingObj.addWithUpdate(fabricPath);
       });
 
@@ -2318,6 +2417,11 @@
     // Make objects selectable
     makeObjectsSelectable();
 
+    // Clear existing mouse event handlers
+    canvas.off('mouse:down');
+    canvas.off('mouse:move');
+    canvas.off('mouse:up');
+
     // Mouse down in rectangle mode
     canvas.on('mouse:down', (event: any) => {
       // Set flag to prevent reactivity loops
@@ -2326,8 +2430,12 @@
       // Only create rectangle when clicking on empty canvas
       if (event.target) {
         // If clicking on an existing object, select it and change to select tool
-        setTool('select');
+        canvas.setActiveObject(event.target);
+        canvas.renderAll();
+
+        // Reset flag and change to select tool
         isActivelyDrawing = false;
+        setTool('select');
         return;
       }
 
@@ -2348,6 +2456,11 @@
     // Make objects selectable
     makeObjectsSelectable();
 
+    // Clear existing mouse event handlers
+    canvas.off('mouse:down');
+    canvas.off('mouse:move');
+    canvas.off('mouse:up');
+
     // Mouse down in text mode
     canvas.on('mouse:down', (event: any) => {
       // Set flag to prevent reactivity loops
@@ -2356,8 +2469,12 @@
       // Only create text when clicking on empty canvas
       if (event.target) {
         // If clicking on an existing object, select it and change to select tool
-        setTool('select');
+        canvas.setActiveObject(event.target);
+        canvas.renderAll();
+
+        // Reset flag and change to select tool
         isActivelyDrawing = false;
+        setTool('select');
         return;
       }
 
@@ -2426,7 +2543,7 @@
 
         // Create a rectangle to represent the drawing area
         untrack(() => {
-          drawingAreaRect = new fabricLib.Rect({
+          drawingAreaRect = new fabricLib.fabric.Rect({
             left: pointer.x,
             top: pointer.y,
             width: 0,
@@ -2543,7 +2660,7 @@
 
             // Create a drawing reference for this canvas
             const drawingRef = {
-              id: fabricLib.util.uuid(),
+              id: fabricLib.fabric.util.uuid(),
               drawing_id: newDrawing.id,
               position: {
                 x: left,
@@ -2715,7 +2832,7 @@
 
   // Exported function to trigger thumbnail generation from parent components
   export function generateThumbnail() {
-    if (!canvas || !pageId) return;
+    if (!canvas || !pageId || !fabricLib) return;
 
     try {
       console.log("Starting Canvas thumbnail generation...");
@@ -2728,7 +2845,7 @@
       thumbnailCanvas.height = thumbnailHeight;
 
       // Create a fabric static canvas for the thumbnail
-      const thumbnailFabricCanvas = new fabric.StaticCanvas(thumbnailCanvas, {
+      const thumbnailFabricCanvas = new fabricLib.fabric.StaticCanvas(thumbnailCanvas, {
         width: thumbnailWidth,
         height: thumbnailHeight,
         backgroundColor: '#ffffff'
@@ -2739,7 +2856,7 @@
 
       if (visibleObjects.length > 0) {
         // Calculate bounds to get proper scaling
-      const bounds = calculateContentBounds(visibleObjects);
+        const bounds = calculateContentBounds(visibleObjects);
 
         // Add padding (10%)
         const padding = 0.1;
@@ -2747,11 +2864,11 @@
         const paddedHeight = (bounds.maxY - bounds.minY) * (1 + padding);
 
         // Calculate scale to fit the content
-          const scaleX = thumbnailWidth / paddedWidth;
-          const scaleY = thumbnailHeight / paddedHeight;
-          const scale = Math.min(scaleX, scaleY);
+        const scaleX = thumbnailWidth / paddedWidth;
+        const scaleY = thumbnailHeight / paddedHeight;
+        const scale = Math.min(scaleX, scaleY);
 
-          // Calculate offsets to center content
+        // Calculate offsets to center content
         const offsetX = (thumbnailWidth / scale - (bounds.maxX - bounds.minX)) / 2 - bounds.minX;
         const offsetY = (thumbnailHeight / scale - (bounds.maxY - bounds.minY)) / 2 - bounds.minY;
 
@@ -2759,7 +2876,7 @@
         visibleObjects.forEach((obj: any) => {
           try {
             // Clone the object
-            const clonedObj = fabric.util.object.clone(obj);
+            const clonedObj = fabricLib.fabric.util.object.clone(obj);
 
             // Make it non-interactive
             clonedObj.selectable = false;
@@ -2767,7 +2884,7 @@
 
             // Add it to the thumbnail canvas
             thumbnailFabricCanvas.add(clonedObj);
-        } catch (err) {
+          } catch (err) {
             console.error("Error cloning object for thumbnail:", err);
           }
         });
@@ -2815,7 +2932,9 @@
   }
 
   // Render fallback thumbnail for empty canvas
-  function renderFallbackThumbnail(fabricCanvas: fabric.StaticCanvas) {
+  function renderFallbackThumbnail(fabricCanvas: any) {
+    if (!fabricLib) return;
+
     // Clear the canvas
     fabricCanvas.clear();
 
@@ -2823,7 +2942,7 @@
     fabricCanvas.setBackgroundColor('#f5f5f5', fabricCanvas.renderAll.bind(fabricCanvas));
 
     // Create centered text
-    const titleText = new fabric.Text('Canvas Preview', {
+    const titleText = new fabricLib.fabric.Text('Canvas Preview', {
       left: fabricCanvas.width / 2,
       top: fabricCanvas.height / 2 + 20,
       fontFamily: 'Arial',
@@ -2835,7 +2954,7 @@
     });
 
     // Create an icon
-    const icon = new fabric.Text('dashboard', {
+    const icon = new fabricLib.fabric.Text('dashboard', {
       left: fabricCanvas.width / 2,
       top: fabricCanvas.height / 2 - 15,
       fontFamily: 'Material Icons',
@@ -3199,9 +3318,25 @@
             try {
               // After loading canvas, setup objects
               canvas.forEachObject((obj: any) => {
-                // Setup objects without triggering reactivity
+                // Setup drawing objects
                 if (obj && obj.data?.type === 'drawing') {
                   setupDrawingObject(obj);
+                }
+
+                // Fix scaling for text objects
+                if (obj && (obj.type === 'text' || obj.type === 'i-text') && (obj.scaleX !== 1 || obj.scaleY !== 1)) {
+                  const newFontSize = Math.round(obj.fontSize * obj.scaleX);
+
+                  // Apply font size and reset scaling
+                  obj.set({
+                    fontSize: newFontSize,
+                    scaleX: 1,
+                    scaleY: 1
+                  });
+
+                  // Clear cache and update coordinates
+                  obj._clearCache();
+                  if (obj.setCoords) obj.setCoords();
                 }
               });
 
@@ -3235,6 +3370,125 @@
       });
     });
   }
+
+  function initializeFabricCanvas() {
+    // ... existing code ...
+
+    // Add object:modified handler to handle scaling for text objects
+    canvas.on('object:modified', function(event: any) {
+      if (!event.target) return;
+
+      const obj = event.target;
+
+      // Special handling for text objects to convert scaling to font size
+      if ((obj.type === 'text' || obj.type === 'i-text') && (obj.scaleX !== 1 || obj.scaleY !== 1)) {
+        untrack(() => {
+          // Calculate new font size based on scaling
+          const newFontSize = Math.round(obj.fontSize * obj.scaleX);
+
+          // Apply the new font size
+          obj.set({
+            fontSize: newFontSize,
+            // Reset scaling to avoid double-scaling
+            scaleX: 1,
+            scaleY: 1
+          });
+
+          // Force object to clear its cache and update
+          obj._clearCache();
+          if (obj.setCoords) obj.setCoords();
+
+          // Update the canvas
+          canvas.renderAll();
+
+          // Schedule auto save after modifying the object
+          scheduleAutoSave();
+
+          // Update toolbar properties if this is the selected object
+          if (selectedObject === obj) {
+            updateToolbarProperties();
+          }
+        });
+      }
+      // For all other modifications, just schedule an autosave
+      else {
+        scheduleAutoSave();
+      }
+    });
+
+    // Add text:changed handler to ensure proper text object handling after editing
+    canvas.on('text:changed', function(event: any) {
+      if (!event.target) return;
+
+      // Schedule an autosave when text content changes
+      scheduleAutoSave();
+    });
+
+    // Handle exiting text edit mode to ensure proper object dimensions
+    canvas.on('text:editing:exited', function(event: any) {
+      if (!event.target) return;
+
+      const obj = event.target;
+
+      // Ensure the object has proper scaling
+      if (obj.scaleX !== 1 || obj.scaleY !== 1) {
+        untrack(() => {
+          // Convert scaling to font size
+          const newFontSize = Math.round(obj.fontSize * obj.scaleX);
+
+          // Apply the new font size and reset scaling
+          obj.set({
+            fontSize: newFontSize,
+            scaleX: 1,
+            scaleY: 1
+          });
+
+          // Clear cache and update
+          obj._clearCache();
+          if (obj.setCoords) obj.setCoords();
+          canvas.renderAll();
+
+          // Schedule autosave
+          scheduleAutoSave();
+        });
+      } else {
+        // Just schedule an autosave if no scaling changes
+        scheduleAutoSave();
+      }
+    });
+
+    // ... existing code ...
+  }
+
+  // ... existing code ...
+
+  // ... existing code ...
+
+  // Apply viewport settings to the canvas
+  function applyViewport(viewportSettings: any) {
+    if (!canvas || !viewportSettings) return;
+
+    try {
+      // Apply zoom
+      if (viewportSettings.zoom) {
+        zoom = viewportSettings.zoom;
+      }
+
+      // Apply pan position
+      canvas.setViewportTransform([
+        zoom, 0, 0, zoom,
+        viewportSettings.panX || 0,
+        viewportSettings.panY || 0
+      ]);
+
+      // Render the canvas
+      canvas.renderAll();
+    } catch (err) {
+      console.error('Error applying viewport settings:', err);
+    }
+  }
+
+  // The duplicate loadCanvasContent function was removed from here
 </script>
 
 <svelte:head>

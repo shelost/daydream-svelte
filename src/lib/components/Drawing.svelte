@@ -1825,18 +1825,17 @@
       if (e.ctrlKey || e.metaKey) {
         e.preventDefault();
         const delta = e.deltaY > 0 ? -0.1 : 0.1;
-        zoom = Math.max(0.5, Math.min(5, zoom + delta));
-        renderStrokes();
+        handleZoom(delta);
       }
     }}
-  />
+  ></canvas>
 
   {#if showInstructions}
     <div class="instructions" transition:fade={{ duration: 200 }}>
       {#if pointerCapabilities.pressure}
         Using pen pressure for stroke thickness
       {:else}
-        Using velocity for simulated pressure
+        Using simulated pressure for stroke thickness
       {/if}
     </div>
   {/if}
@@ -1856,69 +1855,37 @@
 
 <style lang="scss">
   .drawing-container {
-    position: relative;
-    flex: 1;
-    overflow: hidden;
-    background-color: white;
-    display: flex;
     width: 100%;
     height: 100%;
+    position: relative;
+    overflow: hidden;
+    background-color: #ffffff;
+    border-radius: $border-radius-md;
+    box-shadow: var(--shadow-md);
   }
 
   .drawing-canvas {
-    position: absolute;
-    top: 0;
-    left: 0;
+    touch-action: none;
+    display: block;
     width: 100%;
     height: 100%;
-    touch-action: none;
-
-    &.selecting-mode {
-      cursor: default;
-    }
-
-    &.drawing-mode {
-      cursor: crosshair;
-    }
-
-    &.erasing-mode {
-      cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='12' r='8' fill='rgba(255,0,0,0.2)' stroke='%23ff0000' stroke-width='2'/%3E%3C/svg%3E") 12 12, auto;
-    }
-
-    &.panning-mode {
-      cursor: grab;
-
-      &:active {
-        cursor: grabbing;
-      }
-    }
+    background-color: #ffffff; /* Always keep canvas white regardless of theme */
   }
 
-  .instructions {
-    position: absolute;
-    top: 16px;
-    left: 50%;
-    transform: translateX(-50%);
-    background: rgba(0, 0, 0, 0.7);
-    color: white;
-    padding: 8px 16px;
-    border-radius: 20px;
-    font-size: 14px;
-    pointer-events: none;
-  }
-
-  // Add a tooltip style for select mode
+  .instructions,
   .select-mode-tooltip {
     position: absolute;
-    top: 50px;
+    bottom: 20px;
     left: 50%;
     transform: translateX(-50%);
-    background: rgba(0, 0, 0, 0.7);
+    background-color: rgba(0, 0, 0, 0.7);
     color: white;
     padding: 8px 16px;
-    border-radius: 20px;
+    border-radius: 24px;
     font-size: 14px;
     pointer-events: none;
-    z-index: 10;
+    white-space: nowrap;
+    z-index: 100;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
   }
 </style>

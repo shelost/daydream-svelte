@@ -12,6 +12,11 @@
   --card-bg: #ffffff;
   --card-shadow: rgba(0, 0, 0, 0.05);
   --hover-bg: rgba(0, 0, 0, 0.03);
+  --button-text: #ffffff;
+  --icon-color: #030025;
+  --tool-active-bg: rgba(66, 133, 244, 0.1);
+  --tool-active-color: #4285f4;
+  --tool-hover-bg: rgba(0, 0, 0, 0.05);
 }
 
 .theme-dark {
@@ -28,6 +33,11 @@
   --card-bg: #1e1e1e;
   --card-shadow: rgba(0, 0, 0, 0.3);
   --hover-bg: rgba(255, 255, 255, 0.05);
+  --button-text: #f0f0f0;
+  --icon-color: #f0f0f0;
+  --tool-active-bg: rgba(94, 107, 255, 0.2);
+  --tool-active-color: #5e6bff;
+  --tool-hover-bg: rgba(255, 255, 255, 0.1);
 }
 
 .theme-light {
@@ -44,6 +54,11 @@
   --card-bg: #ffffff;
   --card-shadow: rgba(0, 0, 0, 0.05);
   --hover-bg: rgba(0, 0, 0, 0.03);
+  --button-text: #ffffff;
+  --icon-color: #030025;
+  --tool-active-bg: rgba(66, 133, 244, 0.1);
+  --tool-active-color: #4285f4;
+  --tool-hover-bg: rgba(0, 0, 0, 0.05);
 }
 
 *, *::before, *::after {
@@ -88,7 +103,7 @@ a:hover {
 button, .button {
   cursor: pointer;
   background-color: var(--primary-color, #00106d);
-  color: white;
+  color: var(--button-text, white);
   border: none;
   border-radius: 8px;
   padding: 8px 16px;
@@ -126,7 +141,7 @@ button.text, .button.text {
   box-shadow: none;
 }
 button.text:hover, .button.text:hover {
-  background-color: rgba(var(--text-color, #030025), 0.05);
+  background-color: var(--hover-bg);
 }
 
 input, textarea, select {
@@ -269,6 +284,103 @@ input[type=range]::-webkit-slider-thumb:hover {
   color: var(--text-color, #030025);
   border: 1px solid var(--border-color, #e5e5e5);
   transition: background-color 250ms ease, color 250ms ease, border-color 250ms ease;
+}
+
+.toolbar-container {
+  background-color: var(--toolbar-bg);
+  padding: 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  width: 60px;
+  height: 100%;
+  overflow-y: auto;
+  z-index: 10;
+  box-shadow: -8px 8px 32px rgba(0, 0, 0, 0.1);
+}
+
+.tool-button {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 0.5rem;
+  border: none;
+  background-color: transparent;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  color: var(--text-color);
+}
+.tool-button:hover {
+  background-color: var(--tool-hover-bg);
+}
+.tool-button.active {
+  background-color: var(--tool-active-bg);
+  color: var(--tool-active-color);
+}
+.tool-button .tool-icon {
+  font-size: 1.5rem;
+  margin-bottom: 0.25rem;
+  color: inherit;
+}
+.tool-button .tool-label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: -0.25px;
+  text-transform: uppercase;
+  color: inherit;
+}
+
+.sidebar-section {
+  margin-bottom: 1rem;
+}
+.sidebar-section h3 {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-color);
+  margin-top: 0;
+  margin-bottom: 12px;
+}
+.sidebar-section .slider-row {
+  display: flex;
+  align-items: center;
+  margin: 12px 0;
+  font-size: 14px;
+  color: var(--text-color);
+}
+.sidebar-section .slider-row label {
+  width: 80px;
+  font-weight: 500;
+}
+.sidebar-section .slider-row .value {
+  width: 48px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+}
+.sidebar-section .checkbox-row {
+  display: flex;
+  align-items: center;
+  margin: 12px 0;
+  font-size: 14px;
+  color: var(--text-color);
+}
+.sidebar-section .checkbox-row label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-weight: 500;
+}
+.sidebar-section .checkbox-row input[type=checkbox] {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+}
+
+.material-icons {
+  color: var(--icon-color);
 }
 
 .canvas-page, .drawing-page {

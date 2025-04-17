@@ -589,53 +589,8 @@
   </div>
 
   <div class="sidebar-content">
-    <section class="tools-section">
-      <h3>Tools</h3>
-      <div class="tools-container">
-        <button
-          class="tool-btn"
-          class:active={$drawingSettings.selectedTool === 'pen'}
-          on:click={() => setTool('pen')}
-          title="Pen Tool (P)"
-        >
-          <span class="material-icons">edit</span>
-          <span class="tool-label">Pen</span>
-        </button>
-
-        <button
-          class="tool-btn"
-          class:active={$drawingSettings.selectedTool === 'select'}
-          on:click={() => setTool('select')}
-          title="Select Tool (S)"
-        >
-          <span class="material-icons">select_all</span>
-          <span class="tool-label">Select</span>
-        </button>
-
-        <button
-          class="tool-btn"
-          class:active={$drawingSettings.selectedTool === 'eraser'}
-          on:click={() => setTool('eraser')}
-          title="Eraser Tool (E)"
-        >
-          <span class="material-icons">cleaning_services</span>
-          <span class="tool-label">Eraser</span>
-        </button>
-
-        <button
-          class="tool-btn"
-          class:active={$drawingSettings.selectedTool === 'pan'}
-          on:click={() => setTool('pan')}
-          title="Pan Tool (Space)"
-        >
-          <span class="material-icons">pan_tool</span>
-          <span class="tool-label">Pan</span>
-        </button>
-      </div>
-    </section>
-
     {#if $drawingSettings.selectedTool === 'select' && $drawingSettings.selectedStrokes.length > 0}
-      <section class="selection-section">
+      <section class="sidebar-section selection-section">
         <h3>Selection</h3>
         <div class="selection-info">
           <p>{$drawingSettings.selectedStrokes.length} stroke{$drawingSettings.selectedStrokes.length > 1 ? 's' : ''} selected</p>
@@ -648,7 +603,7 @@
     {/if}
 
     {#if $drawingSettings.selectedTool === 'pen'}
-      <section class="colors-section">
+      <section class="sidebar-section colors-section">
         <h3>Colors</h3>
         <div class="color-picker-container">
           <!-- Current color display and hex input - always visible -->
@@ -691,7 +646,7 @@
         </div>
       </section>
 
-      <section class="sliders-section">
+      <section class="sidebar-section sliders-section">
         <h3>Size & Opacity</h3>
         <div class="slider-row">
           <label for="stroke-size">Size</label>
@@ -722,7 +677,7 @@
         </div>
       </section>
 
-      <section class="advanced-section">
+      <section class="sidebar-section advanced-section">
         <details>
           <summary>Advanced Stroke Settings</summary>
           <div class="advanced-options">
@@ -821,7 +776,7 @@
       </section>
     {/if}
 
-    <section class="keyboard-shortcuts">
+    <section class="sidebar-section keyboard-shortcuts">
       <details>
         <summary>Keyboard Shortcuts</summary>
         <div class="shortcuts-list">
@@ -870,7 +825,7 @@
     </section>
 
     <!-- New Export Section -->
-    <section class="export-section">
+    <section class="sidebar-section export-section">
       <h3>Export</h3>
 
       <!-- Status message for SVG export -->
@@ -978,7 +933,7 @@
 
 <style lang="scss">
   .sidebar-right {
-    background-color: rgba(white, .05);
+    background-color: var(--sidebar-bg);
     border-radius: $border-radius-lg;
     box-sizing: border-box;
     width: 220px;
@@ -986,7 +941,7 @@
     overflow-y: auto;
     display: flex;
     flex-direction: column;
-    border: 1px solid rgba(white, .1);
+    border: 1px solid var(--border-color);
     box-shadow: -8px 18px 32px rgba(black, 0.8), inset -2px -6px 12px rgba(black, 0.03);
 
     &::-webkit-scrollbar {
@@ -1025,7 +980,7 @@
     align-items: center;
     justify-content: space-between;
     padding: 1rem;
-    border-bottom: 1px solid $border-color;
+    border-bottom: 1px solid var(--border-color);
 
     h2 {
       font-size: 1.2rem;
@@ -1042,106 +997,36 @@
     gap: 24px;
   }
 
-  section {
-    h3 {
-      font-size: 14px;
-      font-weight: 600;
-      color: var(--text-color);
-      margin-top: 0;
-      margin-bottom: 12px;
-    }
-
-    h4 {
-      font-size: 12px;
-      font-weight: 600;
-      color: var(--text-color);
-      margin-top: 0;
-      margin-bottom: 8px;
-    }
-  }
-
-  .selection-section {
-    p {
-      color: var(--text-color);
-      margin: 0 0 8px 0;
-    }
-
-    .selection-info {
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-    }
-
-    .clear-selection-btn {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 4px;
-      background-color: #f0f0f0;
-      border: 1px solid $border-color;
-      border-radius: $border-radius-md;
-      padding: 6px 12px;
-      font-size: 12px;
-      cursor: pointer;
-      transition: all 0.2s;
-      color: var(--text-color);
-
-      &:hover {
-        background-color: #e0e0e0;
-      }
-
-      .material-icons {
-        font-size: 16px;
-      }
-    }
-  }
-
-  .tools-container {
-    display: grid;
-    grid-template-columns: repeat(2, 1fr);
+  .selection-info {
+    display: flex;
+    flex-direction: column;
     gap: 8px;
   }
 
-  .tool-btn {
+  .clear-selection-btn {
     display: flex;
-    flex-direction: column;
     align-items: center;
     justify-content: center;
     gap: 4px;
-    padding: 12px 8px;
-    background: none;
-    border: 1px solid $border-color;
+    background-color: var(--hover-bg);
+    border: 1px solid var(--border-color);
     border-radius: $border-radius-md;
+    padding: 6px 12px;
+    font-size: 12px;
     cursor: pointer;
     transition: all 0.2s;
     color: var(--text-color);
 
     &:hover {
-      background-color: rgba(0, 0, 0, 0.05);
-    }
-
-    &.active {
-      background-color: rgba($primary-color, 0.08);
-      color: $primary-color;
-      border-color: $primary-color;
+      background-color: var(--tool-hover-bg);
     }
 
     .material-icons {
-      font-size: 24px;
-    }
-
-    .tool-label {
-      font-size: 12px;
-      font-weight: 500;
+      font-size: 16px;
     }
   }
 
-  .color-picker-container {
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
-  }
-
+  // Color picker specific styles
   .current-color-row {
     display: flex;
     align-items: center;
@@ -1152,8 +1037,9 @@
     width: 40px;
     height: 40px;
     border-radius: $border-radius-sm;
-    border: 1px solid #ddd;
+    border: 1px solid var(--border-color);
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    cursor: pointer;
   }
 
   .color-input-container {
@@ -1163,317 +1049,133 @@
   .hex-input {
     width: 100%;
     padding: 8px;
-    border: 1px solid #ddd;
+    border: 1px solid var(--border-color);
     border-radius: $border-radius-sm;
     font-family: monospace;
     font-size: 14px;
     text-transform: uppercase;
+    background-color: var(--card-bg);
+    color: var(--text-color);
 
     &:focus {
       outline: none;
-      border-color: $primary-color;
-      box-shadow: 0 0 0 2px rgba($primary-color, 0.2);
+      border-color: var(--primary-color);
+      box-shadow: 0 0 0 2px rgba(var(--primary-color), 0.2);
     }
   }
 
-  .color-picker-details {
-    margin-top: 8px;
-
-    summary {
-      cursor: pointer;
-      font-size: 14px;
-      font-weight: 600;
-      padding: 4px 8px;
-      color: var(--text-color);
-      border-radius: $border-radius-sm;
-      background-color: rgba(0, 0, 0, 0.03);
-      transition: all 0.2s;
-
-      &:hover {
-        background-color: rgba(0, 0, 0, 0.05);
-        color: $primary-color;
-      }
-
-      &:focus {
-        outline: none;
-      }
-    }
+  // Export section specific styles
+  .export-buttons {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
   }
 
-  .color-picker-expanded {
-    padding: 16px 8px 8px;
-    margin-top: 8px;
-    background-color: #f9f9f9;
+  .export-btn {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background-color: var(--hover-bg);
+    border: 1px solid var(--border-color);
     border-radius: $border-radius-md;
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
-  }
-
-  .color-pickers-row {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-  }
-
-  .color-square {
-    width: 100%;
-    height: 120px;
-    border-radius: $border-radius-sm;
-    border: 1px solid #ddd;
-    position: relative;
-    cursor: crosshair;
-  }
-
-  .color-cursor {
-    width: 12px;
-    height: 12px;
-    border: 2px solid white;
-    border-radius: 50%;
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    pointer-events: none;
-    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.3);
-  }
-
-  .hue-slider-container {
-    width: 100%;
-    padding: 0 2px;
-  }
-
-  .hue-slider {
-    width: 100%;
-    height: 16px;
-    -webkit-appearance: none;
-    appearance: none;
-    border-radius: 8px;
-    background: linear-gradient(to right,
-      rgb(255, 0, 0),
-      rgb(255, 255, 0),
-      rgb(0, 255, 0),
-      rgb(0, 255, 255),
-      rgb(0, 0, 255),
-      rgb(255, 0, 255),
-      rgb(255, 0, 0)
-    );
-    outline: none;
-
-    &::-webkit-slider-thumb {
-      -webkit-appearance: none;
-      appearance: none;
-      width: 16px;
-      height: 16px;
-      border-radius: 50%;
-      background: white;
-      border: 1px solid rgba(0, 0, 0, 0.3);
-      cursor: pointer;
-    }
-
-    &::-moz-range-thumb {
-      width: 16px;
-      height: 16px;
-      border-radius: 50%;
-      background: white;
-      border: 1px solid rgba(0, 0, 0, 0.3);
-      cursor: pointer;
-    }
-  }
-
-  .color-inputs-container {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    margin-top: 4px;
-  }
-
-  .color-inputs-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-
-  .color-input-group {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    position: relative;
-
-    label {
-      width: 12px;
-      font-size: 12px;
-      font-weight: 600;
-      color: var(--text-color);
-    }
-
-    input[type="number"] {
-      width: 45px;
-      padding: 4px;
-      border: 1px solid #ddd;
-      border-radius: $border-radius-sm;
-      font-size: 12px;
-      text-align: center;
-      -moz-appearance: textfield;
-
-      &::-webkit-outer-spin-button,
-      &::-webkit-inner-spin-button {
-        -webkit-appearance: none;
-        margin: 0;
-      }
-
-      &:focus {
-        outline: none;
-        border-color: $primary-color;
-      }
-    }
-
-    .unit {
-      font-size: 12px;
-      color: #888;
-    }
-  }
-
-  .preset-colors {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    margin-top: 4px;
-  }
-
-  .preset-colors-grid {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 8px;
-  }
-
-  .color-btn {
-    width: 32px;
-    height: 32px;
-    border-radius: $border-radius-sm;
-    border: 1px solid #ddd;
+    padding: 10px 12px;
+    font-size: 14px;
     cursor: pointer;
-    position: relative;
-
-    &.active {
-      box-shadow: 0 0 0 2px $primary-color;
-    }
-
-    &.preset-color-btn {
-      width: 100%;
-      height: 24px;
-    }
-
-    .check {
-      position: absolute;
-      top: 50%;
-      left: 50%;
-      transform: translate(-50%, -50%);
-      font-size: 16px;
-      font-weight: bold;
-    }
-  }
-
-  .slider-row {
-    display: flex;
-    align-items: center;
-    margin: 12px 0;
-    font-size: 14px;
+    transition: all 0.2s;
     color: var(--text-color);
 
-    label {
-      width: 80px;
-      font-weight: 500;
+    &:hover {
+      background-color: var(--tool-hover-bg);
     }
 
-    .value {
-      width: 48px;
-      text-align: right;
-      font-variant-numeric: tabular-nums;
-      font-size: 12px;
+    .material-icons {
+      font-size: 18px;
     }
   }
 
-  .checkbox-row {
+  .download-svg-btn {
+    background-color: var(--tool-active-bg);
+    color: var(--tool-active-color);
+    border-color: rgba(var(--primary-color), 0.2);
+
+    &:hover {
+      background-color: var(--tool-hover-bg);
+    }
+  }
+
+  // Status message styles
+  .status-message {
     display: flex;
     align-items: center;
-    margin: 12px 0;
-    font-size: 14px;
+    gap: 8px;
+    padding: 8px 12px;
+    border-radius: $border-radius-md;
+    margin-bottom: 8px;
+    font-size: 12px;
+
+    &.success {
+      background-color: rgba(var(--success-color), 0.1);
+      color: var(--success-color);
+    }
+
+    &.error {
+      background-color: rgba(var(--error-color), 0.1);
+      color: var(--error-color);
+    }
+
+    &.info, &.working {
+      background-color: var(--hover-bg);
+      color: var(--text-color);
+    }
+
+    .spinning {
+      animation: spin 1s linear infinite;
+    }
+
+    .close-status {
+      margin-left: auto;
+      padding: 0;
+      background: none;
+      border: none;
+      cursor: pointer;
+      color: inherit;
+      opacity: 0.6;
+
+      &:hover {
+        opacity: 1;
+      }
+    }
+  }
+
+  @keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+  }
+
+  // Keyboard shortcuts styles
+  .shortcuts-list {
+    padding: 8px;
+    background-color: var(--hover-bg);
+    border-radius: $border-radius-md;
+    margin-top: 8px;
+  }
+
+  .shortcut-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 0;
+    font-size: 12px;
     color: var(--text-color);
+    border-bottom: 1px solid rgba(var(--border-color), 0.5);
 
-    label {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      cursor: pointer;
-      font-weight: 500;
-    }
-
-    input[type="checkbox"] {
-      width: 16px;
-      height: 16px;
-      cursor: pointer;
-    }
-  }
-
-  .advanced-section {
-    summary {
-      cursor: pointer;
-      font-size: 14px;
-      font-weight: 600;
-      padding: 4px 0;
-      color: var(--text-color);
-
-      &:hover {
-        color: $primary-color;
-      }
-    }
-
-    .advanced-options {
-      padding: 8px;
-      background-color: #f9f9f9;
-      border-radius: $border-radius-md;
-      margin-top: 8px;
-    }
-  }
-
-  .keyboard-shortcuts {
-    summary {
-      cursor: pointer;
-      font-size: 14px;
-      font-weight: 600;
-      padding: 4px 0;
-      color: var(--text-color);
-
-      &:hover {
-        color: $primary-color;
-      }
-    }
-
-    .shortcuts-list {
-      padding: 8px;
-      background-color: #f9f9f9;
-      border-radius: $border-radius-md;
-      margin-top: 8px;
-    }
-
-    .shortcut-item {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 6px 0;
-      font-size: 12px;
-      color: var(--text-color);
-      border-bottom: 1px solid rgba($border-color, 0.5);
-
-      &:last-child {
-        border-bottom: none;
-      }
+    &:last-child {
+      border-bottom: none;
     }
 
     .key {
       font-family: monospace;
-      background-color: #eee;
+      background-color: var(--hover-bg);
       padding: 2px 6px;
       border-radius: 4px;
       font-weight: 600;
@@ -1486,188 +1188,47 @@
     }
   }
 
-  /* Export section styles */
-  .export-section {
-    margin-top: 8px;
-  }
-
-  .export-buttons {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
-
-  .export-btn {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    background-color: #f0f0f0;
-    border: 1px solid $border-color;
-    border-radius: $border-radius-md;
-    padding: 10px 12px;
-    font-size: 14px;
-    cursor: pointer;
-    transition: all 0.2s;
-    color: var(--text-color);
-
-    &:hover {
-      background-color: #e0e0e0;
-    }
-
-    .material-icons {
-      font-size: 18px;
-    }
-  }
-
-  .download-svg-btn {
-    background-color: rgba($primary-color, 0.08);
-    color: $primary-color;
-    border-color: rgba($primary-color, 0.2);
-
-    &:hover {
-      background-color: rgba($primary-color, 0.15);
-    }
-  }
-
-  .view-svg-btn {
-    &:hover {
-      background-color: #e0e0e0;
-    }
-  }
-
-  /* SVG Export options */
+  // SVG Export options
   .svg-export-options {
     margin: 8px 0;
-    background-color: #f9f9f9;
+    background-color: var(--hover-bg);
     border-radius: $border-radius-md;
-  }
 
-  .svg-export-options summary {
-    cursor: pointer;
-    font-size: 14px;
-    font-weight: 500;
-    padding: 8px 12px;
-    color: var(--text-color);
-  }
-
-  .svg-export-options summary:hover {
-    color: $primary-color;
+    summary {
+      cursor: pointer;
+      padding: 8px;
+      color: var(--text-color);
+      font-weight: 500;
+    }
   }
 
   .options-container {
-    padding: 12px;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
+    padding: 8px;
   }
 
   .option-row {
     display: flex;
-    flex-direction: column;
-    gap: 4px;
-  }
-
-  .option-row label {
-    font-size: 12px;
-    color: var(--text-color);
-  }
-
-  .option-row input,
-  .option-row select {
-    padding: 6px 8px;
-    border: 1px solid #ddd;
-    border-radius: $border-radius-sm;
-    font-size: 12px;
-  }
-
-  .option-row input:focus,
-  .option-row select:focus {
-    outline: none;
-    border-color: $primary-color;
-  }
-
-  .checkbox-row {
-    display: flex;
     align-items: center;
-    font-size: 12px;
-    color: var(--text-color);
-  }
-
-  .checkbox-row label {
-    display: flex;
-    align-items: center;
+    margin: 8px 0;
     gap: 8px;
-    cursor: pointer;
+
+    label {
+      min-width: 120px;
+      color: var(--text-color);
+    }
+
+    input, select {
+      flex: 1;
+      background-color: var(--card-bg);
+      color: var(--text-color);
+      border: 1px solid var(--border-color);
+    }
   }
 
   .info-tooltip {
-    margin-left: 4px;
+    color: var(--text-color);
+    opacity: 0.6;
     cursor: help;
-    color: #999;
-    font-size: 12px;
-  }
-
-  /* Status message */
-  .status-message {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin: 8px 0;
-    padding: 8px 12px;
-    border-radius: $border-radius-md;
-    font-size: 12px;
-  }
-
-  .status-message.info {
-    background-color: rgba(0, 120, 212, 0.1);
-    color: #0078d4;
-  }
-
-  .status-message.success {
-    background-color: rgba(16, 124, 16, 0.1);
-    color: #107c10;
-  }
-
-  .status-message.error {
-    background-color: rgba(232, 17, 35, 0.1);
-    color: #e81123;
-  }
-
-  .status-message.working {
-    background-color: rgba(0, 120, 212, 0.1);
-    color: #0078d4;
-  }
-
-  .status-message .material-icons {
-    font-size: 16px;
-  }
-
-  .spinning {
-    animation: spin 1.5s linear infinite;
-  }
-
-  @keyframes spin {
-    0% { transform: rotate(0deg); }
-    100% { transform: rotate(360deg); }
-  }
-
-  .close-status {
-    margin-left: auto;
-    background: none;
-    border: none;
-    cursor: pointer;
-    padding: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    opacity: 0.7;
-  }
-
-  .close-status:hover {
-    opacity: 1;
-  }
-
-  .close-status .material-icons {
-    font-size: 14px;
+    margin-left: 4px;
   }
 </style>

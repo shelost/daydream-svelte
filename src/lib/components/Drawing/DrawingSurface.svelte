@@ -438,5 +438,8 @@
   .drawing-surface {
     touch-action: none;
     display: block;
+    background-color: #ffffff; /* Always keep canvas white for drawing */
+    border-radius: 4px;
+    box-shadow: 0 0 8px rgba(0, 0, 0, 0.1);
   }
 </style>

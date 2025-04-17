@@ -1,6 +1,7 @@
 <script lang="ts">
   import { createEventDispatcher } from 'svelte';
   import type { Tool } from '$lib/types';
+  import { drawingSettings } from '$lib/stores/drawingStore';
 
   export let selectedTool: Tool = 'select';
   export let type: 'canvas' | 'drawing' = 'canvas';
@@ -16,16 +17,32 @@
     { id: 'eraser', label: 'Eraser', icon: 'cleaning_services' }
   ];
 
+  // Mirror the exact tools from SidebarRight for consistency
   const drawingTools: Array<{id: Tool, label: string, icon: string}> = [
-    { id: 'pan', label: 'Pan', icon: 'pan_tool' },
-    { id: 'draw', label: 'Draw', icon: 'brush' },
-    { id: 'eraser', label: 'Eraser', icon: 'cleaning_services' }
+    { id: 'select', label: 'Select', icon: 'select_all' },
+    { id: 'draw', label: 'Pen', icon: 'edit' },
+    { id: 'eraser', label: 'Eraser', icon: 'cleaning_services' },
+    { id: 'pan', label: 'Pan', icon: 'pan_tool' }
   ];
 
   $: tools = type === 'canvas' ? canvasTools : drawingTools;
 
   function selectTool(tool: Tool) {
     selectedTool = tool;
+
+    // Update the drawingSettings store
+    const sidebarTool = tool === 'draw' ? 'pen' as const :
+                         tool === 'eraser' ? 'eraser' as const :
+                         tool === 'pan' ? 'pan' as const :
+                         tool === 'select' ? 'select' as const : 'pen' as const;
+
+    drawingSettings.update(settings => ({
+      ...settings,
+      selectedTool: sidebarTool,
+      // Clear selection when switching away from select tool
+      ...(sidebarTool !== 'select' && { selectedStrokes: [] })
+    }));
+
     dispatch('toolChange', { tool });
   }
 </script>
@@ -34,7 +51,7 @@
   <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
 </svelte:head>
 
-<div class="toolbar">
+<div class="toolbar-container">
   <div class="tools-container">
     {#each tools as tool}
       <button
@@ -52,60 +69,14 @@
 </div>
 
 <style lang="scss">
-  .toolbar {
-    background-color: #ffffff;
-    padding: 0.5rem;
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-    width: 60px;
-    height: 100%;
-    overflow-y: auto;
-    z-index: 10;
-
-    box-shadow: -8px 8px 32px rgba(black, 0.1);
-  }
-
   .tools-container {
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
   }
 
-  .tool-button {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    padding: 0.5rem;
-    border: none;
-    background-color: transparent;
-    border-radius: 4px;
-    cursor: pointer;
-    transition: all 0.2s ease;
-
-    &:hover {
-      background-color: rgba(0, 0, 0, 0.05);
-    }
-
-    &.active {
-      background-color: rgba(66, 133, 244, 0.1);
-      color: #4285f4;
-    }
-  }
-
-  .tool-icon {
-    font-size: 1.5rem;
-    margin-bottom: 0.25rem;
-    color: black;
-  }
-
-  .tool-label {
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: -.25px;
-    color: black;
-    text-transform: uppercase;
+  // Hide tool labels by default, can be shown in larger viewports if needed
+  :global(.tool-button .tool-label) {
     display: none;
   }
 </style>

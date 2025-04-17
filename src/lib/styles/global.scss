@@ -16,6 +16,11 @@
   --card-bg: #{$light-card-bg};
   --card-shadow: #{$light-card-shadow};
   --hover-bg: #{$light-hover-bg};
+  --button-text: #{$light-button-text};
+  --icon-color: #{$light-text-color};
+  --tool-active-bg: rgba(66, 133, 244, 0.1);
+  --tool-active-color: #4285f4;
+  --tool-hover-bg: rgba(0, 0, 0, 0.05);
 }
 
 // Dark Theme
@@ -33,6 +38,11 @@
   --card-bg: #{$dark-card-bg};
   --card-shadow: #{$dark-card-shadow};
   --hover-bg: #{$dark-hover-bg};
+  --button-text: #{$dark-button-text};
+  --icon-color: #{$dark-text-color};
+  --tool-active-bg: rgba(94, 107, 255, 0.2);
+  --tool-active-color: #{$dark-primary-color};
+  --tool-hover-bg: rgba(255, 255, 255, 0.1);
 }
 
 // Light Theme (explicit)
@@ -50,6 +60,11 @@
   --card-bg: #{$light-card-bg};
   --card-shadow: #{$light-card-shadow};
   --hover-bg: #{$light-hover-bg};
+  --button-text: #{$light-button-text};
+  --icon-color: #{$light-text-color};
+  --tool-active-bg: rgba(66, 133, 244, 0.1);
+  --tool-active-color: #4285f4;
+  --tool-hover-bg: rgba(0, 0, 0, 0.05);
 }
 
 // Global styles
@@ -96,18 +111,15 @@ a {
 button, .button {
   cursor: pointer;
   background-color: $primary-color;
-  color: white;
+  color: var(--button-text, white);
   border: none;
   border-radius: $border-radius-md;
   padding: 8px 16px;
-
   font-size: 12px;
   letter-spacing: -.5px;
   font-weight: 500;
   font-family: $font-family;
   transition: all $transition-fast;
-
-
 
   &:hover {
     opacity: 0.9;
@@ -122,7 +134,7 @@ button, .button {
     cursor: not-allowed;
   }
 
-  &.primary{
+  &.primary {
     box-shadow: -4px 8px 16px rgba(#030025, .2), inset -2px -4px 4px rgba(#030025, .25), inset 2px 4px 4px rgba(white, .25);
   }
 
@@ -143,7 +155,7 @@ button, .button {
     box-shadow: none;
 
     &:hover {
-      background-color: rgba($text-color, 0.05);
+      background-color: var(--hover-bg);
     }
   }
 }
@@ -290,6 +302,117 @@ input[type="range"] {
   color: $text-color;
   border: 1px solid $border-color;
   transition: background-color $transition-normal, color $transition-normal, border-color $transition-normal;
+}
+
+// Add reusable toolbar and sidebar component styles
+.toolbar-container {
+  background-color: var(--toolbar-bg);
+  padding: 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  width: 60px;
+  height: 100%;
+  overflow-y: auto;
+  z-index: 10;
+  box-shadow: -8px 8px 32px rgba(0, 0, 0, 0.1);
+}
+
+.tool-button {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 0.5rem;
+  border: none;
+  background-color: transparent;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  color: var(--text-color);
+
+  &:hover {
+    background-color: var(--tool-hover-bg);
+  }
+
+  &.active {
+    background-color: var(--tool-active-bg);
+    color: var(--tool-active-color);
+  }
+
+  .tool-icon {
+    font-size: 1.5rem;
+    margin-bottom: 0.25rem;
+    color: inherit;
+  }
+
+  .tool-label {
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: -0.25px;
+    text-transform: uppercase;
+    color: inherit;
+  }
+}
+
+// Sidebar sections
+.sidebar-section {
+  margin-bottom: 1rem;
+
+  h3 {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-color);
+    margin-top: 0;
+    margin-bottom: 12px;
+  }
+
+  .slider-row {
+    display: flex;
+    align-items: center;
+    margin: 12px 0;
+    font-size: 14px;
+    color: var(--text-color);
+
+    label {
+      width: 80px;
+      font-weight: 500;
+    }
+
+    .value {
+      width: 48px;
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+      font-size: 12px;
+    }
+  }
+
+  .checkbox-row {
+    display: flex;
+    align-items: center;
+    margin: 12px 0;
+    font-size: 14px;
+    color: var(--text-color);
+
+    label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      cursor: pointer;
+      font-weight: 500;
+    }
+
+    input[type="checkbox"] {
+      width: 16px;
+      height: 16px;
+      cursor: pointer;
+    }
+  }
+}
+
+// Material icons styling
+.material-icons {
+  color: var(--icon-color);
 }
 
 // Keep canvas/drawing pages with white background regardless of theme
