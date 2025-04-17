@@ -1,12 +1,11 @@
 <script lang="ts">
-  import { onMount, onDestroy, afterUpdate } from 'svelte';
+  import { onMount, onDestroy, afterUpdate, createEventDispatcher } from 'svelte';
   import { fade } from 'svelte/transition';
   import type { Tool, DrawingContent, Stroke, StrokePoint } from '$lib/types';
   import { updatePageContent, uploadThumbnail } from '$lib/supabase/pages';
   import { getStroke } from 'perfect-freehand';
   import { getSvgPathFromStroke, getPerfectFreehandOptions, calculatePressureFromVelocity } from '$lib/utils/drawingUtils';
-  import FloatingToolbar from './Drawing/FloatingToolbar.svelte';
-  import ZoomControl from './ZoomControl.svelte';
+  import { drawingSettings, activeDrawingId } from '$lib/stores/drawingStore';
 
   export let pageId: string;
   export let content: DrawingContent;
@@ -14,12 +13,57 @@
   export let isDrawingMode: boolean = true;
   export let onSaving: (status: boolean) => void;
   export let onSaveStatus: (status: 'saved' | 'saving' | 'error') => void;
+  // Export zoom for TitleBar
+  export let zoom: number = 1;
 
-  // Internal tool state for FloatingToolbar compatibility
-  // FloatingToolbar uses 'pen' while our Tool type uses 'draw'
-  $: floatingToolbarTool = selectedTool === 'draw' ? 'pen' as const :
-                         selectedTool === 'eraser' ? 'eraser' as const :
-                         selectedTool === 'pan' ? 'pan' as const : 'pen' as const;
+  // Set up event dispatcher
+  const dispatch = createEventDispatcher();
+
+  // Set active drawing ID when component mounts
+  $: if (pageId) {
+    activeDrawingId.set(pageId);
+    // Dispatch current content to parent for SVG export
+    dispatch('contentUpdate', { content });
+  }
+
+  // Dispatch content update whenever it changes
+  $: if (content) {
+    // Ensure content has bounds
+    if (!content.bounds && canvas) {
+      content.bounds = {
+        width: canvas.width,
+        height: canvas.height
+      };
+    }
+    dispatch('contentUpdate', { content });
+  }
+
+  // Sync tool from props with store
+  $: {
+    // Convert Tool type to the sidebar tool type
+    const sidebarTool = selectedTool === 'draw' ? 'pen' as const :
+                       selectedTool === 'eraser' ? 'eraser' as const :
+                       selectedTool === 'pan' ? 'pan' as const :
+                       selectedTool === 'select' ? 'select' as const : 'pen' as const;
+
+    // Update the store if the selectedTool prop changes
+    if ($drawingSettings.selectedTool !== sidebarTool) {
+      drawingSettings.update(settings => ({...settings, selectedTool: sidebarTool}));
+    }
+  }
+
+  // Sync tool from store to props
+  $: {
+    // Convert sidebar tool type to Tool type
+    const toolFromStore = $drawingSettings.selectedTool === 'pen' || $drawingSettings.selectedTool === 'highlighter' ? 'draw' as Tool :
+                         $drawingSettings.selectedTool === 'eraser' ? 'eraser' as Tool :
+                         $drawingSettings.selectedTool === 'pan' ? 'pan' as Tool :
+                         $drawingSettings.selectedTool === 'select' ? 'select' as Tool : 'draw' as Tool;
+
+    if (selectedTool !== toolFromStore) {
+      selectedTool = toolFromStore;
+    }
+  }
 
   let canvas: HTMLCanvasElement;
   let ctx: CanvasRenderingContext2D | null = null;
@@ -30,7 +74,6 @@
   let lastPanPoint: StrokePoint | null = null;
   let offsetX = 0;
   let offsetY = 0;
-  let zoom = 1;
   let showInstructions = true;
   let pointerCapabilities: PointerCapabilities = { pressure: false };
 
@@ -38,18 +81,18 @@
   let lastTime = 0;
   let pointTimes: number[] = [];
 
-  // Drawing settings
-  let strokeColor = '#000000';
-  let strokeSize = 3;
-  let strokeOpacity = 1;
-  let thinning = 0.5;
-  let smoothing = 0.5;
-  let streamline = 0.5;
-  let simulatePressure = true;
-  let capStart = true;
-  let capEnd = true;
-  let taperStart = 0;
-  let taperEnd = 0;
+  // Get drawing settings from store
+  $: strokeColor = $drawingSettings.strokeColor;
+  $: strokeSize = $drawingSettings.strokeSize;
+  $: strokeOpacity = $drawingSettings.opacity;
+  $: thinning = $drawingSettings.thinning;
+  $: smoothing = $drawingSettings.smoothing;
+  $: streamline = $drawingSettings.streamline;
+  $: simulatePressure = $drawingSettings.showPressure;
+  $: capStart = $drawingSettings.capStart;
+  $: capEnd = $drawingSettings.capEnd;
+  $: taperStart = $drawingSettings.taperStart;
+  $: taperEnd = $drawingSettings.taperEnd;
 
   // Store stroke history for undo/redo
   let strokeHistory: Stroke[][] = [];
@@ -64,6 +107,12 @@
     pressure: boolean;
   }
 
+  // Add additional state variables for selection
+  let selectionBounds = { x: 0, y: 0, width: 0, height: 0 };
+  let isResizingSelection = false;
+  let resizeHandle = ''; // 'tl', 'tr', 'bl', 'br', etc.
+  let selectionControlsVisible = false;
+
   onMount(() => {
     try {
       // Check pointer capabilities
@@ -75,6 +124,7 @@
       // Set up event listeners
       window.addEventListener('resize', resizeCanvas);
       window.addEventListener('keydown', handleKeyDown);
+      window.addEventListener('keyup', handleKeyUp);
 
       // Hide instructions after 3 seconds
       setTimeout(() => {
@@ -90,6 +140,7 @@
     return () => {
       window.removeEventListener('resize', resizeCanvas);
       window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
     };
   });
 
@@ -97,6 +148,8 @@
     if (saveTimeout) {
       clearTimeout(saveTimeout);
     }
+    // Clear active drawing ID when component is destroyed
+    activeDrawingId.set(null);
   });
 
   afterUpdate(() => {
@@ -106,7 +159,7 @@
   function setupKeyboardShortcuts() {
     keyboardMap = {
       'p': () => updateToolSelection('draw'),
-      'h': () => updateToolSelection('highlighter'),
+      's': () => updateToolSelection('select'),
       'e': () => updateToolSelection('eraser'),
       ' ': () => updateToolSelection('pan'),
       'z': (event?: KeyboardEvent) => {
@@ -131,18 +184,31 @@
         offsetX = 0;
         offsetY = 0;
         renderStrokes();
+      },
+      'delete': () => {
+        deleteSelectedStrokes();
+      },
+      'backspace': () => {
+        deleteSelectedStrokes();
       }
     };
   }
 
-  function updateToolSelection(tool: 'draw' | 'highlighter' | 'eraser' | 'pan') {
+  function updateToolSelection(tool: 'draw' | 'select' | 'eraser' | 'pan') {
     if (tool === 'pan') {
       selectedTool = 'pan';
+      drawingSettings.update(settings => ({...settings, selectedTool: 'pan'}));
     } else if (tool === 'eraser') {
       selectedTool = 'eraser';
+      drawingSettings.update(settings => ({...settings, selectedTool: 'eraser'}));
+      currentStroke = null;
+    } else if (tool === 'select') {
+      selectedTool = 'select';
+      drawingSettings.update(settings => ({...settings, selectedTool: 'select'}));
       currentStroke = null;
     } else {
       selectedTool = 'draw';
+      drawingSettings.update(settings => ({...settings, selectedTool: 'pen'}));
       currentStroke = null;
     }
     updateToolMode();
@@ -239,7 +305,8 @@
       ctx.scale(zoom, zoom);
 
       // Render each stroke
-      for (const stroke of content.strokes) {
+      for (let i = 0; i < content.strokes.length; i++) {
+        const stroke = content.strokes[i];
         if (stroke.points.length < 2) continue;
 
         // Generate the stroke with perfect-freehand
@@ -279,10 +346,24 @@
 
         // Fill the path
         ctx.fill(path);
+
+        // Highlight selected strokes
+        if ($drawingSettings.selectedStrokes.includes(i)) {
+          ctx.save();
+          ctx.strokeStyle = '#4285F4';
+          ctx.lineWidth = 2 / zoom;
+          ctx.stroke(path);
+          ctx.restore();
+        }
       }
 
       // Reset alpha
       ctx.globalAlpha = 1;
+
+      // Draw selection controls if there are selected strokes
+      if ($drawingSettings.selectedStrokes.length > 0 && selectedTool === 'select' && !isMovingSelection) {
+        renderSelectionControls();
+      }
 
       // Restore context state
       ctx.restore();
@@ -292,11 +373,37 @@
   }
 
   function startDrawing(e: PointerEvent) {
+    console.log('Starting drawing with tool:', selectedTool); // Add for debugging
+
     if (selectedTool === 'pan') {
       startPanning(e);
       return;
     }
 
+    if (selectedTool === 'select') {
+      const point = getPointerPosition(e);
+
+      // Check if clicking on a resize handle
+      if ($drawingSettings.selectedStrokes.length > 0 && selectionControlsVisible) {
+        const handle = getResizeHandleAtPoint(point);
+        if (handle) {
+          startResizingSelection(e, handle);
+          return;
+        }
+      }
+
+      // Check if clicking on an existing selection
+      if ($drawingSettings.selectedStrokes.length > 0 && checkIfClickedOnSelection(e)) {
+        // Start moving the selection if clicked on a selected stroke
+        startMovingSelection(e);
+      } else {
+        // Start a new selection
+        startSelecting(e);
+      }
+      return;
+    }
+
+    // Rest of existing startDrawing code...
     isDrawing = true;
     lastTime = Date.now();
     pointTimes = [];
@@ -312,13 +419,14 @@
     // Create a new stroke
     let tool: 'pen' | 'highlighter' | 'eraser' = 'pen';
 
-    // Set appropriate tool based on selected tool or stylus eraser button
+    // Set appropriate tool based on selected tool from store or stylus eraser button
     if (selectedTool === 'eraser') {
       tool = 'eraser';
     } else if (e.pointerType === 'pen' && e.buttons === 32) {
       // Eraser button on stylus
       tool = 'eraser';
     } else if (selectedTool === 'draw') {
+      // Only pen is available now (removed highlighter)
       tool = 'pen';
     }
 
@@ -347,6 +455,25 @@
       return;
     }
 
+    if (selectedTool === 'select') {
+      if (!isResizingSelection && !isMovingSelection && !$drawingSettings.isSelecting) {
+        // Update cursor on hover when not in an active operation
+        updateCursor(e);
+      }
+
+      if (isResizingSelection) {
+        continueResizingSelection(e);
+        return;
+      } else if (isMovingSelection) {
+        continueMovingSelection(e);
+        return;
+      } else if ($drawingSettings.isSelecting) {
+        continueSelecting(e);
+        return;
+      }
+    }
+
+    // Rest of existing continueDrawing code
     if (!isDrawing || !currentStroke || !ctx) return;
 
     // Get pointer position
@@ -382,6 +509,20 @@
       return;
     }
 
+    if (selectedTool === 'select') {
+      if (isResizingSelection) {
+        finishResizingSelection(e);
+        return;
+      } else if (isMovingSelection) {
+        finishMovingSelection(e);
+        return;
+      } else if ($drawingSettings.isSelecting) {
+        finishSelecting(e);
+        return;
+      }
+    }
+
+    // Rest of existing finishDrawing code
     if (!isDrawing || !currentStroke || !ctx) return;
 
     isDrawing = false;
@@ -656,12 +797,23 @@
   function updateToolMode() {
     if (!canvas) return;
 
+    console.log('Updating tool mode:', selectedTool); // Add for debugging
+
+    // First, reset any tool-specific state
+    canvas.classList.remove('selecting-mode', 'drawing-mode', 'erasing-mode', 'panning-mode');
+
     if (selectedTool === 'pan') {
-      canvas.style.cursor = 'grab';
+      canvas.classList.add('panning-mode');
+      clearSelection();
     } else if (selectedTool === 'eraser') {
-      canvas.style.cursor = 'url("data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' width=\'24\' height=\'24\' viewBox=\'0 0 24 24\'%3E%3Ccircle cx=\'12\' cy=\'12\' r=\'8\' fill=\'rgba(255,0,0,0.2)\' stroke=\'%23ff0000\' stroke-width=\'2\'/%3E%3C/svg%3E") 12 12, auto';
+      canvas.classList.add('erasing-mode');
+      clearSelection();
+    } else if (selectedTool === 'select') {
+      canvas.classList.add('selecting-mode');
+      // Keep any existing selection
     } else {
-      canvas.style.cursor = 'crosshair';
+      canvas.classList.add('drawing-mode');
+      clearSelection();
     }
   }
 
@@ -741,89 +893,6 @@
     // Render and save
     renderStrokes();
     autoSave();
-  }
-
-  // Handle toolbar events
-  function onToolChange(event: CustomEvent) {
-    const { tool } = event.detail;
-
-    if (tool === 'pan') {
-      selectedTool = 'pan';
-    } else if (tool === 'eraser') {
-      selectedTool = 'eraser';
-    } else if (tool === 'pen' || tool === 'highlighter') {
-      selectedTool = 'draw';
-      // Set the current stroke tool type for rendering
-      if (currentStroke) {
-        currentStroke.tool = tool;
-      }
-    }
-
-    updateToolMode();
-  }
-
-  function onColorChange(event: CustomEvent) {
-    strokeColor = event.detail.color;
-    if (currentStroke) {
-      currentStroke.color = strokeColor;
-      renderCurrentStroke();
-    }
-  }
-
-  function onSizeChange(event: CustomEvent) {
-    strokeSize = event.detail.size;
-    if (currentStroke) {
-      currentStroke.size = strokeSize;
-      renderCurrentStroke();
-    }
-  }
-
-  function onOpacityChange(event: CustomEvent) {
-    strokeOpacity = event.detail.opacity;
-    if (currentStroke) {
-      currentStroke.opacity = strokeOpacity;
-      renderCurrentStroke();
-    }
-  }
-
-  function onThinningChange(event: CustomEvent) {
-    thinning = event.detail.thinning;
-    renderCurrentStroke();
-  }
-
-  function onSmoothingChange(event: CustomEvent) {
-    smoothing = event.detail.smoothing;
-    renderCurrentStroke();
-  }
-
-  function onStreamlineChange(event: CustomEvent) {
-    streamline = event.detail.streamline;
-    renderCurrentStroke();
-  }
-
-  function onPressureChange(event: CustomEvent) {
-    simulatePressure = event.detail.showPressure;
-    renderCurrentStroke();
-  }
-
-  function onCapStartChange(event: CustomEvent) {
-    capStart = event.detail.capStart;
-    renderCurrentStroke();
-  }
-
-  function onCapEndChange(event: CustomEvent) {
-    capEnd = event.detail.capEnd;
-    renderCurrentStroke();
-  }
-
-  function onTaperStartChange(event: CustomEvent) {
-    taperStart = event.detail.taperStart;
-    renderCurrentStroke();
-  }
-
-  function onTaperEndChange(event: CustomEvent) {
-    taperEnd = event.detail.taperEnd;
-    renderCurrentStroke();
   }
 
   // Add a function to save with thumbnails
@@ -1045,6 +1114,703 @@
       saveDrawingContent(true);
     }
   }
+
+  // Re-render current stroke when settings change
+  $: if (currentStroke && (strokeColor || strokeSize || strokeOpacity || thinning ||
+      smoothing || streamline || simulatePressure || capStart || capEnd ||
+      taperStart || taperEnd)) {
+    // Update current stroke properties if a stroke is in progress
+    if (isDrawing) {
+      currentStroke.color = strokeColor;
+      currentStroke.size = strokeSize;
+      currentStroke.opacity = strokeOpacity;
+    }
+    // Re-render with new settings
+    renderCurrentStroke();
+  }
+
+  // For selecting strokes
+  function startSelecting(e: PointerEvent) {
+    const point = getPointerPosition(e);
+
+    // Clear any existing selection if not holding shift key
+    if (!e.shiftKey) {
+      drawingSettings.update(settings => ({
+        ...settings,
+        selectedStrokes: []
+      }));
+    }
+
+    // Start a new selection box
+    drawingSettings.update(settings => ({
+      ...settings,
+      isSelecting: true,
+      selectionBox: {
+        x1: point.x,
+        y1: point.y,
+        x2: point.x,
+        y2: point.y
+      }
+    }));
+
+    // Try to capture pointer for events outside canvas
+    try {
+      canvas.setPointerCapture(e.pointerId);
+    } catch (error) {
+      console.error('Error capturing pointer:', error);
+    }
+  }
+
+  function continueSelecting(e: PointerEvent) {
+    if (!$drawingSettings.isSelecting) return;
+
+    const point = getPointerPosition(e);
+
+    // Update the selection box
+    drawingSettings.update(settings => {
+      if (settings.selectionBox) {
+        return {
+          ...settings,
+          selectionBox: {
+            ...settings.selectionBox,
+            x2: point.x,
+            y2: point.y
+          }
+        };
+      }
+      return settings;
+    });
+
+    // Render the selection
+    renderSelectionBox();
+  }
+
+  function finishSelecting(e: PointerEvent) {
+    if (!$drawingSettings.isSelecting || !$drawingSettings.selectionBox) return;
+
+    // Normalize the selection box coordinates
+    const box = $drawingSettings.selectionBox;
+    const x1 = Math.min(box.x1, box.x2);
+    const y1 = Math.min(box.y1, box.y2);
+    const x2 = Math.max(box.x1, box.x2);
+    const y2 = Math.max(box.y1, box.y2);
+
+    // Find strokes that intersect with the selection box
+    const selectedIndices: number[] = [];
+    content.strokes.forEach((stroke, index) => {
+      if (isStrokeInSelectionBox(stroke, x1, y1, x2, y2)) {
+        selectedIndices.push(index);
+      }
+    });
+
+    // Update the selection in the store
+    drawingSettings.update(settings => ({
+      ...settings,
+      isSelecting: false,
+      selectionBox: null,
+      selectedStrokes: e.ctrlKey || e.metaKey
+        ? [...new Set([...settings.selectedStrokes, ...selectedIndices])]
+        : selectedIndices
+    }));
+
+    // Release the pointer
+    try {
+      canvas.releasePointerCapture(e.pointerId);
+    } catch (error) {
+      console.error('Error releasing pointer:', error);
+    }
+
+    // Render the selection
+    renderStrokes();
+  }
+
+  function isStrokeInSelectionBox(stroke: Stroke, x1: number, y1: number, x2: number, y2: number): boolean {
+    // First check if any point of the stroke is inside the selection box
+    for (const point of stroke.points) {
+      if (point.x >= x1 && point.x <= x2 && point.y >= y1 && point.y <= y2) {
+        return true;
+      }
+    }
+
+    // Additionally check if the stroke crosses the selection box boundaries
+    // This is a simplified version that doesn't check all line segments
+    // but will catch most cases where strokes cross the selection box
+    if (stroke.points.length >= 2) {
+      for (let i = 1; i < stroke.points.length; i++) {
+        const p1 = stroke.points[i - 1];
+        const p2 = stroke.points[i];
+
+        // Check if line segment intersects with any of the selection box edges
+        // Top edge
+        if (lineIntersectsSegment(p1.x, p1.y, p2.x, p2.y, x1, y1, x2, y1)) return true;
+        // Right edge
+        if (lineIntersectsSegment(p1.x, p1.y, p2.x, p2.y, x2, y1, x2, y2)) return true;
+        // Bottom edge
+        if (lineIntersectsSegment(p1.x, p1.y, p2.x, p2.y, x1, y2, x2, y2)) return true;
+        // Left edge
+        if (lineIntersectsSegment(p1.x, p1.y, p2.x, p2.y, x1, y1, x1, y2)) return true;
+      }
+    }
+
+    return false;
+  }
+
+  // Helper function to check if two line segments intersect
+  function lineIntersectsSegment(x1: number, y1: number, x2: number, y2: number, x3: number, y3: number, x4: number, y4: number): boolean {
+    // Calculate the direction of the two lines
+    const d1x = x2 - x1;
+    const d1y = y2 - y1;
+    const d2x = x4 - x3;
+    const d2y = y4 - y3;
+
+    // Calculate the determinant
+    const determinant = d1x * d2y - d1y * d2x;
+
+    // If determinant is 0, lines are parallel and don't intersect
+    if (determinant === 0) return false;
+
+    // Calculate the parameters for both lines
+    const s = (d1x * (y1 - y3) - d1y * (x1 - x3)) / determinant;
+    const t = (d2x * (y1 - y3) - d2y * (x1 - x3)) / determinant;
+
+    // Check if the intersection point is within both line segments
+    return s >= 0 && s <= 1 && t >= 0 && t <= 1;
+  }
+
+  function renderSelectionBox() {
+    if (!ctx || !$drawingSettings.selectionBox) return;
+
+    // Render strokes first
+    renderStrokes();
+
+    // Get selection box coordinates
+    const box = $drawingSettings.selectionBox;
+    const x = Math.min(box.x1, box.x2);
+    const y = Math.min(box.y1, box.y2);
+    const width = Math.abs(box.x2 - box.x1);
+    const height = Math.abs(box.y2 - box.y1);
+
+    // Save context state
+    ctx.save();
+
+    // Apply zoom and pan
+    ctx.translate(offsetX, offsetY);
+    ctx.scale(zoom, zoom);
+
+    // Draw selection box with improved visibility
+    ctx.strokeStyle = '#4285F4'; // Blue border
+    ctx.lineWidth = 2 / zoom; // Thicker border
+    ctx.setLineDash([5 / zoom, 5 / zoom]); // Dashed line
+    ctx.strokeRect(x, y, width, height);
+
+    // Draw fill with higher opacity for better visibility
+    ctx.fillStyle = 'rgba(66, 133, 244, 0.15)';
+    ctx.fillRect(x, y, width, height);
+
+    // Restore context state
+    ctx.restore();
+  }
+
+  // For moving selected strokes
+  let isMovingSelection = false;
+  let moveStartPoint: StrokePoint | null = null;
+
+  function startMovingSelection(e: PointerEvent) {
+    if ($drawingSettings.selectedStrokes.length === 0) return;
+
+    isMovingSelection = true;
+    moveStartPoint = getPointerPosition(e);
+
+    // Try to capture pointer for events outside canvas
+    try {
+      canvas.setPointerCapture(e.pointerId);
+    } catch (error) {
+      console.error('Error capturing pointer:', error);
+    }
+  }
+
+  function continueMovingSelection(e: PointerEvent) {
+    if (!isMovingSelection || !moveStartPoint) return;
+
+    const currentPoint = getPointerPosition(e);
+    const dx = currentPoint.x - moveStartPoint.x;
+    const dy = currentPoint.y - moveStartPoint.y;
+
+    // Move the selected strokes
+    $drawingSettings.selectedStrokes.forEach(index => {
+      if (index >= 0 && index < content.strokes.length) {
+        const stroke = content.strokes[index];
+        stroke.points.forEach(point => {
+          point.x += dx;
+          point.y += dy;
+        });
+      }
+    });
+
+    // Update the start point
+    moveStartPoint = currentPoint;
+
+    // Render the updated strokes
+    renderStrokes();
+  }
+
+  function finishMovingSelection(e: PointerEvent) {
+    if (!isMovingSelection) return;
+
+    isMovingSelection = false;
+    moveStartPoint = null;
+
+    // Save history state
+    saveHistoryState();
+
+    // Auto save
+    autoSave();
+
+    // Release the pointer
+    try {
+      canvas.releasePointerCapture(e.pointerId);
+    } catch (error) {
+      console.error('Error releasing pointer:', error);
+    }
+  }
+
+  // Helper function to check if clicked on a selected stroke
+  function checkIfClickedOnSelection(e: PointerEvent): boolean {
+    const point = getPointerPosition(e);
+
+    // If selection controls are visible, check if point is within selection bounds
+    if (selectionControlsVisible) {
+      if (isPointInRect(point, selectionBounds.x, selectionBounds.y, selectionBounds.width, selectionBounds.height)) {
+        return true;
+      }
+    }
+
+    // If not within bounds, check individual strokes using the existing method
+    for (const index of $drawingSettings.selectedStrokes) {
+      if (index >= 0 && index < content.strokes.length) {
+        const stroke = content.strokes[index];
+
+        // Check if point is close to any point in the stroke
+        for (const strokePoint of stroke.points) {
+          const dx = point.x - strokePoint.x;
+          const dy = point.y - strokePoint.y;
+          const distanceSquared = dx * dx + dy * dy;
+
+          if (distanceSquared < (stroke.size * stroke.size) * 2) {
+            return true;
+          }
+        }
+      }
+    }
+
+    return false;
+  }
+
+  // Add a function to delete selected strokes
+  function deleteSelectedStrokes() {
+    if ($drawingSettings.selectedStrokes.length === 0) return;
+
+    // Sort indices in descending order to avoid issues when removing items
+    const indicesToRemove = [...$drawingSettings.selectedStrokes].sort((a, b) => b - a);
+
+    // Remove strokes
+    for (const index of indicesToRemove) {
+      if (index >= 0 && index < content.strokes.length) {
+        content.strokes.splice(index, 1);
+      }
+    }
+
+    // Clear selection
+    drawingSettings.update(settings => ({
+      ...settings,
+      selectedStrokes: []
+    }));
+
+    // Save history
+    saveHistoryState();
+
+    // Render and save
+    renderStrokes();
+    autoSave();
+  }
+
+  // Add function to render selection controls
+  function renderSelectionControls() {
+    // Early return if the context is not available
+    if (!ctx) return;
+
+    try {
+      // Calculate selection bounds if not already calculated or if selection has changed
+      calculateSelectionBounds();
+
+      // Make controls visible
+      selectionControlsVisible = true;
+
+      // Save context state
+      ctx.save();
+
+      // Apply zoom and pan
+      ctx.translate(offsetX, offsetY);
+      ctx.scale(zoom, zoom);
+
+      // Draw semi-transparent overlay around the selection
+      ctx.fillStyle = 'rgba(66, 133, 244, 0.1)'; // Make the overlay slightly more visible
+      ctx.fillRect(selectionBounds.x, selectionBounds.y, selectionBounds.width, selectionBounds.height);
+
+      // Draw selection border with a more distinct style
+      ctx.strokeStyle = '#4285F4';
+      ctx.lineWidth = 2 / zoom; // Thicker border for better visibility
+      ctx.setLineDash([5 / zoom, 5 / zoom]);
+      ctx.strokeRect(selectionBounds.x, selectionBounds.y, selectionBounds.width, selectionBounds.height);
+
+      // Draw resize handles with improved visibility
+      const handleSize = 10 / zoom; // Larger handles for easier interaction
+      ctx.fillStyle = '#ffffff';
+      ctx.strokeStyle = '#4285F4';
+      ctx.lineWidth = 1.5 / zoom;
+      ctx.setLineDash([]);
+
+      // Define handle positions
+      const handles = [
+        { x: selectionBounds.x, y: selectionBounds.y }, // Top-left
+        { x: selectionBounds.x + selectionBounds.width / 2, y: selectionBounds.y }, // Top-middle
+        { x: selectionBounds.x + selectionBounds.width, y: selectionBounds.y }, // Top-right
+        { x: selectionBounds.x + selectionBounds.width, y: selectionBounds.y + selectionBounds.height / 2 }, // Middle-right
+        { x: selectionBounds.x + selectionBounds.width, y: selectionBounds.y + selectionBounds.height }, // Bottom-right
+        { x: selectionBounds.x + selectionBounds.width / 2, y: selectionBounds.y + selectionBounds.height }, // Bottom-middle
+        { x: selectionBounds.x, y: selectionBounds.y + selectionBounds.height }, // Bottom-left
+        { x: selectionBounds.x, y: selectionBounds.y + selectionBounds.height / 2 } // Middle-left
+      ];
+
+      // Draw each handle
+      for (const handle of handles) {
+        ctx.beginPath();
+        ctx.rect(handle.x - handleSize / 2, handle.y - handleSize / 2, handleSize, handleSize);
+        ctx.fill();
+        ctx.stroke();
+      }
+
+      // Restore context state
+      ctx.restore();
+    } catch (error) {
+      console.error('Error rendering selection controls:', error);
+    }
+  }
+
+  // Function to calculate selection bounds
+  function calculateSelectionBounds() {
+    if ($drawingSettings.selectedStrokes.length === 0) return;
+
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+
+    $drawingSettings.selectedStrokes.forEach(index => {
+      if (index >= 0 && index < content.strokes.length) {
+        const stroke = content.strokes[index];
+
+        for (const point of stroke.points) {
+          minX = Math.min(minX, point.x);
+          minY = Math.min(minY, point.y);
+          maxX = Math.max(maxX, point.x);
+          maxY = Math.max(maxY, point.y);
+        }
+      }
+    });
+
+    // Add a small padding
+    const padding = 10;
+    minX -= padding;
+    minY -= padding;
+    maxX += padding;
+    maxY += padding;
+
+    selectionBounds = {
+      x: minX,
+      y: minY,
+      width: maxX - minX,
+      height: maxY - minY
+    };
+  }
+
+  // Add functions for resizing the selection
+  function getResizeHandleAtPoint(point: StrokePoint): string | null {
+    if (!selectionControlsVisible) return null;
+
+    const handleSize = 8 / zoom;
+
+    // Check each handle
+    // Top-left
+    if (isPointInRect(point, selectionBounds.x - handleSize/2, selectionBounds.y - handleSize/2, handleSize, handleSize)) {
+      return 'tl';
+    }
+
+    // Top-right
+    if (isPointInRect(point, selectionBounds.x + selectionBounds.width - handleSize/2, selectionBounds.y - handleSize/2, handleSize, handleSize)) {
+      return 'tr';
+    }
+
+    // Bottom-left
+    if (isPointInRect(point, selectionBounds.x - handleSize/2, selectionBounds.y + selectionBounds.height - handleSize/2, handleSize, handleSize)) {
+      return 'bl';
+    }
+
+    // Bottom-right
+    if (isPointInRect(point, selectionBounds.x + selectionBounds.width - handleSize/2, selectionBounds.y + selectionBounds.height - handleSize/2, handleSize, handleSize)) {
+      return 'br';
+    }
+
+    // Middle-top
+    if (isPointInRect(point, selectionBounds.x + selectionBounds.width/2 - handleSize/2, selectionBounds.y - handleSize/2, handleSize, handleSize)) {
+      return 'mt';
+    }
+
+    // Middle-right
+    if (isPointInRect(point, selectionBounds.x + selectionBounds.width - handleSize/2, selectionBounds.y + selectionBounds.height/2 - handleSize/2, handleSize, handleSize)) {
+      return 'mr';
+    }
+
+    // Middle-bottom
+    if (isPointInRect(point, selectionBounds.x + selectionBounds.width/2 - handleSize/2, selectionBounds.y + selectionBounds.height - handleSize/2, handleSize, handleSize)) {
+      return 'mb';
+    }
+
+    // Middle-left
+    if (isPointInRect(point, selectionBounds.x - handleSize/2, selectionBounds.y + selectionBounds.height/2 - handleSize/2, handleSize, handleSize)) {
+      return 'ml';
+    }
+
+    return null;
+  }
+
+  // Helper function to check if a point is inside a rectangle
+  function isPointInRect(point: StrokePoint, x: number, y: number, width: number, height: number): boolean {
+    return point.x >= x && point.x <= x + width && point.y >= y && point.y <= y + height;
+  }
+
+  // Function to start resizing the selection
+  function startResizingSelection(e: PointerEvent, handle: string) {
+    isResizingSelection = true;
+    resizeHandle = handle;
+    moveStartPoint = getPointerPosition(e);
+
+    // Original bounds before resize
+    const originalBounds = { ...selectionBounds };
+
+    // Try to capture pointer for events outside canvas
+    try {
+      canvas.setPointerCapture(e.pointerId);
+    } catch (error) {
+      console.error('Error capturing pointer:', error);
+    }
+  }
+
+  // Function to continue resizing the selection
+  function continueResizingSelection(e: PointerEvent) {
+    if (!isResizingSelection || !moveStartPoint) return;
+
+    const currentPoint = getPointerPosition(e);
+    const dx = currentPoint.x - moveStartPoint.x;
+    const dy = currentPoint.y - moveStartPoint.y;
+
+    // Original selection bounds before this move
+    const originalX = selectionBounds.x;
+    const originalY = selectionBounds.y;
+    const originalWidth = selectionBounds.width;
+    const originalHeight = selectionBounds.height;
+
+    // Update bounds based on which handle is being dragged
+    let newX = originalX;
+    let newY = originalY;
+    let newWidth = originalWidth;
+    let newHeight = originalHeight;
+
+    switch (resizeHandle) {
+      case 'tl': // Top-left
+        newX = originalX + dx;
+        newY = originalY + dy;
+        newWidth = originalWidth - dx;
+        newHeight = originalHeight - dy;
+        break;
+      case 'tr': // Top-right
+        newY = originalY + dy;
+        newWidth = originalWidth + dx;
+        newHeight = originalHeight - dy;
+        break;
+      case 'bl': // Bottom-left
+        newX = originalX + dx;
+        newWidth = originalWidth - dx;
+        newHeight = originalHeight + dy;
+        break;
+      case 'br': // Bottom-right
+        newWidth = originalWidth + dx;
+        newHeight = originalHeight + dy;
+        break;
+      case 'mt': // Middle-top
+        newY = originalY + dy;
+        newHeight = originalHeight - dy;
+        break;
+      case 'mr': // Middle-right
+        newWidth = originalWidth + dx;
+        break;
+      case 'mb': // Middle-bottom
+        newHeight = originalHeight + dy;
+        break;
+      case 'ml': // Middle-left
+        newX = originalX + dx;
+        newWidth = originalWidth - dx;
+        break;
+    }
+
+    // Ensure width and height are not negative
+    if (newWidth < 10) {
+      newWidth = 10;
+      newX = originalX + originalWidth - 10;
+    }
+
+    if (newHeight < 10) {
+      newHeight = 10;
+      newY = originalY + originalHeight - 10;
+    }
+
+    // Update selection bounds
+    selectionBounds = {
+      x: newX,
+      y: newY,
+      width: newWidth,
+      height: newHeight
+    };
+
+    // Calculate scale factors
+    const scaleX = newWidth / originalWidth;
+    const scaleY = newHeight / originalHeight;
+
+    // Scale and reposition selected strokes
+    transformSelectedStrokes(originalX, originalY, newX, newY, scaleX, scaleY);
+
+    // Update start point for next move
+    moveStartPoint = currentPoint;
+
+    // Render the updated strokes
+    renderStrokes();
+  }
+
+  // Function to transform (scale and move) selected strokes
+  function transformSelectedStrokes(origX: number, origY: number, newX: number, newY: number, scaleX: number, scaleY: number) {
+    $drawingSettings.selectedStrokes.forEach(index => {
+      if (index >= 0 && index < content.strokes.length) {
+        const stroke = content.strokes[index];
+
+        // Transform each point
+        stroke.points.forEach(point => {
+          // Calculate relative position to the original bounds
+          const relX = point.x - origX;
+          const relY = point.y - origY;
+
+          // Apply scaling
+          const scaledX = relX * scaleX;
+          const scaledY = relY * scaleY;
+
+          // Set new position
+          point.x = newX + scaledX;
+          point.y = newY + scaledY;
+        });
+      }
+    });
+  }
+
+  // Function to finish resizing the selection
+  function finishResizingSelection(e: PointerEvent) {
+    if (!isResizingSelection) return;
+
+    isResizingSelection = false;
+    resizeHandle = '';
+    moveStartPoint = null;
+
+    // Save history state
+    saveHistoryState();
+
+    // Auto save
+    autoSave();
+
+    // Release the pointer
+    try {
+      canvas.releasePointerCapture(e.pointerId);
+    } catch (error) {
+      console.error('Error releasing pointer:', error);
+    }
+
+    // Recalculate selection bounds
+    calculateSelectionBounds();
+
+    // Render the updated strokes
+    renderStrokes();
+  }
+
+  // Add function to clear the selection
+  function clearSelection() {
+    console.log('Clearing selection');
+    drawingSettings.update(settings => ({
+      ...settings,
+      selectedStrokes: []
+    }));
+    selectionControlsVisible = false;
+  }
+
+  // Add a function to update cursor based on hover position
+  function updateCursor(e: PointerEvent) {
+    if (!canvas || selectedTool !== 'select' || !selectionControlsVisible) return;
+
+    const point = getPointerPosition(e);
+    const handle = getResizeHandleAtPoint(point);
+
+    if (handle) {
+      // Set cursor based on which handle is being hovered
+      switch (handle) {
+        case 'tl':
+        case 'br':
+          canvas.style.cursor = 'nwse-resize';
+          break;
+        case 'tr':
+        case 'bl':
+          canvas.style.cursor = 'nesw-resize';
+          break;
+        case 'mt':
+        case 'mb':
+          canvas.style.cursor = 'ns-resize';
+          break;
+        case 'ml':
+        case 'mr':
+          canvas.style.cursor = 'ew-resize';
+          break;
+      }
+    } else if (checkIfClickedOnSelection(e)) {
+      // Use a string literal for the cursor style
+      canvas.style.cursor = 'move';
+    } else {
+      canvas.style.cursor = 'default';
+    }
+  }
+
+  // Add a keyup handler to support deletion with Delete key
+  function handleKeyUp(e: KeyboardEvent) {
+    if (selectedTool === 'select' && $drawingSettings.selectedStrokes.length > 0) {
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        deleteSelectedStrokes();
+      } else if (e.key === 'Escape') {
+        clearSelection();
+        renderStrokes();
+      }
+    }
+  }
+
+  // Add a reactive declaration to handle tool changes
+  $: if (selectedTool) {
+    console.log('Tool changed to:', selectedTool);
+    // Ensure any necessary updates happen when the tool changes
+    updateToolMode();
+  }
 </script>
 
 <div class="drawing-container">
@@ -1075,50 +1841,17 @@
     </div>
   {/if}
 
-  <ZoomControl
-    zoom={zoom}
-    on:resetZoom={() => {
-      zoom = 1;
-      offsetX = 0;
-      offsetY = 0;
-      renderStrokes();
-    }}
-    on:zoomIn={() => {
-      zoom = Math.min(zoom + 0.1, 5);
-      renderStrokes();
-    }}
-    on:zoomOut={() => {
-      zoom = Math.max(zoom - 0.1, 0.5);
-      renderStrokes();
-    }}
-  />
+  {#if selectedTool === 'select' && $drawingSettings.selectedStrokes.length === 0}
+    <div class="select-mode-tooltip" transition:fade={{ duration: 200 }}>
+      Click and drag to select strokes
+    </div>
+  {/if}
 
-  <FloatingToolbar
-    selectedTool={floatingToolbarTool}
-    {strokeColor}
-    {strokeSize}
-    opacity={strokeOpacity}
-    {thinning}
-    {smoothing}
-    {streamline}
-    showPressure={simulatePressure}
-    {capStart}
-    {capEnd}
-    {taperStart}
-    {taperEnd}
-    on:toolChange={onToolChange}
-    on:colorChange={onColorChange}
-    on:sizeChange={onSizeChange}
-    on:opacityChange={onOpacityChange}
-    on:thinningChange={onThinningChange}
-    on:smoothingChange={onSmoothingChange}
-    on:streamlineChange={onStreamlineChange}
-    on:pressureChange={onPressureChange}
-    on:capStartChange={onCapStartChange}
-    on:capEndChange={onCapEndChange}
-    on:taperStartChange={onTaperStartChange}
-    on:taperEndChange={onTaperEndChange}
-  />
+  {#if selectedTool === 'select' && $drawingSettings.selectedStrokes.length > 0}
+    <div class="select-mode-tooltip" transition:fade={{ duration: 200 }}>
+      Press Delete to remove • Drag handles to resize • Drag selection to move
+    </div>
+  {/if}
 </div>
 
 <style lang="scss">
@@ -1139,6 +1872,26 @@
     width: 100%;
     height: 100%;
     touch-action: none;
+
+    &.selecting-mode {
+      cursor: default;
+    }
+
+    &.drawing-mode {
+      cursor: crosshair;
+    }
+
+    &.erasing-mode {
+      cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='12' r='8' fill='rgba(255,0,0,0.2)' stroke='%23ff0000' stroke-width='2'/%3E%3C/svg%3E") 12 12, auto;
+    }
+
+    &.panning-mode {
+      cursor: grab;
+
+      &:active {
+        cursor: grabbing;
+      }
+    }
   }
 
   .instructions {
@@ -1152,5 +1905,20 @@
     border-radius: 20px;
     font-size: 14px;
     pointer-events: none;
+  }
+
+  // Add a tooltip style for select mode
+  .select-mode-tooltip {
+    position: absolute;
+    top: 50px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(0, 0, 0, 0.7);
+    color: white;
+    padding: 8px 16px;
+    border-radius: 20px;
+    font-size: 14px;
+    pointer-events: none;
+    z-index: 10;
   }
 </style>

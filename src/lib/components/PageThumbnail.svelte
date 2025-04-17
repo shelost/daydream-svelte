@@ -16,7 +16,7 @@
   const sizeMap = {
     small: { width: 160, height: 90 },
     medium: { width: 240, height: 135 },
-    large: { width: 320, height: 180 }
+    large: { width: 320, height: 200 }
   };
 
   // Get dimensions based on the size prop
@@ -109,6 +109,22 @@
           const scaleY = dimensions.height / paddedHeight;
           const scale = Math.min(scaleX, scaleY);
 
+          // Calculate a stroke width adjustment factor
+          // Base canvas is typically larger than our thumbnail
+          const originalCanvasSize = { width: 1200, height: 800 };
+          if (page.content.viewport) {
+            // Use viewport originalSize if available
+            if (page.content.viewport.originalSize) {
+              originalCanvasSize.width = page.content.viewport.originalSize.width;
+              originalCanvasSize.height = page.content.viewport.originalSize.height;
+            }
+          }
+          const thumbnailToOriginalRatio = dimensions.width / originalCanvasSize.width;
+
+          // Perfect-freehand adjustment factor to make strokes appear thinner
+          const perfectFreehandAdjustment = 0.5; // Reducing by 50% to make strokes thinner
+          const strokeWidthFactor = (thumbnailToOriginalRatio / scale) * perfectFreehandAdjustment;
+
           // Set the canvas zoom to fit everything
           fabricCanvas.setZoom(scale);
 
@@ -123,7 +139,7 @@
           ]);
 
           // Load the objects
-          await loadFabricObjects(objects);
+          await loadFabricObjects(objects, strokeWidthFactor);
           return;
         }
       }
@@ -136,7 +152,7 @@
     }
   }
 
-  async function loadFabricObjects(objects: any[]) {
+  async function loadFabricObjects(objects: any[], strokeWidthFactor: number = 1) {
     if (!fabricCanvas) return;
 
     try {
@@ -147,10 +163,15 @@
           // We create a minimal JSON structure with just the objects
           fabricCanvas.loadFromJSON({ objects: objects }, () => {
             if (fabricCanvas) {
-              // Make all objects non-interactive
+              // Make all objects non-interactive and adjust stroke widths
               fabricCanvas.forEachObject((obj: fabric.Object) => {
                 obj.selectable = false;
                 obj.evented = false;
+
+                // Adjust stroke width for path objects or any object with a stroke
+                if ((obj.type === 'path' || obj.strokeWidth) && obj.strokeWidth) {
+                  obj.strokeWidth = obj.strokeWidth * strokeWidthFactor;
+                }
               });
 
               // Render the canvas
@@ -189,6 +210,17 @@
         const scaleY = dimensions.height / paddedHeight;
         const scale = Math.min(scaleX, scaleY);
 
+        // Calculate a stroke width adjustment factor
+        // We want to scale down the strokes so they look proportional to how they appear in the original drawing
+        // Base drawing canvas is typically larger than our thumbnail
+        const originalCanvasSize = page.content.bounds || { width: 1200, height: 800 };
+        const thumbnailToOriginalRatio = dimensions.width / originalCanvasSize.width;
+
+        // Perfect-freehand specific adjustment factor
+        // We use a smaller factor for the thumbnail to make strokes appear thinner and more refined
+        const perfectFreehandAdjustment = 0.5; // Reducing by 50% to make strokes thinner
+        const strokeWidthFactor = (thumbnailToOriginalRatio / scale) * perfectFreehandAdjustment;
+
         // Set the canvas zoom to fit everything
         fabricCanvas.setZoom(scale);
 
@@ -209,11 +241,14 @@
           // Create a fabric path from stroke points
           const pathData = createSvgPathFromStroke(stroke.points);
 
+          // Calculate scaled stroke width with the adjustment factor for perfect-freehand strokes
+          const scaledStrokeWidth = stroke.size * strokeWidthFactor;
+
           // Set fill and opacity based on stroke properties
           const path = new fabric.Path(pathData, {
             fill: stroke.tool === 'highlighter' ? 'transparent' : stroke.color,
             stroke: stroke.color,
-            strokeWidth: stroke.size,
+            strokeWidth: scaledStrokeWidth,
             opacity: stroke.tool === 'highlighter' ? 0.4 : stroke.opacity,
             strokeLineCap: 'round',
             strokeLineJoin: 'round',
@@ -388,6 +423,9 @@
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
     transition: transform 0.2s ease, box-shadow 0.2s ease;
 
+    width: 100%;
+    height: 100%;
+
     &:hover {
       transform: translateY(-2px);
       box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
@@ -409,7 +447,7 @@
     display: flex;
     justify-content: center;
     align-items: center;
-    background-color: rgba(245, 245, 245, 0.9);
+    background-color: var(--text-color);
     z-index: 2;
 
     .spinner {
@@ -447,13 +485,13 @@
 
       .material-icons {
         font-size: 32px;
-        color: #cccccc;
+        color: var(--text-color);
       }
     }
 
     .placeholder-label {
       font-size: 12px;
-      color: #666666;
+      color: var(--text-color);
       text-align: center;
       padding: 0 8px;
       overflow: hidden;

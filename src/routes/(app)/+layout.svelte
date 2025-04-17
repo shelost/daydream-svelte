@@ -4,10 +4,18 @@
   import { page } from '$app/stores';
   import { user, profile, isLoggedIn } from '$lib/stores/appStore';
   import { supabase } from '$lib/supabase/client';
+  import { browser } from '$app/environment';
+  import { theme, initTheme } from '$lib/stores/themeStore';
+  import '$lib/styles/global.scss';
 
   let isLoading = true;
 
   onMount(async () => {
+    // Initialize theme immediately
+    if (browser) {
+      initTheme();
+    }
+
     // Set up auth state listener
     const { data } = supabase.auth.onAuthStateChange((event, session) => {
       console.log('Auth state changed:', event, session ? 'session exists' : 'no session');
@@ -104,7 +112,7 @@
   }
 </script>
 
-<div class="app-container">
+<div class="app-container" class:theme-dark={$theme === 'dark'} class:theme-light={$theme === 'light'}>
   {#if isLoading}
     <div class="loading-container">
       <p>Loading app...</p>
@@ -124,6 +132,9 @@
     height: 100vh;
     display: flex;
     flex-direction: column;
+    background-color: var(--background-color);
+    color: var(--text-color);
+    transition: background-color 0.3s ease, color 0.3s ease;
   }
 
   .loading-container {
@@ -132,6 +143,6 @@
     justify-content: center;
     align-items: center;
     font-size: 1.2rem;
-    color: $text-color;
+    color: var(--text-color);
   }
 </style>

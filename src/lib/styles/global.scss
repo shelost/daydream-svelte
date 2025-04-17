@@ -1,5 +1,57 @@
 @import './variables';
 
+// Theme CSS Variables
+:root {
+  // Default to light theme
+  --primary-color: #{$light-primary-color};
+  --secondary-color: #{$light-secondary-color};
+  --background-color: #{$light-background-color};
+  --text-color: #{$light-text-color};
+  --sidebar-bg: #{$light-sidebar-bg};
+  --border-color: #{$light-border-color};
+  --success-color: #{$light-success-color};
+  --error-color: #{$light-error-color};
+  --toolbar-bg: #{$light-toolbar-bg};
+  --titlebar-bg: #{$light-titlebar-bg};
+  --card-bg: #{$light-card-bg};
+  --card-shadow: #{$light-card-shadow};
+  --hover-bg: #{$light-hover-bg};
+}
+
+// Dark Theme
+.theme-dark {
+  --primary-color: #{$dark-primary-color};
+  --secondary-color: #{$dark-secondary-color};
+  --background-color: #{$dark-background-color};
+  --text-color: #{$dark-text-color};
+  --sidebar-bg: #{$dark-sidebar-bg};
+  --border-color: #{$dark-border-color};
+  --success-color: #{$dark-success-color};
+  --error-color: #{$dark-error-color};
+  --toolbar-bg: #{$dark-toolbar-bg};
+  --titlebar-bg: #{$dark-titlebar-bg};
+  --card-bg: #{$dark-card-bg};
+  --card-shadow: #{$dark-card-shadow};
+  --hover-bg: #{$dark-hover-bg};
+}
+
+// Light Theme (explicit)
+.theme-light {
+  --primary-color: #{$light-primary-color};
+  --secondary-color: #{$light-secondary-color};
+  --background-color: #{$light-background-color};
+  --text-color: #{$light-text-color};
+  --sidebar-bg: #{$light-sidebar-bg};
+  --border-color: #{$light-border-color};
+  --success-color: #{$light-success-color};
+  --error-color: #{$light-error-color};
+  --toolbar-bg: #{$light-toolbar-bg};
+  --titlebar-bg: #{$light-titlebar-bg};
+  --card-bg: #{$light-card-bg};
+  --card-shadow: #{$light-card-shadow};
+  --hover-bg: #{$light-hover-bg};
+}
+
 // Global styles
 *, *::before, *::after {
   box-sizing: border-box;
@@ -17,6 +69,7 @@ html, body {
   background-color: $background-color;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  transition: background-color $transition-normal, color $transition-normal;
 }
 
 h1, h2, h3, h4, h5, h6 {
@@ -106,6 +159,33 @@ input, textarea, select {
   &:focus {
     outline: none;
     border-color: $primary-color;
+  }
+}
+
+input[type="range"] {
+  flex: 1;
+  margin: 0 8px;
+  height: 32px;
+  background: rgba(white, .15);
+  border: none !important;
+  appearance: none;
+
+  padding: 0;
+  border-radius: 8px !important;
+
+  &::-webkit-slider-thumb {
+    appearance: none;
+    width: 10px;
+    height: 24px;
+    border-radius: 40px;
+    background: var(--text-color);
+    cursor: pointer;
+    transition: all 0.2s;
+    box-shadow: 0 4px 12px rgba(black, .8);
+
+    &:hover {
+      transform: scale(1.05);
+    }
   }
 }
 
@@ -202,4 +282,17 @@ input, textarea, select {
 
 .shadow-lg {
   box-shadow: $shadow-lg;
+}
+
+// Add some theme-specific styles for common elements
+.card, .sidebar, .modal {
+  background-color: $card-bg;
+  color: $text-color;
+  border: 1px solid $border-color;
+  transition: background-color $transition-normal, color $transition-normal, border-color $transition-normal;
+}
+
+// Keep canvas/drawing pages with white background regardless of theme
+.canvas-page, .drawing-page {
+  background-color: #ffffff !important;
 }

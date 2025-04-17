@@ -4,6 +4,7 @@
   import { getPages } from '$lib/supabase/pages';
   import { supabase } from '$lib/supabase/client';
   import Sidebar from '$lib/components/Sidebar.svelte';
+  import SidebarRight from '$lib/components/SidebarRight.svelte';
   import { page } from '$app/stores';
 
   let loadingPages = true;
@@ -40,6 +41,7 @@
   <div class="main-content">
     <slot />
   </div>
+  <SidebarRight currentPageId={currentPageId} />
 </div>
 
 <style lang="scss">

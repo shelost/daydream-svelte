@@ -135,9 +135,7 @@
   }
 
   .sidebar {
-    background-color: $sidebar-bg;
-    //border-right: 1px solid $border-color;
-    background-color: #fff;
+    background-color: rgba(white, .05);
     height: 100%;
 
     box-sizing: border-box;
@@ -147,7 +145,9 @@
     flex-direction: column;
     overflow-y: auto;
 
-    //box-shadow: -8px 18px 32px rgba(black, 0.2), inset -2px -6px 12px rgba(black, 0.03);
+    border: 1px solid rgba(white, .1);
+
+    box-shadow: -8px 18px 32px rgba(black, 0.8), inset -2px -6px 12px rgba(black, 0.03);
     border-radius: $border-radius-lg;
 
     &.collapsed {
@@ -271,7 +271,7 @@
       display: flex;
       align-items: center;
       gap: 4px;
-      padding: 4px 6px;
+      padding: 8px 8px;
       margin: 2px 12px;
       cursor: pointer;
       border-radius: $border-radius-md;
@@ -281,12 +281,12 @@
       transition: .1s ease;
 
       &:hover {
-        background-color: rgba($text-color, 0.05);
+        background-color: rgba(var(--text-color), 0.5);
       }
 
       &.active {
-        background-color: rgba($primary-color, 0.08);
-        color: $primary-color;
+        background-color: var(--text-color);
+        color: var(--background-color);
         font-weight: 600;
       }
     }

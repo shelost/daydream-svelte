@@ -5,6 +5,7 @@
   import { gsap } from 'gsap';
   import { createEventDispatcher } from 'svelte';
   import type { SaveStatus, PageType, Tool } from '$lib/types';
+  import ZoomControl from './ZoomControl.svelte';
 
   export let page: any; // Page data
   export let saving: boolean = false;
@@ -14,6 +15,8 @@
   // Add props for selected object information
   export let selectedObjectType: string | null = null;
   export let selectedObjectId: string | null = null;
+  // Add zoom properties
+  export let zoom: number = 1;
 
   const dispatch = createEventDispatcher();
 
@@ -161,6 +164,19 @@
     dispatch('generateThumbnail');
   }
 
+  // Zoom functions
+  function handleZoomIn() {
+    dispatch('zoomIn');
+  }
+
+  function handleZoomOut() {
+    dispatch('zoomOut');
+  }
+
+  function handleResetZoom() {
+    dispatch('resetZoom');
+  }
+
   $: defaultIcon = getDefaultIcon(page.type);
 </script>
 
@@ -242,13 +258,21 @@
   </div>
 
   <div class="actions">
-    <button class="back-button" on:click={() => goto('/app')}>
-      <span class="material-icons">arrow_back</span>
-      <span>Back</span>
-    </button>
+    <!-- Add ZoomControl component -->
+    <ZoomControl
+      {zoom}
+      on:zoomIn={handleZoomIn}
+      on:zoomOut={handleZoomOut}
+      on:resetZoom={handleResetZoom}
+    />
 
     <button class="action-button" on:click={generateThumbnail} title="Generate thumbnail">
       <span class="material-icons">image</span>
+    </button>
+
+    <button class="back-button" on:click={() => goto('/app')}>
+      <span class="material-icons">arrow_back</span>
+      <span>Back</span>
     </button>
   </div>
 </div>

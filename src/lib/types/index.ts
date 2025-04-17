@@ -43,10 +43,17 @@ export interface CanvasContent {
   objects: any[]; // fabric.js objects
   drawings: DrawingReference[];
   background?: string;
-  viewport?: {
-    zoom: number;
-    panX: number;
-    panY: number;
+  viewport?: Viewport;
+}
+
+// Viewport type for canvas
+export interface Viewport {
+  zoom: number;
+  panX: number;
+  panY: number;
+  originalSize?: {
+    width: number;
+    height: number;
   };
 }
 

@@ -10,6 +10,7 @@
   import Toolbar from '$lib/components/Toolbar.svelte';
   import TitleBar from '$lib/components/TitleBar.svelte';
   import Drawing from '$lib/components/Drawing.svelte';
+  import SidebarRight from '$lib/components/SidebarRight.svelte';
 
   let pageData: any = null;
   let loading = true;
@@ -21,6 +22,8 @@
   let pageId = '';
   let unsubscribe: () => void;
   let drawingComponent: Drawing; // Add reference to the drawing component
+  let zoom = 1; // Add zoom state
+  let drawingContent: any = null; // Add a variable to store the drawing content for export
 
   // This function loads the page data based on the current pageId
   async function loadPageData(id: string) {
@@ -128,6 +131,54 @@
       drawingComponent.generateThumbnail();
     }
   }
+
+  // Handle zoom events from TitleBar
+  function handleZoomIn() {
+    if (drawingComponent && drawingComponent.zoomIn) {
+      drawingComponent.zoomIn();
+      // Update local zoom state to reflect change in Drawing component
+      zoom = drawingComponent.zoom;
+    }
+  }
+
+  function handleZoomOut() {
+    if (drawingComponent && drawingComponent.zoomOut) {
+      drawingComponent.zoomOut();
+      // Update local zoom state to reflect change in Drawing component
+      zoom = drawingComponent.zoom;
+    }
+  }
+
+  function handleResetZoom() {
+    if (drawingComponent && drawingComponent.resetZoom) {
+      drawingComponent.resetZoom();
+      // Update local zoom state to reflect change in Drawing component
+      zoom = drawingComponent.zoom;
+    }
+  }
+
+  // Function to sync zoom from drawing component to local state
+  function handleZoomChange(newZoom: number) {
+    zoom = newZoom;
+  }
+
+  // Ensure zoom always starts at 100% when page loads
+  $: if (pageData && drawingComponent) {
+    if (!zoom) zoom = 1;
+    drawingComponent.zoom = zoom;
+    drawingComponent.offsetX = 0;
+    drawingComponent.offsetY = 0;
+    if (typeof drawingComponent.renderStrokes === 'function') {
+      drawingComponent.renderStrokes();
+    }
+  }
+
+  // This function handles drawing content updates from the Drawing component
+  function handleDrawingContentUpdate(event: CustomEvent) {
+    // Update our local content variable
+    drawingContent = event.detail.content;
+    console.log('Drawing content updated:', drawingContent);
+  }
 </script>
 
 <svelte:head>
@@ -152,7 +203,11 @@
         saveStatus={saveStatus}
         selectedTool={selectedTool}
         isDrawingMode={isDrawingMode}
+        zoom={zoom}
         on:generateThumbnail={handleGenerateThumbnail}
+        on:zoomIn={handleZoomIn}
+        on:zoomOut={handleZoomOut}
+        on:resetZoom={handleResetZoom}
       />
 
       <div class="workspace">
@@ -171,6 +226,9 @@
             onSaving={handleSaving}
             onSaveStatus={handleSaveStatus}
             bind:this={drawingComponent}
+            bind:zoom={zoom}
+            on:zoomChange={(e) => handleZoomChange(e.detail.zoom)}
+            on:contentUpdate={handleDrawingContentUpdate}
           />
           {/key}
         </div>
@@ -182,7 +240,7 @@
 <style lang="scss">
   .editor-layout {
     flex: 1;
-    height: 100vh;
+    height: 100%;
     width: 100%;
     overflow: hidden;
     display: flex;

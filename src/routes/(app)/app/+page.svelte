@@ -5,8 +5,10 @@
   import { pages, pagesByType, user } from '$lib/stores/appStore';
   import { getPages, createPage, uploadThumbnail } from '$lib/supabase/pages';
   import { supabase } from '$lib/supabase/client';
+  import { theme } from '$lib/stores/themeStore';
   import type { Page } from '$lib/types';
   import PageCard from '$lib/components/PageCard.svelte';
+  import ThemeToggle from '$lib/components/ThemeToggle.svelte';
 
   let loading = true;
   let error = '';
@@ -216,7 +218,13 @@
 <div class="app-content">
   <div class="app-home">
     <div class="app-header">
-      <h1>My Pages</h1>
+      <div class="header-left">
+        <h1>My Pages</h1>
+        <div class="theme-container">
+          <ThemeToggle />
+          <span class="theme-label">{$theme === 'light' ? 'Light' : 'Dark'} Mode</span>
+        </div>
+      </div>
       <div class="action-buttons">
         <button on:click={() => handleCreate('canvas')} class="create-button" disabled={creatingPage}>
           <span>+</span> New Canvas
@@ -265,10 +273,36 @@
 </div>
 
 <style lang="scss">
+  .header-left {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+  }
+
+  .theme-container {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-left: 10px;
+  }
+
+  .theme-label {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text-color);
+    opacity: 0.8;
+  }
+
+  h2{
+    letter-spacing: -.9px;
+  }
+
   .app-content {
     flex: 1;
     overflow: auto;
     height: 100%;
+    background-color: var(--background-color);
+    color: var(--text-color);
   }
 
   .app-home {
@@ -287,9 +321,10 @@
     margin-bottom: 2rem;
 
     h1 {
-      font-size: 2rem;
+      font-size: 32px;
       font-weight: 600;
-      color: $text-color;
+      letter-spacing: -1.5px;
+      color: var(--text-color);
     }
   }
 
@@ -306,8 +341,8 @@
     font-size: 1rem;
     border-radius: $border-radius-md;
     transition: all $transition-fast;
-    background-color: $primary-color;
-    color: white;
+    background-color: var(--primary-color);
+    color: var(--text-color, white);
     border: none;
     cursor: pointer;
 
@@ -322,11 +357,11 @@
 
     &.secondary {
       background-color: transparent;
-      border: 1px solid $primary-color;
-      color: $primary-color;
+      border: 1px solid var(--primary-color);
+      color: var(--primary-color);
 
       &:hover:not(:disabled) {
-        background-color: rgba($primary-color, 0.05);
+        background-color: var(--hover-bg);
       }
     }
 
@@ -347,14 +382,14 @@
       font-size: 1.4rem;
       font-weight: 500;
       margin-bottom: 1rem;
-      color: $text-color;
+      color: var(--text-color);
     }
   }
 
   .pages-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-    gap: 1.5rem;
+    gap: 12px;
   }
 
   .page-item {
@@ -362,17 +397,18 @@
   }
 
   .page-card {
-    background-color: white;
+    background-color: var(--card-bg);
     border-radius: $border-radius-md;
     padding: 1rem;
-    border: 1px solid $border-color;
+    overflow: hidden;
+    border: 1px solid var(--border-color);
     transition: all $transition-fast;
-    box-shadow: 0 4px 12px rgba(black, 0.05);
+    box-shadow: 0 4px 12px var(--card-shadow);
 
     &:hover {
       transform: translateY(-3px);
       box-shadow: $shadow-md;
-      border-color: rgba($primary-color, 0.3);
+      border-color: var(--primary-color, rgba($primary-color, 0.3));
     }
   }
 
@@ -382,8 +418,8 @@
     border-radius: $border-radius-sm;
     overflow: hidden;
     margin-bottom: 1rem;
-    border: 1px solid $border-color;
-    background-color: white;
+    border: 1px solid var(--border-color);
+    background-color: var(--card-bg);
     position: relative;
 
     img {
@@ -401,17 +437,19 @@
     flex-direction: column;
     justify-content: center;
     align-items: center;
-    background-color: rgba($text-color, 0.03);
+    background-color: var(--hover-bg);
 
     span {
       font-size: 2.5rem;
       opacity: 0.7;
+      color: var(--text-color);
     }
 
     .placeholder-label {
       margin-top: 8px;
       font-size: 0.8rem;
-      color: rgba($text-color, 0.4);
+      color: var(--text-color);
+      opacity: 0.6;
       font-weight: 500;
     }
   }
@@ -420,7 +458,7 @@
     font-size: 1rem;
     font-weight: 500;
     margin-bottom: 0.5rem;
-    color: $text-color;
+    color: var(--text-color);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -428,7 +466,8 @@
 
   .page-updated {
     font-size: 0.8rem;
-    color: rgba($text-color, 0.6);
+    color: var(--text-color);
+    opacity: 0.6;
   }
 
   .loading, .error, .empty-state {
@@ -438,7 +477,7 @@
     align-items: center;
     padding: 3rem 0;
     text-align: center;
-    color: $text-color;
+    color: var(--text-color);
 
     p {
       margin-bottom: 0.5rem;
@@ -446,11 +485,11 @@
   }
 
   .error {
-    color: $error-color;
+    color: var(--error-color);
   }
 
   .empty-state {
-    background-color: rgba($text-color, 0.03);
+    background-color: var(--hover-bg);
     border-radius: $border-radius-lg;
     padding: 3rem;
 

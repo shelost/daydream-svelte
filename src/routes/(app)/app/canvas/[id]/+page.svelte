@@ -25,7 +25,12 @@
   let canvasComponent: {
     setTool?: (tool: Tool) => void;
     generateThumbnail?: () => void;
+    zoomIn?: () => void;
+    zoomOut?: () => void;
+    resetZoom?: () => void;
+    zoom?: number;
   } | undefined;
+  let zoom = 1; // Add zoom state
 
   // Add variables for selected object information
   let selectedObjectType: string | null = null;
@@ -170,10 +175,69 @@
     }
   }
 
+  // Add zoom control handlers
+  function handleZoomIn() {
+    if (canvasComponent && typeof canvasComponent.zoomIn === 'function') {
+      console.log('Zooming in');
+      canvasComponent.zoomIn();
+      // Update local zoom state to reflect change in Canvas component
+      if (canvasComponent.zoom) {
+        zoom = canvasComponent.zoom;
+      }
+    }
+  }
+
+  function handleZoomOut() {
+    if (canvasComponent && typeof canvasComponent.zoomOut === 'function') {
+      console.log('Zooming out');
+      canvasComponent.zoomOut();
+      // Update local zoom state to reflect change in Canvas component
+      if (canvasComponent.zoom) {
+        zoom = canvasComponent.zoom;
+      }
+    }
+  }
+
+  function handleResetZoom() {
+    if (canvasComponent && typeof canvasComponent.resetZoom === 'function') {
+      console.log('Resetting zoom');
+      canvasComponent.resetZoom();
+      // Update local zoom state to reflect change in Canvas component
+      zoom = 1;
+    }
+  }
+
+  // Additional reactive statement to ensure canvasComponent is properly detected
+  $: {
+    if (canvasComponent) {
+      console.log('Canvas component is ready');
+    }
+  }
+
   // Add a reactive statement to ensure tool changes propagate to the Canvas
-  $: if (canvasComponent && canvasComponent.setTool && selectedTool) {
+  $: if (canvasComponent?.setTool && selectedTool) {
     console.log('Parent: Updating canvas tool to:', selectedTool);
-    canvasComponent.setTool(selectedTool);
+    try {
+      canvasComponent.setTool(selectedTool);
+    } catch (err) {
+      console.warn('Error setting tool:', err);
+    }
+  }
+
+  // Ensure zoom always starts at 100% when page loads, but only after canvas is ready
+  $: if (pageData && canvasComponent) {
+    // Wait for the canvas component to be fully mounted
+    setTimeout(() => {
+      if (!canvasComponent?.resetZoom) return;
+
+      try {
+        // Set initial zoom and center view
+        zoom = 1;
+        canvasComponent.resetZoom();
+      } catch (err) {
+        console.warn('Error resetting zoom, canvas might not be ready yet:', err);
+      }
+    }, 800); // Increased delay to ensure canvas is mounted and initialized
   }
 </script>
 
@@ -202,7 +266,11 @@
         isDrawingMode={isDrawingMode}
         selectedObjectType={selectedObjectType}
         selectedObjectId={selectedObjectId}
+        zoom={zoom}
         on:generateThumbnail={handleGenerateThumbnail}
+        on:zoomIn={handleZoomIn}
+        on:zoomOut={handleZoomOut}
+        on:resetZoom={handleResetZoom}
       />
 
       <div class="workspace">
@@ -221,6 +289,7 @@
             bind:isDrawingMode={isDrawingMode}
             bind:selectedObjectType={selectedObjectType}
             bind:selectedObjectId={selectedObjectId}
+            bind:zoom={zoom}
             onSaving={handleSaving}
             onSaveStatus={handleSaveStatus}
             bind:this={canvasComponent}
@@ -235,7 +304,7 @@
 <style lang="scss">
   .editor-layout {
     flex: 1;
-    height: 100vh;
+    height: 100%;
     width: 100%;
     overflow: hidden;
     display: flex;

@@ -63,9 +63,7 @@
     overflow-y: auto;
     z-index: 10;
 
-    border-radius: 12px;
     box-shadow: -8px 8px 32px rgba(black, 0.1);
-    margin: 12px;
   }
 
   .tools-container {

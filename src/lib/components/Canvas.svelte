@@ -12,6 +12,23 @@
   import { user } from '$lib/stores/auth';
   import ZoomControl from './ZoomControl.svelte';
 
+  // Type definition for the fabric library
+  interface FabricLib {
+    fabric: {
+      Canvas: any;
+      StaticCanvas: any;
+      Rect: any;
+      Circle: any;
+      IText: any;
+      Text: any;
+      Group: any;
+      Line: any;
+      Path: any;
+      Object: any;
+      util: any;
+    };
+  }
+
   // After imports and before script code, add a variable for tracking last render time
   let lastRenderTimestamp = 0;
   let renderFlagResetTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -24,6 +41,8 @@
   export let onSaving: (isSaving: boolean) => void = () => {};
   export let onSaveStatus: (status: 'saving' | 'saved' | 'error') => void = () => {};
   export let onToolChange: (tool: Tool) => void = () => {};
+  // Export zoom property
+  export let zoom = 1;
 
   // Expose selected object properties to parent components
   export let selectedObjectType: string | null = null;
@@ -35,7 +54,7 @@
 
   // Fabric.js references
   let canvas: any = null; // Fabric.Canvas instance
-  let fabricLib: any = null; // Fabric.js library
+  let fabricLib: FabricLib | null = null; // Fabric.js library
   let fabricLoaded = false;
 
   // Debug logging - helpful for tracking reactivity issues
@@ -59,7 +78,6 @@
   let localContent: any = null;
 
   // Canvas viewport state
-  let zoom = 1;
   const minZoom = 0.1;
   const maxZoom = 5;
   const zoomStep = 0.1;
@@ -163,184 +181,102 @@
       try {
         log('Canvas component mounting...');
 
-        // Dynamically import fabric.js to avoid SSR issues
-        const { fabric } = await import('fabric');
-        fabricLib = fabric;
-        fabricLoaded = true;
+        // Import fabric.js dynamically to ensure it's only loaded on the client
+        if (!fabricLib) {
+          try {
+            fabricLib = await import('fabric');
+            fabricLoaded = true;
+            log('Fabric.js loaded');
+          } catch (importErr) {
+            console.error('Failed to import fabric.js:', importErr);
+            return;
+          }
+        }
 
-        // Validate DOM elements
+        // Check if the canvas element exists
         if (!canvasEl) {
-          console.error('Canvas element is not defined');
+          console.error('Canvas element reference is missing');
           return;
         }
 
-        if (!canvasContainer) {
-          console.error('Canvas container is not defined');
+        // Initialize the canvas
+        try {
+          canvas = new fabricLib.fabric.Canvas(canvasEl, {
+            backgroundColor: '#ffffff',
+            preserveObjectStacking: true,
+            stopContextMenu: true,
+            fireRightClick: true
+          });
+        } catch (canvasErr) {
+          console.error('Failed to initialize fabric canvas:', canvasErr);
           return;
         }
 
-        log('Initializing canvas with dimensions:',
-          canvasContainer.clientWidth, canvasContainer.clientHeight);
-
-        // Initialize the canvas with proper size and options
-        canvas = new fabric.Canvas(canvasEl, {
-          backgroundColor: '#ffffff',
-          width: canvasContainer.clientWidth || 800,
-          height: canvasContainer.clientHeight || 600,
-          preserveObjectStacking: true,
-          selection: true,
-          centeredScaling: true,
-          stopContextMenu: true,
-          fireRightClick: true,
-          // Improve selection behavior
-          selectionKey: '', // Allow selection without modifier keys (empty string instead of null)
-          selectionColor: 'rgba(65, 105, 225, 0.2)', // Better selection visibility
-          selectionLineWidth: 1.5,
-          selectionBorderColor: 'rgba(65, 105, 225, 0.75)',
-          selectionFullyContained: false,
-          // Handle right-click events
-          skipTargetFind: false
-        });
-
-        // Using untrack for all initialization that shouldn't trigger reactivity
-        untrack(() => {
-          // Initialize local content from props (if available) to avoid reactivity
-          if (content && !localContent) {
-            localContent = safeClone(content);
-
-            // Extract viewport settings from content if available
-            if (localContent.viewport) {
-              initialViewport = {
-                zoom: localContent.viewport.zoom || 1,
-                panX: localContent.viewport.panX || 0,
-                panY: localContent.viewport.panY || 0
-              };
-            }
-          }
-
-          // Set initial zoom from viewport
-          zoom = initialViewport.zoom || 1;
-          canvas.setZoom(zoom);
-
-          // Set initial position if available
-          if (initialViewport.panX !== undefined && initialViewport.panY !== undefined) {
-            canvas.viewportTransform[4] = initialViewport.panX;
-            canvas.viewportTransform[5] = initialViewport.panY;
-          }
-
-          canvas.renderAll();
-        });
-
-        // Load saved content (if available)
-        if (localContent && Object.keys(localContent).length > 0) {
-          await loadCanvasContent(localContent);
-        } else {
-          // No content to load, just mark as initialized
-          contentLoaded = true;
-          initialized = true;
+        // Add a check to ensure canvas was properly initialized
+        if (!canvas) {
+          console.error('Failed to initialize canvas');
+          return;
         }
 
-        // Set up event handlers
-        setupEventHandlers();
-        setupSelectionHandlers();
+        // Set canvas size based on container
+        handleResize();
 
-        // Set up wheel zoom handler - this preserves cursor position during zoom
-        canvasContainer.addEventListener('wheel', (e) => {
-          if (e.ctrlKey || e.metaKey) {
-            e.preventDefault();
-            const delta = e.deltaY;
-            let newZoom = zoom;
+        // Set initial zoom to 100%
+        zoom = 1;
 
-            if (delta < 0) {
-              // Zoom in
-              newZoom = Math.min(maxZoom, zoom + zoomStep);
-            } else {
-              // Zoom out
-              newZoom = Math.max(minZoom, zoom - zoomStep);
-            }
+        // Make a local copy of content for reactivity control
+        localContent = safeClone(content);
 
-            if (newZoom !== zoom) {
-              // Get mouse position relative to canvas
-              const rect = canvasEl.getBoundingClientRect();
-              const point = {
-                x: e.clientX - rect.left,
-                y: e.clientY - rect.top
-              };
-
-              zoomToPoint(newZoom, point);
-            }
-          }
-        }, { passive: false });
-
-        // Set up resize handler
+        // Set up event handlers for window resize
         window.addEventListener('resize', handleResize);
 
-        // Update tool mode for initial setup
-        updateToolMode();
+        // Set up keyboard shortcuts
+        window.addEventListener('keydown', handleKeyDown);
 
-        // Initial render
-        canvas.renderAll();
+        // Setup initial viewport
+        initializeViewport();
+
+        // Setup event handlers
+        setupEventHandlers();
+
+        // Setup selection handlers
+        setupSelectionHandlers();
+
+        // Load content if available
+        if (content && Object.keys(content).length > 0) {
+          await loadCanvasContent(content);
+        }
 
         // After a short delay, mark initialization as complete
         setTimeout(() => {
-          initialized = true;
-          log('Canvas initialization complete');
+          if (!initialized) {
+            initialized = true;
+            log('Canvas initialization complete');
+          }
         }, 500);
       } catch (error) {
-        console.error('Error initializing canvas:', error);
-        initialized = true; // Ensure we don't block future operations
+        console.error('Error in Canvas component initialization:', error);
+        // Ensure we don't block future operations even if there's an error
+        initialized = true;
         contentLoaded = true;
       }
     };
 
-    return initPromise();
+    // Start the initialization process
+    initPromise();
+
+    // Cleanup on component unmount
+    return () => {
+      // Remove event listeners
+      window.removeEventListener('resize', handleResize);
+      window.removeEventListener('keydown', handleKeyDown);
+
+      // Dispose of the canvas if it was initialized
+      if (canvas) {
+        canvas.dispose();
+      }
+    };
   });
-
-  // Load canvas content with proper untracking to avoid reactivity
-  async function loadCanvasContent(contentToLoad: any): Promise<void> {
-    if (!canvas || !contentToLoad) return;
-
-    // Use untrack to prevent loops during content loading
-    return new Promise<void>((resolve) => {
-      untrack(() => {
-        // Set a flag to avoid saving during the initial load
-        skipNextViewportSave = true;
-
-        try {
-          // Load canvas objects without triggering reactivity
-          canvas.loadFromJSON(contentToLoad, () => {
-            // After loading canvas, setup objects
-            canvas.forEachObject((obj: any) => {
-              // Setup objects without triggering reactivity
-              if (obj.data?.type === 'drawing') {
-                setupDrawingObject(obj);
-              }
-            });
-
-            // Set viewport after loading, still within untrack
-            if (contentToLoad.viewport) {
-              zoom = contentToLoad.viewport.zoom || 1;
-              canvas.setViewportTransform([
-                zoom, 0, 0, zoom,
-                contentToLoad.viewport.panX || 0,
-                contentToLoad.viewport.panY || 0
-              ]);
-            }
-
-            canvas.renderAll();
-            contentLoaded = true;
-            initialized = true;
-            resolve();
-          });
-        } catch (error) {
-          console.error('Error loading canvas content:', error);
-          contentLoaded = true;
-          initialized = true;
-          resolve();
-        }
-      });
-    });
-  }
 
   onDestroy(() => {
     // Ensure we clean up any remaining resources
@@ -348,36 +284,42 @@
       clearTimeout(saveTimeout);
     }
 
+    // Remove event listeners
+    window.removeEventListener('resize', handleResize);
+    window.removeEventListener('keydown', handleKeyDown);
+
     if (canvasContainer) {
       // We removed the wheel event listener in the onMount cleanup, no need to do it here
     }
-    window.removeEventListener('resize', handleResize);
   });
 
   // ======= EVENT HANDLERS =======
 
   function setupEventHandlers() {
     if (!canvas || !fabricLib) {
-      console.error('Cannot setup event handlers - canvas or fabric is undefined');
+      console.warn('Cannot setup event handlers - canvas or fabric is not fully initialized yet');
+      // Return early instead of throwing an error
       return;
     }
 
-    // Add debug logging
-    log('Setting up event handlers for tool:', selectedTool);
+    try {
+      // Add debug logging
+      log('Setting up event handlers for tool:', selectedTool);
 
-    // Remove all existing listeners to avoid duplicates
-    canvas.off('mouse:down');
-    canvas.off('mouse:move');
-    canvas.off('mouse:up');
-    canvas.off('mouse:over');
-    canvas.off('mouse:out');
+      // Remove all existing listeners to avoid duplicates
+      canvas.off('mouse:down');
+      canvas.off('mouse:move');
+      canvas.off('mouse:up');
+      canvas.off('mouse:over');
+      canvas.off('mouse:out');
 
-    // Set hover cursor for all objects
-    canvas.hoverCursor = 'pointer';
+      // Set hover cursor for all objects
+      canvas.hoverCursor = 'pointer';
 
-    // Add hover effects for objects
-    canvas.on('mouse:over', (e: any) => {
-      if (e.target && !isActivelyDrawing) {
+      // Add hover effects for objects
+      canvas.on('mouse:over', (e: any) => {
+        if (!e.target || isActivelyDrawing) return;
+
         // Don't change cursor for drawing objects in drawing mode
         if (isDrawingMode && e.target.data?.type === 'drawing') {
           return;
@@ -396,42 +338,44 @@
           e.target.set('opacity', Math.min(1, e.target.opacity * 1.1));
           canvas.renderAll();
         }
-      }
-    });
+      });
 
-    canvas.on('mouse:out', (e: any) => {
-      if (e.target && !isActivelyDrawing) {
-        // Reset cursor
-        canvas.defaultCursor = 'default';
+      canvas.on('mouse:out', (e: any) => {
+        if (e.target && !isActivelyDrawing) {
+          // Reset cursor
+          canvas.defaultCursor = 'default';
 
-        // Remove hover effect
-        if (!isDrawingMode && e.target._originalOpacity !== undefined) {
-          e.target.set('opacity', e.target._originalOpacity);
-          delete e.target._originalOpacity;
-          canvas.renderAll();
+          // Remove hover effect
+          if (!isDrawingMode && e.target._originalOpacity !== undefined) {
+            e.target.set('opacity', e.target._originalOpacity);
+            delete e.target._originalOpacity;
+            canvas.renderAll();
+          }
         }
+      });
+
+      // Set up tool-specific handlers
+      // Based on selected tool, attach appropriate event handlers
+      if (selectedTool === 'select') {
+        // Keep default selection behavior
+        enableSelectMode();
+      } else if (selectedTool === 'pan') {
+        enablePanMode();
+      } else if (selectedTool === 'rectangle') {
+        enableRectangleMode();
+      } else if (selectedTool === 'text') {
+        enableTextMode();
+      } else if (selectedTool === 'draw') {
+        enableDrawMode();
+      } else if (selectedTool === 'eraser') {
+        enableEraserMode();
       }
-    });
 
-    // Set up tool-specific handlers
-    // Based on selected tool, attach appropriate event handlers
-    if (selectedTool === 'select') {
-      // Keep default selection behavior
-      enableSelectMode();
-    } else if (selectedTool === 'pan') {
-      enablePanMode();
-    } else if (selectedTool === 'rectangle') {
-      enableRectangleMode();
-    } else if (selectedTool === 'text') {
-      enableTextMode();
-    } else if (selectedTool === 'draw') {
-      enableDrawMode();
-    } else if (selectedTool === 'eraser') {
-      enableEraserMode();
+      // Enable common handlers for all modes
+      canvas.on('mouse:up', verifySelectionState);
+    } catch (err) {
+      console.error('Error in setupEventHandlers:', err);
     }
-
-    // Enable common handlers for all modes
-    canvas.on('mouse:up', verifySelectionState);
   }
 
   // Handle keyboard shortcuts
@@ -446,10 +390,16 @@
       untrack(() => {
         const activeObjects = canvas.getActiveObjects();
         if (activeObjects.length > 0) {
+          console.log(`Deleting ${activeObjects.length} objects using ${e.key} key`);
           activeObjects.forEach((obj: any) => canvas.remove(obj));
           canvas.discardActiveObject();
           canvas.renderAll();
           scheduleAutoSave();
+
+          // Prevent default browser behavior for Backspace key
+          if (e.key === 'Backspace') {
+            e.preventDefault();
+          }
         }
       });
     }
@@ -601,8 +551,13 @@
         return;
       }
 
-      // Set the selected object
+      // Set selected object
       selectedObject = activeObject;
+
+      // Focus the canvas element to ensure keyboard events are captured
+      if (canvasEl) {
+        canvasEl.focus();
+      }
 
       // Determine object type more carefully
       if (activeObject.type === 'i-text' || activeObject.type === 'text') {
@@ -1018,7 +973,7 @@
   // ======= ZOOM FUNCTIONS =======
 
   // Zoom in centered on canvas
-  function zoomIn() {
+  export function zoomIn() {
     const newZoom = Math.min(maxZoom, zoom + zoomStep);
     const center = {
       x: canvas.width / 2,
@@ -1028,7 +983,7 @@
   }
 
   // Zoom out centered on canvas
-  function zoomOut() {
+  export function zoomOut() {
     const newZoom = Math.max(minZoom, zoom - zoomStep);
     const center = {
       x: canvas.width / 2,
@@ -1038,26 +993,47 @@
   }
 
   // Reset zoom to original
-  function resetZoom() {
-    const center = {
-      x: canvas.width / 2,
-      y: canvas.height / 2
-    };
-    zoom = 1;
-    canvas.viewportTransform[4] = 0;
-    canvas.viewportTransform[5] = 0;
-    canvas.setZoom(1);
-    canvas.renderAll();
+  export function resetZoom() {
+    // Guard against null or undefined canvas
+    if (!canvas) {
+      console.warn('Cannot reset zoom - canvas is not initialized');
+      return;
+    }
 
-    // Save viewport state - explicitly set skip flag before calling
-    skipNextViewportSave = true;
-    saveViewport();
+    try {
+      // Safely access canvas properties
+      const canvasWidth = canvas.width || 0;
+      const canvasHeight = canvas.height || 0;
 
-    // Reset flag after zooming is complete (with a small delay)
-    setTimeout(() => {
-      isActivelyDrawing = false;
-      skipNextViewportSave = false; // Ensure flag is reset here too
-    }, 100);
+      const center = {
+        x: canvasWidth / 2,
+        y: canvasHeight / 2
+      };
+
+      // Update zoom state
+      zoom = 1;
+
+      // Only access viewportTransform if it exists
+      if (canvas.viewportTransform) {
+        canvas.viewportTransform[4] = 0;
+        canvas.viewportTransform[5] = 0;
+      }
+
+      canvas.setZoom(1);
+      canvas.renderAll();
+
+      // Save viewport state - explicitly set skip flag before calling
+      skipNextViewportSave = true;
+      saveViewport();
+
+      // Reset flag after zooming is complete (with a small delay)
+      setTimeout(() => {
+        isActivelyDrawing = false;
+        skipNextViewportSave = false; // Ensure flag is reset here too
+      }, 100);
+    } catch (err) {
+      console.error('Error in resetZoom:', err);
+    }
   }
 
   // Zoom to a specific point
@@ -2197,35 +2173,49 @@
 
   // Set tool function - export to make it accessible to parent components
   export function setTool(tool: Tool) {
-    // Set the flag to indicate this is an internal change
-    internalToolChange = true;
+    try {
+      // Log for debugging
+      console.log('Canvas component detected external selectedTool change:', tool);
 
-    console.log('setTool called with:', tool, 'previous tool:', selectedTool);
+      // Set the flag to indicate this is an internal change
+      internalToolChange = true;
 
-    // Update the selected tool
-    selectedTool = tool;
-    isDrawingMode = tool === 'draw';
+      // Update the selected tool
+      selectedTool = tool;
+      isDrawingMode = tool === 'draw';
 
-    // Log for debugging
-    log('Tool changed to:', tool, 'isDrawingMode:', isDrawingMode);
+      // Only attempt to update mode and handlers if canvas is initialized
+      if (canvas && fabricLoaded) {
+        // Update cursor and event handlers
+        if (typeof updateToolMode === 'function') {
+          updateToolMode();
+        }
 
-    // Update cursor and event handlers
-    updateToolMode();
-    setupEventHandlers();
+        if (typeof setupEventHandlers === 'function') {
+          setupEventHandlers();
+        }
 
-    // If canvas is finished loading, save state
-    if (canvas && initialized && contentLoaded) {
-      saveCanvas();
+        // If canvas is finished loading, save state
+        if (initialized && contentLoaded) {
+          saveCanvas();
+        }
+      } else {
+        console.log('Canvas or fabric not initialized yet, tool change will be applied when ready');
+      }
+
+      // The selectedTool reactive binding will automatically update the parent
+      // Additional notification for non-binding scenarios
+      if (typeof onToolChange === 'function') {
+        onToolChange(tool);
+      }
+    } catch (err) {
+      console.error('Error in setTool:', err);
+    } finally {
+      // Reset the flag after a short delay to allow for Svelte's reactivity to process
+      setTimeout(() => {
+        internalToolChange = false;
+      }, 0);
     }
-
-    // The selectedTool reactive binding will automatically update the parent
-    // Additional notification for non-binding scenarios
-    onToolChange(tool);
-
-    // Reset the flag after a short delay to allow for Svelte's reactivity to process
-    setTimeout(() => {
-      internalToolChange = false;
-    }, 0);
   }
 
   // Handler for toolbar tool change events
@@ -2749,7 +2739,7 @@
 
       if (visibleObjects.length > 0) {
         // Calculate bounds to get proper scaling
-        const bounds = calculateContentBounds(visibleObjects);
+      const bounds = calculateContentBounds(visibleObjects);
 
         // Add padding (10%)
         const padding = 0.1;
@@ -2757,11 +2747,11 @@
         const paddedHeight = (bounds.maxY - bounds.minY) * (1 + padding);
 
         // Calculate scale to fit the content
-        const scaleX = thumbnailWidth / paddedWidth;
-        const scaleY = thumbnailHeight / paddedHeight;
-        const scale = Math.min(scaleX, scaleY);
+          const scaleX = thumbnailWidth / paddedWidth;
+          const scaleY = thumbnailHeight / paddedHeight;
+          const scale = Math.min(scaleX, scaleY);
 
-        // Calculate offsets to center content
+          // Calculate offsets to center content
         const offsetX = (thumbnailWidth / scale - (bounds.maxX - bounds.minX)) / 2 - bounds.minX;
         const offsetY = (thumbnailHeight / scale - (bounds.maxY - bounds.minY)) / 2 - bounds.minY;
 
@@ -2777,7 +2767,7 @@
 
             // Add it to the thumbnail canvas
             thumbnailFabricCanvas.add(clonedObj);
-          } catch (err) {
+        } catch (err) {
             console.error("Error cloning object for thumbnail:", err);
           }
         });
@@ -3141,6 +3131,110 @@
     // Restore context state
     ctx.restore();
   }
+
+  // Initialize viewport settings based on content
+  function initializeViewport() {
+    if (!canvas || !fabricLoaded) {
+      console.warn('Cannot initialize viewport - canvas or fabric not ready');
+      return;
+    }
+
+    try {
+      // Set initial viewport values from content or defaults
+      const vpt = canvas.viewportTransform;
+      if (!vpt) {
+        console.warn('Canvas viewportTransform is undefined');
+        return;
+      }
+
+      if (content && content.viewport) {
+        // Use content viewport if available
+        initialViewport = {
+          zoom: content.viewport.zoom || 1,
+          panX: content.viewport.panX || 0,
+          panY: content.viewport.panY || 0
+        };
+      } else {
+        // Use default viewport if not available
+        initialViewport = {
+          zoom: 1,
+          panX: 0,
+          panY: 0
+        };
+      }
+
+      // Apply the viewport transform
+      zoom = initialViewport.zoom;
+      vpt[0] = zoom;
+      vpt[3] = zoom;
+      vpt[4] = initialViewport.panX;
+      vpt[5] = initialViewport.panY;
+
+      // Update the canvas
+      canvas.setZoom(zoom);
+      canvas.renderAll();
+
+      log('Viewport initialized:', initialViewport);
+    } catch (err) {
+      console.error('Error initializing viewport:', err);
+    }
+  }
+
+  // Load canvas content with proper untracking to avoid reactivity
+  async function loadCanvasContent(contentToLoad: any): Promise<void> {
+    if (!canvas || !contentToLoad) {
+      console.warn('Cannot load canvas content - canvas or content is missing');
+      return Promise.resolve();
+    }
+
+    // Use untrack to prevent loops during content loading
+    return new Promise<void>((resolve) => {
+      untrack(() => {
+        // Set a flag to avoid saving during the initial load
+        skipNextViewportSave = true;
+
+        try {
+          // Load canvas objects without triggering reactivity
+          canvas.loadFromJSON(contentToLoad, () => {
+            try {
+              // After loading canvas, setup objects
+              canvas.forEachObject((obj: any) => {
+                // Setup objects without triggering reactivity
+                if (obj && obj.data?.type === 'drawing') {
+                  setupDrawingObject(obj);
+                }
+              });
+
+              // Set viewport after loading, still within untrack
+              if (contentToLoad.viewport) {
+                zoom = contentToLoad.viewport.zoom || 1;
+                canvas.setViewportTransform([
+                  zoom, 0, 0, zoom,
+                  contentToLoad.viewport.panX || 0,
+                  contentToLoad.viewport.panY || 0
+                ]);
+              }
+
+              canvas.renderAll();
+              contentLoaded = true;
+              initialized = true;
+              resolve();
+            } catch (setupErr) {
+              console.error('Error setting up canvas objects:', setupErr);
+              contentLoaded = true;
+              initialized = true;
+              resolve();
+            }
+          });
+        } catch (error) {
+          console.error('Error loading canvas content:', error);
+          contentLoaded = true;
+          initialized = true;
+          resolve();
+        }
+      });
+    });
+  }
 </script>
 
 <svelte:head>
@@ -3149,225 +3243,57 @@
 
 <div class="canvas-container" bind:this={canvasContainer}>
   <div class="canvas-wrapper">
-    <canvas bind:this={canvasEl}></canvas>
-
-    <!-- Tool instructions -->
-    {#if selectedTool === 'draw'}
-      <div class="instructions">
-        Free drawing mode. Click and drag to create a drawing area.
-      </div>
-    {/if}
-
-    {#if selectedTool === 'rectangle'}
-      <div class="instructions">
-        Click to add a rectangle.
-      </div>
-    {/if}
-
-    {#if selectedTool === 'text'}
-      <div class="instructions">
-        Click to add text.
-      </div>
-    {/if}
-
-    {#if selectedTool === 'pan'}
-      <div class="instructions">
-        Click and drag to pan around the canvas.
-      </div>
-    {/if}
-
-    {#if selectedTool === 'eraser'}
-      <div class="instructions">
-        Click on objects to erase them.
-      </div>
-    {/if}
-
-    <!-- Drawing mode instruction -->
-    {#if isDrawingMode}
-      <div class="instructions">
-        Drawing mode active. Use tools to draw within the drawing area.
-      </div>
-    {/if}
-
-    <!-- Loading indicator -->
-    {#if !contentLoaded}
-      <div class="loading-indicator">
-        <div class="spinner"></div>
-        <div>Loading canvas...</div>
-      </div>
-    {/if}
-
-    <!-- Zoom control -->
-    <ZoomControl
-      {zoom}
-      on:resetZoom={resetZoom}
-      on:zoomIn={zoomIn}
-      on:zoomOut={zoomOut}
-    />
-
-    <!-- Selected Object Info -->
-    {#if selectedObject}
-      <div class="object-info" transition:slide={{ duration: 300, easing: cubicOut }}>
-        <div class="info-title">Selected Object</div>
-        <div class="info-row">
-          <span class="info-label">Type:</span>
-          <span class="info-value">{objectType}</span>
-        </div>
-        <div class="info-row">
-          <span class="info-label">ID:</span>
-          <span class="info-value">{getObjectId(selectedObject)}</span>
-        </div>
-        <div class="info-row">
-          <span class="info-label">Position:</span>
-          <span class="info-value">x: {Math.round(selectedObject.left || 0)}, y: {Math.round(selectedObject.top || 0)}</span>
-        </div>
-        {#if selectedObject.width !== undefined && selectedObject.height !== undefined}
-          <div class="info-row">
-            <span class="info-label">Size:</span>
-            <span class="info-value">{Math.round(selectedObject.width || 0)} × {Math.round(selectedObject.height || 0)}</span>
-          </div>
-        {/if}
-      </div>
-    {:else}
-      <div class="object-info" transition:slide={{ duration: 300, easing: cubicOut }}>
-        <div class="info-title">Active Tool</div>
-        <div class="info-row">
-          <span class="info-label">Tool:</span>
-          <span class="info-value tool-value">{selectedTool}</span>
-        </div>
-        {#if isDrawingMode}
-          <div class="info-row">
-            <span class="info-label">Mode:</span>
-            <span class="info-value">Drawing</span>
-          </div>
-        {/if}
-      </div>
-    {/if}
-
-    <!-- Contextual toolbar for selected objects -->
-    {#if selectedObject}
-      <div
-        class="object-toolbar"
-        style="top: {toolbarPosition.top}px; left: {toolbarPosition.left}px;"
-        transition:slide={{ duration: 300, easing: cubicOut }}
-        class:visible={showToolbar}
-      >
-        {#if objectType === 'text' || objectType === 'i-text'}
-          <div class="text-toolbar">
-            <select
-              value={textProps.fontFamily}
-              on:change={(e) => applyTextProperties('fontFamily', (e.target as HTMLSelectElement)?.value)}>
-              {#each fontFamilies as family}
-                <option value={family}>{family}</option>
-              {/each}
-            </select>
-
-            <select
-              value={textProps.fontSize}
-              on:change={(e) => applyTextProperties('fontSize', Number((e.target as HTMLSelectElement)?.value))}>
-              {#each fontSizes as size}
-                <option value={size}>{size}</option>
-              {/each}
-            </select>
-
-            <div class="toolbar-button-group">
-              <button
-                class={textProps.fontWeight === 'bold' ? 'active' : ''}
-                on:click={() => applyTextProperties('fontWeight', textProps.fontWeight === 'bold' ? 'normal' : 'bold')}
-                title="Bold">
-                B
-              </button>
-              <button
-                class={textProps.fontStyle === 'italic' ? 'active' : ''}
-                on:click={() => applyTextProperties('fontStyle', textProps.fontStyle === 'italic' ? 'normal' : 'italic')}
-                title="Italic">
-                I
-              </button>
-              <button
-                class={textProps.underline ? 'active' : ''}
-                on:click={() => applyTextProperties('underline', !textProps.underline)}
-                title="Underline">
-                U
-              </button>
-            </div>
-
-            <div class="toolbar-button-group">
-              <button
-                class={textProps.textAlign === 'left' ? 'active' : ''}
-                on:click={() => applyTextProperties('textAlign', 'left')}
-                title="Align Left">
-                <span class="material-icons">format_align_left</span>
-              </button>
-              <button
-                class={textProps.textAlign === 'center' ? 'active' : ''}
-                on:click={() => applyTextProperties('textAlign', 'center')}
-                title="Align Center">
-                <span class="material-icons">format_align_center</span>
-              </button>
-              <button
-                class={textProps.textAlign === 'right' ? 'active' : ''}
-                on:click={() => applyTextProperties('textAlign', 'right')}
-                title="Align Right">
-                <span class="material-icons">format_align_right</span>
-              </button>
-            </div>
-
-            <div class="color-picker">
-              <input
-                type="color"
-                value={textProps.color}
-                on:input={(e) => applyTextProperties('fill', (e.target as HTMLInputElement)?.value)}
-                title="Text Color"
-              />
-            </div>
-          </div>
-        {:else}
-          <div class="shape-toolbar">
-            <div class="color-picker">
-              <input
-                type="color"
-                value={shapeProps.fill}
-                on:input={(e) => applyShapeProperties('fill', (e.target as HTMLInputElement)?.value)}
-                title="Fill Color"
-              />
-            </div>
-            <div class="color-picker">
-              <input
-                type="color"
-                value={shapeProps.stroke}
-                on:input={(e) => applyShapeProperties('stroke', (e.target as HTMLInputElement)?.value)}
-                title="Stroke Color"
-              />
-            </div>
-            <div class="range-slider">
-              <label>Stroke width:</label>
-              <input
-                type="range"
-                min="0.5"
-                max="10"
-                step="0.5"
-                value={shapeProps.strokeWidth}
-                on:input={(e) => applyShapeProperties('strokeWidth', Number((e.target as HTMLInputElement)?.value))}
-              />
-              <span>{shapeProps.strokeWidth}px</span>
-            </div>
-            <div class="range-slider">
-              <label>Opacity:</label>
-              <input
-                type="range"
-                min="0.1"
-                max="1"
-                step="0.05"
-                value={shapeProps.opacity}
-                on:input={(e) => applyShapeProperties('opacity', Number((e.target as HTMLInputElement)?.value))}
-              />
-              <span>{Math.round(shapeProps.opacity * 100)}%</span>
-            </div>
-          </div>
-        {/if}
-      </div>
-    {/if}
+    <canvas
+      bind:this={canvasEl}
+      tabindex="0"
+    ></canvas>
   </div>
+
+  <!-- Tool instructions -->
+  {#if selectedTool === 'draw'}
+    <div class="instructions">
+      Free drawing mode. Click and drag to create a drawing area.
+    </div>
+  {/if}
+
+  {#if selectedTool === 'rectangle'}
+    <div class="instructions">
+      Click to add a rectangle.
+    </div>
+  {/if}
+
+  {#if selectedTool === 'text'}
+    <div class="instructions">
+      Click to add text.
+    </div>
+  {/if}
+
+  {#if selectedTool === 'pan'}
+    <div class="instructions">
+      Click and drag to pan around the canvas.
+    </div>
+  {/if}
+
+  {#if selectedTool === 'eraser'}
+    <div class="instructions">
+      Click on objects to erase them.
+    </div>
+  {/if}
+
+  <!-- Drawing mode instruction -->
+  {#if isDrawingMode}
+    <div class="instructions">
+      Drawing mode active. Use tools to draw within the drawing area.
+    </div>
+  {/if}
+
+  <!-- Loading indicator -->
+  {#if !contentLoaded}
+    <div class="loading-indicator">
+      <div class="spinner"></div>
+      <div>Loading canvas...</div>
+    </div>
+  {/if}
 </div>
 
 <style lang="scss">

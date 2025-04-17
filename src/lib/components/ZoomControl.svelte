@@ -66,18 +66,13 @@
 
 <style lang="scss">
   .zoom-control {
-    position: fixed;
-    top: 70px;
-    right: 15px;
-    background: white;
-    border-radius: 4px;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
     display: flex;
     align-items: center;
-    padding: 5px 10px;
-    z-index: 1000;
+    background: transparent;
+    border-radius: 4px;
+    padding: 2px 5px;
+    z-index: 10;
     font-size: 14px;
-    border: 1px solid #e0e0e0;
     user-select: none;
   }
 

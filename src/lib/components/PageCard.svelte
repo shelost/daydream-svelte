@@ -2,149 +2,117 @@
   import { onMount, createEventDispatcher } from 'svelte';
   import { goto } from '$app/navigation';
   import PageThumbnail from './PageThumbnail.svelte';
-  import { formatDate } from '$lib/utils/drawingUtils';
   import type { Page } from '$lib/types';
+  import { theme } from '$lib/stores/themeStore';
 
   export let page: Page;
 
   const dispatch = createEventDispatcher();
 
+  function formatUpdatedAt(dateString: string): string {
+    try {
+      const now = new Date();
+      const updated = new Date(dateString);
+
+      const diffMs = now.getTime() - updated.getTime();
+
+      const diffSec = Math.floor(diffMs / 1000);
+      const diffMin = Math.floor(diffSec / 60);
+      const diffHour = Math.floor(diffMin / 60);
+      const diffDay = Math.floor(diffHour / 24);
+      const diffMonth = Math.floor(diffDay / 30);
+      const diffYear = Math.floor(diffDay / 365);
+
+      if (diffYear > 0) {
+        return diffYear === 1 ? 'about 1 year ago' : `about ${diffYear} years ago`;
+      } else if (diffMonth > 0) {
+        return diffMonth === 1 ? 'about 1 month ago' : `about ${diffMonth} months ago`;
+      } else if (diffDay > 0) {
+        return diffDay === 1 ? 'yesterday' : `${diffDay} days ago`;
+      } else if (diffHour > 0) {
+        return diffHour === 1 ? 'about 1 hour ago' : `about ${diffHour} hours ago`;
+      } else if (diffMin > 0) {
+        return diffMin === 1 ? 'about 1 minute ago' : `about ${diffMin} minutes ago`;
+      } else {
+        return 'just now';
+      }
+    } catch (error) {
+      return 'Recently';
+    }
+  }
+
   function handleClick() {
-    // Navigate to the page based on its type
     goto(`/app/${page.type}/${page.id}`);
   }
 
   function handleOptionsClick(event: MouseEvent) {
-    event.stopPropagation(); // Prevent card click
+    event.stopPropagation();
     dispatch('options', { page });
+  }
+
+  function getPageIcon(type: 'canvas' | 'drawing'): string {
+    return type === 'canvas' ? 'dashboard' : 'edit';
   }
 </script>
 
-<div class="page-card" on:click={handleClick}>
-  <div class="thumbnail">
-    <PageThumbnail {page} size="medium" />
+<div class="page-card" on:click={handleClick} data-testid="page-card">
+  <div class="page-thumbnail">
+    <PageThumbnail {page} size="large" />
+  </div>
+  <div class = 'expo'>
+    <div class="page-title">{page.title || 'Untitled'}</div>
+    <div class="page-updated">Updated {formatUpdatedAt(page.updated_at)}</div>
   </div>
 
-  <div class="card-content">
-    <div class="card-header">
-      <h3 class="page-title">{page.title || 'Untitled'}</h3>
-
-      <button
-        class="options-button"
-        on:click={handleOptionsClick}
-        aria-label="Page options"
-      >
-        <span class="material-icons">more_vert</span>
-      </button>
-    </div>
-
-    <div class="page-meta">
-      <div class="meta-item">
-        <span class="material-icons">{page.type === 'canvas' ? 'dashboard' : 'edit'}</span>
-        <span>{page.type}</span>
-      </div>
-
-      {#if page.updated_at}
-        <div class="meta-item">
-          <span class="material-icons">schedule</span>
-          <span>{formatDate(page.updated_at)}</span>
-        </div>
-      {/if}
-    </div>
-  </div>
 </div>
 
 <style lang="scss">
   .page-card {
-    display: flex;
-    flex-direction: column;
-    background-color: var(--card-bg-color, white);
+    //background-color: var(--card-bg);
     border-radius: 8px;
     overflow: hidden;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
-    transition: transform 0.2s ease, box-shadow 0.2s ease;
+    //border: 1px solid var(--border-color);
+    transition: all 150ms ease;
+    box-shadow: 0 4px 12px var(--card-shadow);
     cursor: pointer;
-    height: 100%;
 
     &:hover {
-      transform: translateY(-4px);
-      box-shadow: 0 12px 20px rgba(0, 0, 0, 0.1);
+      transform: translateY(-3px);
+      box-shadow: 0 4px 6px var(--card-shadow), 0 1px 3px var(--card-shadow);
+      border-color: var(--primary-color);
     }
+  }
 
-    .thumbnail {
-      width: 100%;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-    }
+  .page-thumbnail {
+    width: 100%;
+    height: 200px;
+    border-radius: 8px;
+    overflow: hidden;
+    //border: 1px solid var(--border-color);
+    background-color: var(--card-bg);
+    position: relative;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+  }
 
-    .card-content {
-      padding: 12px;
-      display: flex;
-      flex-direction: column;
-      flex: 1;
-    }
+  .expo{
+    padding: 16px;
+  }
 
-    .card-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 8px;
-    }
+  .page-title {
+    font-size: 1rem;
+    font-weight: 500;
+    margin-bottom: 4px;
+    color: var(--text-color);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
 
-    .page-title {
-      margin: 0;
-      font-size: 1rem;
-      font-weight: 600;
-      color: var(--text-color, #333);
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-
-    .options-button {
-      background: none;
-      border: none;
-      cursor: pointer;
-      opacity: 0.6;
-      padding: 4px;
-      border-radius: 50%;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-
-      &:hover {
-        background-color: rgba(0, 0, 0, 0.05);
-        opacity: 1;
-      }
-
-      .material-icons {
-        font-size: 18px;
-        color: var(--text-color, #333);
-      }
-    }
-
-    .page-meta {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 12px;
-      margin-top: auto;
-      font-size: 0.75rem;
-      color: var(--text-secondary, #666);
-
-      .meta-item {
-        display: flex;
-        align-items: center;
-        gap: 4px;
-
-        .material-icons {
-          font-size: 14px;
-        }
-
-        span {
-          text-transform: capitalize;
-        }
-      }
-    }
+  .page-updated {
+    font-size: 0.8rem;
+    color: var(--text-color);
+    opacity: 0.6;
   }
 </style>
