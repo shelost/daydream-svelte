@@ -12,6 +12,8 @@
   import Toolbar from '$lib/components/Toolbar.svelte';
   import TitleBar from '$lib/components/TitleBar.svelte';
   import Canvas from '$lib/components/Canvas.svelte';
+  import SidebarRight from '$lib/components/SidebarRight.svelte';
+  import { selectionStore, updateSelection } from '$lib/stores/selectionStore';
 
   let pageData: any;
   let loading = true;
@@ -35,6 +37,10 @@
   // Add variables for selected object information
   let selectedObjectType: string | null = null;
   let selectedObjectId: string | null = null;
+
+  // Add state for selected objects
+  let selectedObject = null;
+  let selectedObjects = [];
 
   // This function loads the page data based on the current pageId
   async function loadPageData(id: string) {
@@ -126,6 +132,9 @@
           canvasComponent.generateThumbnail();
         }
       }, 5000); // Wait 5 seconds for canvas to fully load
+
+      // Update SidebarRight props
+      updateSidebarRightProps();
 
     } catch (err) {
       if (err instanceof Error) {
@@ -239,6 +248,62 @@
       }
     }, 800); // Increased delay to ensure canvas is mounted and initialized
   }
+
+  // Add handler for selection changes
+  function handleSelectionChange(event) {
+    const { object, objects, type } = event.detail;
+    console.log('Canvas page received selectionChange event:', { type, objectCount: objects?.length || 0 });
+
+    // Update local state
+    selectedObject = object;
+    selectedObjectType = type;
+    selectedObjects = objects || [];
+
+    console.log('Updated selection state:', { selectedObjectType, objectsCount: selectedObjects.length });
+
+    // Update selection store instead of directly updating SidebarRight
+    updateSelection({
+      selectedObject: object,
+      selectedObjectType: type,
+      selectedObjects: objects || [],
+      currentPageId: pageId
+    });
+  }
+
+  // Function to update SidebarRight props
+  function updateSidebarRightProps() {
+    const parentLayout = document.querySelector('div.app-layout');
+    if (!parentLayout) {
+      console.warn('Cannot find app-layout to update SidebarRight props');
+      return;
+    }
+
+    const sidebarRightElements = parentLayout.querySelectorAll('aside.sidebar-right');
+    if (sidebarRightElements.length === 0) {
+      console.warn('Cannot find SidebarRight element');
+      return;
+    }
+
+    const sidebarRight = sidebarRightElements[0].__svelte_component__;
+    if (!sidebarRight) {
+      console.warn('SidebarRight Svelte component not found');
+      return;
+    }
+
+    console.log('Updating SidebarRight with:', {
+      objectType: selectedObjectType,
+      hasObject: selectedObject !== null,
+      objectCount: selectedObjects?.length || 0
+    });
+
+    // Use $set to ensure reactivity - pass all relevant properties
+    sidebarRight.$set({
+      selectedObject,
+      selectedObjectType,
+      selectedObjects,
+      currentPageId: pageId
+    });
+  }
 </script>
 
 <svelte:head>
@@ -293,6 +358,7 @@
             onSaving={handleSaving}
             onSaveStatus={handleSaveStatus}
             bind:this={canvasComponent}
+            on:selectionChange={handleSelectionChange}
           />
           {/key}
         </div>

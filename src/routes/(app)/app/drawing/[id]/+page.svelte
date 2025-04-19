@@ -92,6 +92,22 @@
 
     // Disable scroll handling to prevent jumping
     disableScrollHandling();
+
+    // Pass drawing content to SidebarRight in the parent layout
+    const parentLayout = document.querySelector('div.app-layout');
+    if (parentLayout) {
+      const sidebarRightElements = parentLayout.querySelectorAll('aside.sidebar-right');
+      if (sidebarRightElements.length > 0) {
+        const sidebarRight = sidebarRightElements[0].__svelte_component__;
+        if (sidebarRight) {
+          // Send drawing content to sidebar
+          sidebarRight.$set({
+            directDrawingContent: pageData?.content,
+            selectedObjects: [] // Empty array for Drawing mode
+          });
+        }
+      }
+    }
   });
 
   onDestroy(() => {

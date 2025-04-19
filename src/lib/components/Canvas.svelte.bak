@@ -3,7 +3,7 @@
   import { slide } from 'svelte/transition';
   import { cubicOut } from 'svelte/easing';
   import { getStroke, type StrokeOptions } from 'perfect-freehand';
-  import { writable, type Writable } from 'svelte/store';
+  import { writable, type Writable, get } from 'svelte/store';
   import { gsap } from 'gsap';
   import { pages } from '$lib/stores/pages';
   import type { Tool, CanvasContent, DrawingContent } from '$lib/types';
@@ -11,9 +11,10 @@
   import { getSvgPathFromStroke } from '$lib/utils/drawingUtils';
   import { user } from '$lib/stores/auth';
   import ZoomControl from './ZoomControl.svelte';
-
-  // Create event dispatcher
-  const dispatch = createEventDispatcher();
+  import {
+    textSettings, shapeSettings, eraserSettings, selectionSettings,
+    activeTool, selectedObject as selectedObjectStore, canvasSidebarVisible
+  } from '$lib/stores/canvasStore';
 
   // Type definition for the fabric library
   interface FabricLib {
@@ -100,26 +101,8 @@
 
   // Update exported properties when selection changes
   $: {
-    // Make sure we explicitly set selectedObjectType based on objectType
     selectedObjectType = objectType || null;
-
-    // Also set the ID if available
     selectedObjectId = selectedObject ? getObjectId(selectedObject) : null;
-
-    // More detailed logging about what is being exported
-    console.log('Canvas exporting object info:', {
-      objectType,
-      selectedObjectType,
-      selectedObjectId,
-      hasObject: !!selectedObject
-    });
-
-    // Dispatch selection change event to parent component
-    dispatch('selectionChange', {
-      object: selectedObject,
-      objects: selectedObject ? [selectedObject] : [],
-      type: selectedObjectType
-    });
   }
 
   // Styling presets for toolbar
@@ -197,7 +180,7 @@
   }
 
   // Main component initialization
-  onMount(async () => {
+  onMount(() => {
     const initPromise = async () => {
       try {
         log('Canvas component mounting...');
@@ -229,71 +212,12 @@
 
         // Initialize the canvas
         try {
-          // Ensure fabricLib is not null before using it
-          if (!fabricLib) {
-            throw new Error('Fabric library not loaded');
-          }
-
           canvas = new fabricLib.fabric.Canvas(canvasEl, {
             backgroundColor: '#ffffff',
             preserveObjectStacking: true,
             stopContextMenu: true,
             fireRightClick: true
           });
-
-          // Set default control appearance for all objects
-          fabricLib.fabric.Object.prototype.set({
-            cornerStyle: 'circle',
-            cornerColor: 'white',
-            cornerStrokeColor: '#6355FF',
-            cornerStrokeWidth: 3,
-            cornerSize: 8,
-            padding: 2,
-            transparentCorners: false,
-            borderColor: '#6355FF',
-            borderScaleFactor: 1.5,
-            borderOpacityWhenMoving: .5,
-            touchCornerSize: 20,
-          });
-
-          // Set selection appearance
-          canvas.selectionColor = 'rgba(20,0,255,0.05)';
-          canvas.selectionBorderColor = '#6355FF';
-          canvas.selectionLineWidth = 2;
-
-          canvas.hoverCursor = 'pointer';
-
-  function animate(e, dir) {
-    if (e.target) {
-      fabric.util.animate({
-        startValue: e.target.angle,
-        endValue: dir ? 10 : 0,
-        duration: 100,
-        onChange: function(value) {
-          e.target.rotate(value);
-          canvas.renderAll();
-        },
-        onComplete: function() {
-          e.target.setCoords();
-        }
-      });
-      fabric.util.animate({
-        startValue: e.target.scaleX,
-        endValue: dir ? 1.2 : 1,
-        duration: 100,
-        onChange: function(value) {
-          e.target.scale(value);
-          canvas.renderAll();
-        },
-        onComplete: function() {
-          e.target.setCoords();
-        }
-      });
-    }
-  }
-  canvas.on('mouse:down', function(e) { animate(e, 1); });
-  canvas.on('mouse:up', function(e) { animate(e, 0); });
-
 
           // Initialize fabric canvas event handlers for text scaling fix
           initializeFabricCanvas();
@@ -333,31 +257,6 @@
         // Setup selection handlers
         setupSelectionHandlers();
 
-        // Add a custom event listener for object updates
-        if (canvasEl) {
-          // Create an event listener for updating objects
-          canvasEl.addEventListener('fabric:update-object', (event: any) => {
-            console.log('Canvas received fabric:update-object event:', event.detail);
-            const { object, updates } = event.detail;
-            if (object && updates) {
-              updateObject(object, updates);
-            }
-          });
-        }
-
-        // Make this instance available globally for debugging/access
-        if (window) {
-          // Cast window to any to avoid TypeScript errors
-          (window as any).canvasInstance = {
-            updateObject,
-            clearSelection: () => canvas && canvas.discardActiveObject(),
-            groupSelection: () => console.log('Group selection not implemented'),
-            ungroupSelection: () => console.log('Ungroup selection not implemented'),
-            alignSelection: () => console.log('Align selection not implemented'),
-            distributeSelection: () => console.log('Distribute selection not implemented')
-          };
-        }
-
         // Load content if available
         if (content && Object.keys(content).length > 0) {
           await loadCanvasContent(content);
@@ -387,21 +286,10 @@
       window.removeEventListener('resize', handleResize);
       window.removeEventListener('keydown', handleKeyDown);
 
-      if (canvasEl) {
-        canvasEl.removeEventListener('fabric:update-object', () => {});
-      }
-
       // Dispose of the canvas if it was initialized
       if (canvas) {
         canvas.dispose();
       }
-
-      // Clean up global instance
-      if (window && (window as any).canvasInstance) {
-        (window as any).canvasInstance = null;
-      }
-
-      console.log('Canvas component unmounted');
     };
   });
 
@@ -580,21 +468,36 @@
 
       const obj = event.target;
 
-      // Use our normalization function for all object types
-      untrack(() => {
-        normalizeObjectScaling(obj);
+      // Special handling for text objects to convert scaling to font size
+      if ((obj.type === 'text' || obj.type === 'i-text') && (obj.scaleX !== 1 || obj.scaleY !== 1)) {
+        untrack(() => {
+          // Calculate new font size based on scaling
+          const newFontSize = Math.round(obj.fontSize * obj.scaleX);
 
-        // Update the canvas
-        canvas.renderAll();
+          // Apply the new font size
+          obj.set({
+            fontSize: newFontSize,
+            // Reset scaling to avoid double-scaling
+            scaleX: 1,
+            scaleY: 1
+          });
 
-        // Schedule auto save after modifying the object
-        scheduleAutoSave();
+          // Force object to clear its cache and update
+          obj._clearCache();
+          if (obj.setCoords) obj.setCoords();
 
-        // Update toolbar properties if this is the selected object
-        if (selectedObject === obj) {
-          updateToolbarProperties();
-        }
-      });
+          // Update the canvas
+          canvas.renderAll();
+        });
+      }
+
+      // Update toolbar properties if this is the selected object
+      if (selectedObject) {
+        updateToolbarProperties();
+      }
+
+      // Always schedule an autosave after modifications
+      scheduleAutoSave();
     });
 
     // Handle text editing events
@@ -611,12 +514,31 @@
 
       const obj = event.target;
 
-      // Use our normalization function for consistent handling
-      untrack(() => {
-        normalizeObjectScaling(obj);
-        canvas.renderAll();
+      // Ensure the object has proper scaling
+      if (obj.scaleX !== 1 || obj.scaleY !== 1) {
+        untrack(() => {
+          // Convert scaling to font size
+          const newFontSize = Math.round(obj.fontSize * obj.scaleX);
+
+          // Apply the new font size and reset scaling
+          obj.set({
+            fontSize: newFontSize,
+            scaleX: 1,
+            scaleY: 1
+          });
+
+          // Clear cache and update
+          obj._clearCache();
+          if (obj.setCoords) obj.setCoords();
+          canvas.renderAll();
+
+          // Schedule autosave
+          scheduleAutoSave();
+        });
+      } else {
+        // Just schedule an autosave if no scaling changes
         scheduleAutoSave();
-      });
+      }
     });
 
     // Make sure objects are properly selectable
@@ -657,13 +579,6 @@
           && selectedTool !== 'rectangle' && selectedTool !== 'text') {
         setTool('select');
       }
-
-      // Dispatch selection cleared event
-      dispatch('selectionChange', {
-        object: null,
-        objects: [],
-        type: null
-      });
     });
   }
 
@@ -720,24 +635,8 @@
         objectType = '';
         showToolbar = false;
         logSelectionState('handle-selected-no-object');
-
-        // Dispatch selection cleared event
-        dispatch('selectionChange', {
-          object: null,
-          objects: [],
-          type: null
-        });
-
         return;
       }
-
-      // Log more detailed information about the selected object
-      console.log('Object selected:', {
-        type: activeObject.type,
-        data: activeObject.data,
-        id: activeObject.id,
-        isText: activeObject.type === 'i-text' || activeObject.type === 'text'
-      });
 
       // Set selected object
       selectedObject = activeObject;
@@ -750,54 +649,36 @@
       // Determine object type more carefully
       if (activeObject.type === 'i-text' || activeObject.type === 'text') {
         objectType = 'text';
-        console.log('Identified as TEXT object');
+
+        // Don't change tool on selection - only on double-click now
+        // Keep the select tool for moving text objects
       } else if (activeObject.type === 'rect' && !activeObject.data?.type) {
         // Only treat as rectangle if it's not part of a drawing
         objectType = 'rectangle';
-        console.log('Identified as RECTANGLE object');
+
+        // Keep the select tool for moving rectangle objects
       } else if (activeObject.type === 'circle') {
         objectType = 'circle';
-        console.log('Identified as CIRCLE object');
+
+        // Keep the select tool for moving circle objects
       } else if (activeObject.type === 'path') {
         objectType = 'path';
-        console.log('Identified as PATH object');
+
+        // Keep the select tool for moving path objects
       } else if (activeObject.type === 'group' && activeObject.data?.type === 'drawing') {
         objectType = 'drawing';
-        console.log('Identified as DRAWING object');
       } else {
         objectType = activeObject.type;
-        console.log('Identified as OTHER object type:', activeObject.type);
+
+        // Keep the select tool for moving other objects
       }
 
       // Log object details for debugging
       logSelectionState('handle-object-selected');
 
-      // Immediately update exported properties to ensure consistency
-      selectedObjectType = objectType || null;
-      selectedObjectId = selectedObject ? getObjectId(selectedObject) : null;
-
-      // Add an extra log for clarity when identifying text objects
-      if (objectType === 'text') {
-        console.log('TEXT OBJECT SELECTED - details:', {
-          text: activeObject.text,
-          fontFamily: activeObject.fontFamily,
-          fontSize: activeObject.fontSize,
-          type: activeObject.type
-        });
-      }
-
       // Don't show toolbar for drawing objects, they have their own interface
       if (objectType === 'drawing') {
         showToolbar = false;
-
-        // Dispatch selection change event immediately
-        console.log('Dispatching selectionChange event for drawing');
-        dispatch('selectionChange', {
-          object: selectedObject,
-          objects: [selectedObject],
-          type: objectType
-        });
-
         return;
       }
 
@@ -814,14 +695,6 @@
       showToolbar = true;
 
       console.log('Object selected:', objectType, 'Toolbar showing:', showToolbar);
-
-      // Dispatch selection change event to parent component
-      console.log('Dispatching selectionChange event with type:', objectType);
-      dispatch('selectionChange', {
-        object: selectedObject,
-        objects: [selectedObject],
-        type: objectType
-      });
     });
   }
 
@@ -2892,14 +2765,6 @@
       onSaving(true);
       onSaveStatus('saving');
 
-      // Normalize all objects before saving to ensure consistent state
-      if (canvas) {
-        canvas.forEachObject((obj: any) => {
-          normalizeObjectScaling(obj);
-        });
-        canvas.renderAll();
-      }
-
       // Export canvas content as JSON
       const data = canvas.toJSON(['id', 'data']);
 
@@ -3455,17 +3320,28 @@
           // Load canvas objects without triggering reactivity
           canvas.loadFromJSON(contentToLoad, () => {
             try {
-              console.log('Canvas loaded from JSON, normalizing objects...');
-
-              // After loading canvas, setup and normalize all objects
+              // After loading canvas, setup objects
               canvas.forEachObject((obj: any) => {
                 // Setup drawing objects
                 if (obj && obj.data?.type === 'drawing') {
                   setupDrawingObject(obj);
                 }
 
-                // Normalize scaling for all objects
-                normalizeObjectScaling(obj);
+                // Fix scaling for text objects
+                if (obj && (obj.type === 'text' || obj.type === 'i-text') && (obj.scaleX !== 1 || obj.scaleY !== 1)) {
+                  const newFontSize = Math.round(obj.fontSize * obj.scaleX);
+
+                  // Apply font size and reset scaling
+                  obj.set({
+                    fontSize: newFontSize,
+                    scaleX: 1,
+                    scaleY: 1
+                  });
+
+                  // Clear cache and update coordinates
+                  obj._clearCache();
+                  if (obj.setCoords) obj.setCoords();
+                }
               });
 
               // Set viewport after loading, still within untrack
@@ -3558,18 +3434,35 @@
 
       const obj = event.target;
 
-      // Use our normalization function for consistent handling
-      untrack(() => {
-        normalizeObjectScaling(obj);
-        canvas.renderAll();
+      // Ensure the object has proper scaling
+      if (obj.scaleX !== 1 || obj.scaleY !== 1) {
+        untrack(() => {
+          // Convert scaling to font size
+          const newFontSize = Math.round(obj.fontSize * obj.scaleX);
+
+          // Apply the new font size and reset scaling
+          obj.set({
+            fontSize: newFontSize,
+            scaleX: 1,
+            scaleY: 1
+          });
+
+          // Clear cache and update
+          obj._clearCache();
+          if (obj.setCoords) obj.setCoords();
+          canvas.renderAll();
+
+          // Schedule autosave
+          scheduleAutoSave();
+        });
+      } else {
+        // Just schedule an autosave if no scaling changes
         scheduleAutoSave();
-      });
+      }
     });
 
     // ... existing code ...
   }
-
-  // ... existing code ...
 
   // ... existing code ...
 
@@ -3599,275 +3492,599 @@
     }
   }
 
-  // Add a new function to normalize object scaling after the setupEventHandlers function
-  function normalizeObjectScaling(obj: any) {
-    if (!obj) return;
+  // The duplicate loadCanvasContent function was removed from here
 
-    try {
-      // Apply default scales if they're missing
-      if (obj.scaleX === undefined || obj.scaleX === null) obj.scaleX = 1;
-      if (obj.scaleY === undefined || obj.scaleY === null) obj.scaleY = 1;
+  // Function to synchronize selected object properties with stores
+  function syncSelectedObjectToStores() {
+    if (!selectedObject) return;
 
-      // Handle text objects specifically
-      if (obj.type === 'text' || obj.type === 'i-text') {
-        if (obj.scaleX !== 1 || obj.scaleY !== 1) {
-          // Apply default fontSize if it's missing
-          if (obj.fontSize === undefined || obj.fontSize === null) obj.fontSize = 20;
-
-          // Convert scaling to font size for text objects
-          const newFontSize = Math.round(obj.fontSize * obj.scaleX);
-
-          obj.set({
-            fontSize: newFontSize,
-            scaleX: 1,
-            scaleY: 1
-          });
-        }
-      }
-      // Handle shapes and other objects
-      else if (obj.type === 'rect' || obj.type === 'circle' || obj.type === 'path') {
-        // If object has non-uniform scaling, normalize it
-        if (obj.scaleX !== 1 || obj.scaleY !== 1) {
-          // For shapes, apply scaling to dimensions
-          if (obj.width !== undefined && obj.height !== undefined) {
-            obj.set({
-              width: obj.width * obj.scaleX,
-              height: obj.height * obj.scaleY,
-              scaleX: 1,
-              scaleY: 1
-            });
-          }
-          // For path objects or objects without explicit dimensions
-          else if (obj.type === 'path') {
-            // For path objects, we preserve scale as they often need it
-            // Just ensure both scales are the same to avoid distortion
-            const avgScale = (obj.scaleX + obj.scaleY) / 2;
-            obj.set({
-              scaleX: avgScale,
-              scaleY: avgScale
-            });
-          }
-        }
-      }
-
-      // For any object type, ensure we clear cache and update coordinates
-      if (obj._clearCache) obj._clearCache();
-      if (obj.setCoords) obj.setCoords();
-
-    } catch (err) {
-      console.error('Error normalizing object scaling:', err, obj);
-    }
-  }
-
-  // ... existing code ...
-
-  // ... existing code ...
-
-  // ... existing code ...
-
-  // Add a new method to update object properties from sidebar changes
-  export function updateObject(object: any, updates: any) {
-    if (!canvas || !updates) {
-      console.warn('Cannot update object: missing canvas or updates');
+    // Reset all object-specific stores when selection is cleared
+    if (!selectedObject) {
+      selectedObject.set({
+        id: null,
+        type: null,
+        properties: {}
+      });
       return;
     }
 
-    try {
-      console.log('Canvas: Updating object properties:', updates);
+    // Update the selected object store
+    selectedObject.set({
+      id: getObjectId(selectedObject),
+      type: objectType,
+      properties: objectType === 'text' || objectType === 'i-text'
+        ? { ...textProps }
+        : { ...shapeProps }
+    });
 
-      // Get the actual canvas object - try multiple approaches to find the right object
-      let canvasObject = null;
-
-      // If we have a direct object reference, try to find it in the canvas
-      if (object) {
-        // Try by ID first if the object has one
-        if (object.id) {
-          canvasObject = findObjectById(object.id);
-        }
-
-        // If we couldn't find by ID, check if it's the active object
-        if (!canvasObject && selectedObject && object === selectedObject) {
-          canvasObject = selectedObject;
-        }
-
-        // Last resort - if the object has top/left coordinates, try to find by position
-        if (!canvasObject && object.left !== undefined && object.top !== undefined) {
-          canvasObject = findObjectByPosition(object.left, object.top);
-        }
-      }
-
-      // If we still don't have an object, use the current active object
-      if (!canvasObject) {
-        canvasObject = canvas.getActiveObject();
-      }
-
-      // Check if we have an object to update
-      if (!canvasObject) {
-        console.warn('No object found to update');
-        return;
-      }
-
-      // Use untrack to prevent reactivity loops
-      untrack(() => {
-        console.log('Applying updates to object:', canvasObject);
-
-        // Check if the update is for a text property that needs special handling
-        if (canvasObject.type === 'i-text' || canvasObject.type === 'text') {
-          // Apply text-specific properties with special handling for fontWeight etc.
-          if (updates.hasOwnProperty('fontWeight')) {
-            canvasObject.set({ fontWeight: updates.fontWeight });
-          }
-          if (updates.hasOwnProperty('fontStyle')) {
-            canvasObject.set({ fontStyle: updates.fontStyle });
-          }
-          if (updates.hasOwnProperty('underline')) {
-            canvasObject.set({ underline: updates.underline });
-          }
-          if (updates.hasOwnProperty('fontFamily')) {
-            canvasObject.set({ fontFamily: updates.fontFamily });
-          }
-          if (updates.hasOwnProperty('fontSize')) {
-            canvasObject.set({ fontSize: updates.fontSize });
-          }
-          if (updates.hasOwnProperty('textAlign')) {
-            canvasObject.set({ textAlign: updates.textAlign });
-          }
-          if (updates.hasOwnProperty('color') || updates.hasOwnProperty('fill')) {
-            const color = updates.color || updates.fill;
-            canvasObject.set({ fill: color });
-          }
-          if (updates.hasOwnProperty('lineHeight')) {
-            canvasObject.set({ lineHeight: updates.lineHeight });
-          }
-          if (updates.hasOwnProperty('charSpacing')) {
-            canvasObject.set({ charSpacing: updates.charSpacing });
-          }
-        } else {
-          // For non-text objects (shapes, etc.)
-          if (updates.hasOwnProperty('fill')) {
-            canvasObject.set({ fill: updates.fill });
-          }
-          if (updates.hasOwnProperty('stroke')) {
-            canvasObject.set({ stroke: updates.stroke });
-          }
-          if (updates.hasOwnProperty('strokeWidth')) {
-            canvasObject.set({ strokeWidth: updates.strokeWidth });
-          }
-          if (updates.hasOwnProperty('opacity')) {
-            canvasObject.set({ opacity: updates.opacity });
-          }
-          if (updates.hasOwnProperty('rx')) {
-            canvasObject.set({ rx: updates.rx });
-          }
-          if (updates.hasOwnProperty('ry')) {
-            canvasObject.set({ ry: updates.ry });
-          }
-        }
-
-        // Ensure cache and position data are updated
-        if (canvasObject._clearCache) {
-          canvasObject._clearCache();
-        }
-        if (canvasObject.setCoords) {
-          canvasObject.setCoords();
-        }
-
-        // Render the changes
-        canvas.renderAll();
-
-        // Schedule autosave after making changes
-        scheduleAutoSave();
-
-        // Update toolbar properties to reflect the new state
-        updateToolbarProperties();
+    // Update the specific stores based on object type
+    if (objectType === 'text' || objectType === 'i-text') {
+      textSettings.set({
+        fontFamily: selectedObject.fontFamily || 'Inter',
+        fontSize: selectedObject.fontSize || 18,
+        fontWeight: selectedObject.fontWeight || 'normal',
+        fontStyle: selectedObject.fontStyle || 'normal',
+        textAlign: selectedObject.textAlign || 'left',
+        letterSpacing: selectedObject.charSpacing || 0,
+        lineHeight: selectedObject.lineHeight || 1.2,
+        underline: selectedObject.underline || false,
+        color: selectedObject.fill || '#333333',
+        backgroundColor: selectedObject.backgroundColor || 'transparent'
       });
-    } catch (err) {
-      console.error('Error updating object properties:', err);
+    } else if (objectType === 'rect') {
+      shapeSettings.set({
+        ...get(shapeSettings),
+        type: 'rectangle',
+        fill: selectedObject.fill || '#f0f0f0',
+        stroke: selectedObject.stroke || '#333333',
+        strokeWidth: selectedObject.strokeWidth || 1,
+        opacity: selectedObject.opacity || 1,
+        cornerRadius: selectedObject.rx || 0
+      });
+    } else if (objectType === 'circle') {
+      shapeSettings.set({
+        ...get(shapeSettings),
+        type: 'circle',
+        fill: selectedObject.fill || '#f0f0f0',
+        stroke: selectedObject.stroke || '#333333',
+        strokeWidth: selectedObject.strokeWidth || 1,
+        opacity: selectedObject.opacity || 1
+      });
+    } else if (objectType === 'triangle') {
+      shapeSettings.set({
+        ...get(shapeSettings),
+        type: 'triangle',
+        fill: selectedObject.fill || '#f0f0f0',
+        stroke: selectedObject.stroke || '#333333',
+        strokeWidth: selectedObject.strokeWidth || 1,
+        opacity: selectedObject.opacity || 1
+      });
+    } else if (objectType === 'line') {
+      shapeSettings.set({
+        ...get(shapeSettings),
+        type: 'line',
+        stroke: selectedObject.stroke || '#333333',
+        strokeWidth: selectedObject.strokeWidth || 1,
+        opacity: selectedObject.opacity || 1
+      });
     }
+
+    // Update selection settings
+    selectionSettings.update(settings => ({
+      ...settings,
+      selectedObjectIds: [getObjectId(selectedObject)]
+    }));
   }
 
-  // Helper function to find an object by ID
-  function findObjectById(id: string) {
-    if (!canvas) return null;
+  // Function to apply text settings from store to selected object
+  function applyTextSettingsFromStore() {
+    if (!selectedObject || !canvas || objectType !== 'text' && objectType !== 'i-text') return;
 
-    // First look in the active selection if there is one
-    const activeSelection = canvas.getActiveObject();
-    if (activeSelection && activeSelection.type === 'activeSelection' && activeSelection._objects) {
-      for (const obj of activeSelection._objects) {
-        if (obj.id === id || (obj.data && obj.data.id === id)) {
-          return obj;
-        }
-      }
+    const settings = get(textSettings);
+    selectedObject.set({
+      fontFamily: settings.fontFamily,
+      fontSize: settings.fontSize,
+      fontWeight: settings.fontWeight,
+      fontStyle: settings.fontStyle,
+      textAlign: settings.textAlign,
+      charSpacing: settings.letterSpacing,
+      lineHeight: settings.lineHeight,
+      underline: settings.underline,
+      fill: settings.color,
+      backgroundColor: settings.backgroundColor === 'transparent' ? '' : settings.backgroundColor
+    });
+
+    canvas.renderAll();
+    scheduleAutoSave();
+  }
+
+  // Function to apply shape settings from store to selected object
+  function applyShapeSettingsFromStore() {
+    if (!selectedObject || !canvas ||
+        (objectType !== 'rect' && objectType !== 'circle' &&
+         objectType !== 'triangle' && objectType !== 'line')) return;
+
+    const settings = get(shapeSettings);
+
+    const newProps: { [key: string]: any } = {
+      fill: settings.fill,
+      stroke: settings.stroke,
+      strokeWidth: settings.strokeWidth,
+      opacity: settings.opacity
+    };
+
+    // Add shape-specific properties
+    if (objectType === 'rect') {
+      newProps.rx = settings.cornerRadius;
+      newProps.ry = settings.cornerRadius;
     }
 
-    // Then look through all objects
-    const objects = canvas.getObjects();
-    return objects.find(obj => obj.id === id || (obj.data && obj.data.id === id)) || null;
-  }
+    // Apply shadow if enabled
+    if (settings.shadow.enabled) {
+      newProps.shadow = new fabricLib.fabric.Shadow({
+        color: settings.shadow.color,
+        blur: settings.shadow.blur,
+        offsetX: settings.shadow.offsetX,
+        offsetY: settings.shadow.offsetY
+      });
+    } else {
+      newProps.shadow = null;
+    }
 
-  // Helper function to find an object by position
-  function findObjectByPosition(left: number, top: number, tolerance: number = 5) {
-    if (!canvas) return null;
+    // Apply gradient if enabled
+    if (settings.gradient.enabled) {
+      const stops = settings.gradient.colorStops;
 
-    const objects = canvas.getObjects();
-    return objects.find(obj => {
-      return Math.abs(obj.left - left) <= tolerance &&
-             Math.abs(obj.top - top) <= tolerance;
-    }) || null;
-  }
+      if (settings.gradient.type === 'linear') {
+        // Calculate gradient coordinates based on angle
+        const angleRad = settings.gradient.angle * Math.PI / 180;
+        const cos = Math.cos(angleRad);
+        const sin = Math.sin(angleRad);
+        const halfWidth = selectedObject.width / 2;
+        const halfHeight = selectedObject.height / 2;
 
-  // ... existing code ...
+        // Calculate start and end points
+        const x1 = halfWidth - cos * halfWidth;
+        const y1 = halfHeight - sin * halfHeight;
+        const x2 = halfWidth + cos * halfWidth;
+        const y2 = halfHeight + sin * halfHeight;
 
-  // Setup canvas and bind events
-  onMount(async () => {
-    // Setup the initial canvas
-    await initializeFabricCanvas();
-
-    // Setup event handlers if canvas is initialized
-    if (canvas) {
-      setupEventHandlers();
-      setupSelectionHandlers();
-
-      // Add a custom event listener for object updates
-      if (canvasEl) {
-        // Create an event listener for updating objects
-        canvasEl.addEventListener('fabric:update-object', (event: any) => {
-          console.log('Canvas received fabric:update-object event:', event.detail);
-          const { object, updates } = event.detail;
-          if (object && updates) {
-            updateObject(object, updates);
-          }
+        // Create linear gradient
+        const gradient = new fabricLib.fabric.Gradient({
+          type: 'linear',
+          coords: { x1, y1, x2, y2 },
+          colorStops
         });
 
-        // Expose methods to the canvas element for external access
-        // This allows the app layout to find and call our methods
-        canvasEl.__svelte = {
-          updateObject,
-          clearSelection: () => canvas && canvas.discardActiveObject(),
-          groupSelection,
-          ungroupSelection,
-          alignSelection,
-          distributeSelection
-        };
-      }
+        newProps.fill = gradient;
+      } else if (settings.gradient.type === 'radial') {
+        // Create radial gradient
+        const gradient = new fabricLib.fabric.Gradient({
+          type: 'radial',
+          coords: {
+            r1: 0,
+            r2: selectedObject.width / 2,
+            x1: selectedObject.width / 2,
+            y1: selectedObject.height / 2,
+            x2: selectedObject.width / 2,
+            y2: selectedObject.height / 2
+          },
+          colorStops
+        });
 
-      // Make this instance available globally for debugging/access
-      if (window) {
-        // Cast window to any to avoid TypeScript errors
-        (window as any).canvasInstance = {
-          updateObject,
-          clearSelection: () => canvas && canvas.discardActiveObject(),
-          groupSelection: () => console.log('Group selection not implemented'),
-          ungroupSelection: () => console.log('Ungroup selection not implemented'),
-          alignSelection: () => console.log('Align selection not implemented'),
-          distributeSelection: () => console.log('Distribute selection not implemented')
-        };
+        newProps.fill = gradient;
       }
     }
 
-    // Save initial canvas
-    initialized = true;
+    // Apply all properties
+    selectedObject.set(newProps);
+    canvas.renderAll();
+    scheduleAutoSave();
+  }
+
+  // Function to apply eraser settings
+  function applyEraserSettingsFromStore() {
+    if (!canvas) return;
+
+    const settings = get(eraserSettings);
+    if (selectedTool !== 'eraser') return;
+
+    // Update internal eraser settings
+    // This could be extended with more complex eraser behavior later
+    console.log('Applying eraser settings:', settings);
+  }
+
+  // Function to handle tool events from SidebarRight
+  function handleSidebarRightEvents(event: CustomEvent) {
+    if (!canvas) return;
+
+    const { type, detail } = event;
+
+    switch (type) {
+      case 'updateTextProperty':
+        if (selectedObject && (objectType === 'text' || objectType === 'i-text')) {
+          applyTextSettingsFromStore();
+        }
+        break;
+
+      case 'updateShapeProperty':
+        if (selectedObject && ['rect', 'circle', 'triangle', 'line'].includes(objectType)) {
+          applyShapeSettingsFromStore();
+        }
+        break;
+
+      case 'updateEraserProperty':
+        applyEraserSettingsFromStore();
+        break;
+
+      case 'alignObjects':
+        alignObjects(detail);
+        break;
+
+      case 'distributeObjects':
+        distributeObjects(detail);
+        break;
+
+      case 'groupObjects':
+        groupSelectedObjects();
+        break;
+
+      case 'ungroupObjects':
+        ungroupSelectedObjects();
+        break;
+
+      case 'orderObjects':
+        reorderObjects(detail);
+        break;
+
+      case 'transformObjects':
+        transformObjects(detail);
+        break;
+
+      case 'deleteObjects':
+        deleteSelectedObjects();
+        break;
+
+      case 'duplicateObjects':
+        duplicateSelectedObjects();
+        break;
+    }
+  }
+
+  // Function to align selected objects
+  function alignObjects(alignment: string) {
+    if (!canvas) return;
+
+    const activeObject = canvas.getActiveObject();
+    if (!activeObject) return;
+
+    if (activeObject.type === 'activeSelection') {
+      // Get the group bounds
+      const bounds = activeObject.getBoundingRect();
+
+      // Align objects based on the requested alignment
+      switch (alignment) {
+        case 'left':
+          activeObject.forEachObject((obj: any) => {
+            obj.set({
+              left: bounds.left - activeObject.left + obj.left - obj.width * obj.scaleX / 2
+            });
+          });
+          break;
+
+        case 'center':
+          activeObject.forEachObject((obj: any) => {
+            obj.set({
+              left: bounds.left + bounds.width / 2 - activeObject.left
+            });
+          });
+          break;
+
+        case 'right':
+          activeObject.forEachObject((obj: any) => {
+            obj.set({
+              left: bounds.left + bounds.width - activeObject.left + obj.width * obj.scaleX / 2
+            });
+          });
+          break;
+
+        case 'top':
+          activeObject.forEachObject((obj: any) => {
+            obj.set({
+              top: bounds.top - activeObject.top - obj.height * obj.scaleY / 2
+            });
+          });
+          break;
+
+        case 'middle':
+          activeObject.forEachObject((obj: any) => {
+            obj.set({
+              top: bounds.top + bounds.height / 2 - activeObject.top
+            });
+          });
+          break;
+
+        case 'bottom':
+          activeObject.forEachObject((obj: any) => {
+            obj.set({
+              top: bounds.top + bounds.height - activeObject.top + obj.height * obj.scaleY / 2
+            });
+          });
+          break;
+      }
+
+      // Apply changes
+      activeObject.setCoords();
+      canvas.renderAll();
+      scheduleAutoSave();
+    }
+  }
+
+  // Function to distribute selected objects
+  function distributeObjects(direction: string) {
+    if (!canvas) return;
+
+    const activeObject = canvas.getActiveObject();
+    if (!activeObject || activeObject.type !== 'activeSelection') return;
+
+    const objects = activeObject._objects.sort((a: any, b: any) => {
+      return direction === 'horizontal' ? a.left - b.left : a.top - b.top;
+    });
+
+    if (objects.length < 3) return; // Need at least 3 objects to distribute
+
+    const first = objects[0];
+    const last = objects[objects.length - 1];
+
+    if (direction === 'horizontal') {
+      const totalWidth = last.left - first.left;
+      const spacing = totalWidth / (objects.length - 1);
+
+      for (let i = 1; i < objects.length - 1; i++) {
+        objects[i].set({
+          left: first.left + i * spacing
+        });
+      }
+    } else {
+      const totalHeight = last.top - first.top;
+      const spacing = totalHeight / (objects.length - 1);
+
+      for (let i = 1; i < objects.length - 1; i++) {
+        objects[i].set({
+          top: first.top + i * spacing
+        });
+      }
+    }
+
+    // Apply changes
+    activeObject.setCoords();
+    canvas.renderAll();
+    scheduleAutoSave();
+  }
+
+  // Function to group selected objects
+  function groupSelectedObjects() {
+    if (!canvas) return;
+
+    const activeObject = canvas.getActiveObject();
+    if (!activeObject || activeObject.type !== 'activeSelection') return;
+
+    // Convert selection to a group
+    const group = activeObject.toGroup();
+    canvas.setActiveObject(group);
+    canvas.renderAll();
+    scheduleAutoSave();
+  }
+
+  // Function to ungroup selected objects
+  function ungroupSelectedObjects() {
+    if (!canvas) return;
+
+    const activeObject = canvas.getActiveObject();
+    if (!activeObject || activeObject.type !== 'group') return;
+
+    // Ungroup the objects
+    const items = activeObject.getObjects();
+    activeObject.destroy();
+    canvas.remove(activeObject);
+
+    // Activate all the individual objects
+    canvas.discardActiveObject();
+    const selection = new fabricLib.fabric.ActiveSelection(items, { canvas });
+    canvas.setActiveObject(selection);
+    canvas.renderAll();
+    scheduleAutoSave();
+  }
+
+  // Function to reorder objects (front, forward, backward, back)
+  function reorderObjects(order: string) {
+    if (!canvas) return;
+
+    const activeObject = canvas.getActiveObject();
+    if (!activeObject) return;
+
+    switch (order) {
+      case 'front':
+        activeObject.bringToFront();
+        break;
+
+      case 'forward':
+        activeObject.bringForward();
+        break;
+
+      case 'backward':
+        activeObject.sendBackwards();
+        break;
+
+      case 'back':
+        activeObject.sendToBack();
+        break;
+    }
+
+    canvas.renderAll();
+    scheduleAutoSave();
+  }
+
+  // Function to transform objects (flip, rotate)
+  function transformObjects(transform: string) {
+    if (!canvas) return;
+
+    const activeObject = canvas.getActiveObject();
+    if (!activeObject) return;
+
+    switch (transform) {
+      case 'flipX':
+        activeObject.set('flipX', !activeObject.flipX);
+        break;
+
+      case 'flipY':
+        activeObject.set('flipY', !activeObject.flipY);
+        break;
+
+      case 'rotate90':
+        activeObject.rotate((activeObject.angle || 0) + 90);
+        break;
+
+      case 'rotate-90':
+        activeObject.rotate((activeObject.angle || 0) - 90);
+        break;
+    }
+
+    activeObject.setCoords();
+    canvas.renderAll();
+    scheduleAutoSave();
+  }
+
+  // Function to delete selected objects
+  function deleteSelectedObjects() {
+    if (!canvas) return;
+
+    const activeObject = canvas.getActiveObject();
+    if (!activeObject) return;
+
+    canvas.remove(activeObject);
+    canvas.discardActiveObject();
+    canvas.renderAll();
+    scheduleAutoSave();
+  }
+
+  // Function to duplicate selected objects
+  function duplicateSelectedObjects() {
+    if (!canvas) return;
+
+    const activeObject = canvas.getActiveObject();
+    if (!activeObject) return;
+
+    // Clone the object(s)
+    activeObject.clone((cloned: any) => {
+      canvas.discardActiveObject();
+
+      // If it's a regular object
+      if (cloned.type !== 'activeSelection') {
+        // Offset it slightly
+        cloned.set({
+          left: cloned.left + 10,
+          top: cloned.top + 10,
+          evented: true,
+        });
+        canvas.add(cloned);
+        canvas.setActiveObject(cloned);
+      } else {
+        // If it's multiple objects
+        cloned.canvas = canvas;
+        cloned.forEachObject((obj: any) => {
+          obj.set({
+            left: obj.left + 10,
+            top: obj.top + 10,
+            evented: true,
+          });
+          canvas.add(obj);
+        });
+        canvas.setActiveObject(cloned);
+      }
+
+      canvas.renderAll();
+      scheduleAutoSave();
+    });
+  }
+
+  // Update object selection state
+  }
+
+  // Function to fit objects to screen
+  function fitToScreen() {
+    if (!canvas) return;
+
+    const objects = canvas.getObjects();
+    if (objects.length === 0) return;
+
+    // Calculate bounds of all objects
+    const bounds = calculateContentBounds(objects);
+
+    // Calculate zoom level to fit all content
+    const canvasWidth = canvas.width;
+    const canvasHeight = canvas.height;
+    const contentWidth = bounds.maxX - bounds.minX;
+    const contentHeight = bounds.maxY - bounds.minY;
+
+    // Add padding
+    const padding = 40;
+    const zoomX = canvasWidth / (contentWidth + padding * 2);
+    const zoomY = canvasHeight / (contentHeight + padding * 2);
+
+    // Use the smaller zoom level to ensure everything fits
+    const newZoom = Math.min(zoomX, zoomY, 1);
+
+    // Set the zoom
+    setZoom(newZoom);
+
+    // Pan to center the content
+    const centerX = (bounds.minX + bounds.maxX) / 2;
+    const centerY = (bounds.minY + bounds.maxY) / 2;
+
+    canvas.setViewportTransform([
+      newZoom, 0, 0, newZoom,
+      canvasWidth / 2 - centerX * newZoom,
+      canvasHeight / 2 - centerY * newZoom
+    ]);
+
+    canvas.renderAll();
+  }
+
+  // Subscribe to store changes
+  let textSettingsUnsubscribe = textSettings.subscribe(() => {
+    if (selectedObject && (objectType === 'text' || objectType === 'i-text')) {
+      applyTextSettingsFromStore();
+    }
   });
+
+  let shapeSettingsUnsubscribe = shapeSettings.subscribe(() => {
+    if (selectedObject && ['rect', 'circle', 'triangle', 'line'].includes(objectType)) {
+      applyShapeSettingsFromStore();
+    }
+  });
+
+  let eraserSettingsUnsubscribe = eraserSettings.subscribe(() => {
+    if (selectedTool === 'eraser') {
+      applyEraserSettingsFromStore();
+    }
+  });
+
+  let activeToolUnsubscribe = activeTool.subscribe((tool) => {
+    if (tool !== selectedTool) {
+      setTool(tool as Tool);
+    }
+  });
+
+  // Clean up subscriptions
+  onDestroy(() => {
+    textSettingsUnsubscribe();
+    shapeSettingsUnsubscribe();
+    eraserSettingsUnsubscribe();
+    activeToolUnsubscribe();
+  });
+
+  // ... keep existing code ...
 </script>
 
 <svelte:head>

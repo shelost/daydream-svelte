@@ -2,75 +2,130 @@
   import { createEventDispatcher } from 'svelte';
   import { page } from '$app/stores';
   import { drawingSettings, activeDrawingId } from '$lib/stores/drawingStore';
-  import ColorPickerPopup from './ColorPickerPopup.svelte';
+  import { getStyleStoreForType } from '$lib/stores/styleStore';
   import { onMount } from 'svelte';
   import { get } from 'svelte/store';
+  import { selectionStore } from '$lib/stores/selectionStore';
 
-  // Define props
-  export let currentPageId: string;
-  export let directDrawingContent: any = null; // Add a prop to receive direct drawing content
+  // Import tool settings components
+  import PenSettings from './settings/PenSettings.svelte';
+  import TextSettings from './settings/TextSettings.svelte';
+  import ShapeSettings from './settings/ShapeSettings.svelte';
+  import SelectionSettings from './settings/SelectionSettings.svelte';
+  import EraserSettings from './settings/EraserSettings.svelte';
 
-  // Set up event dispatcher
+  // For backward compatibility, we still accept props
+  // But we prioritize the selectionStore values
+  export let selectedObject: any = null;
+  export let selectedObjectType: string | null = null;
+  export let selectedObjects: any[] = [];
+  export let currentPageId: string = '';
+  export let directDrawingContent: any = null;
+
+  // Create event dispatcher
   const dispatch = createEventDispatcher();
 
-  // Use the store values instead of props
-  $: isDrawingPage = $page.route.id?.includes('/drawing/');
-
-  // Variables to store drawing content
+  // Track drawing content for export
   let drawingContent: any = null;
   let drawingTitle = 'drawing';
 
-  // SVG export options
-  let svgOptimizeViewBox = true;
-  let svgDecimalPrecision = 2;
-  let svgIncludeMetadata = true;
-  let svgCustomTitle = '';
+  // UI state
   let svgExportExpanded = false;
+  let svgCustomTitle = '';
+  let svgDecimalPrecision = 2;
+  let svgOptimizeViewBox = true;
+  let svgIncludeMetadata = true;
 
-  // Status message for SVG export
-  let svgExportStatus: {
-    visible: boolean;
-    type: 'info' | 'success' | 'error' | 'working';
-    message: string;
-    timeout?: number;
-  } = {
+  // Export status message
+  let svgExportStatus = {
     visible: false,
-    type: 'info',
-    message: ''
+    message: '',
+    type: 'info', // 'info', 'success', 'error', 'working'
+    timeoutId: null as number | null
   };
 
-  // Use direct content if available, fallback to loaded content
-  $: {
-    if (directDrawingContent) {
-      console.log('Using direct drawing content');
-      drawingContent = directDrawingContent;
+  // Show status message
+  function showStatus(message: string, type: 'info' | 'success' | 'error' | 'working' = 'info', duration = 0) {
+    svgExportStatus = {
+      visible: true,
+      message,
+      type,
+      timeoutId: svgExportStatus.timeoutId
+    };
+
+    // Clear any existing timeout
+    if (svgExportStatus.timeoutId) {
+      clearTimeout(svgExportStatus.timeoutId);
+    }
+
+    // Set up a new timeout if duration > 0
+    if (duration > 0) {
+      const timeoutId = window.setTimeout(() => {
+    svgExportStatus = {
+          ...svgExportStatus,
+          visible: false,
+          timeoutId: null
+        };
+      }, duration);
+
+      svgExportStatus = {
+        ...svgExportStatus,
+        timeoutId
+      };
     }
   }
 
-  // Show a status message with optional timeout
-  function showStatus(message: string, type: 'info' | 'success' | 'error' | 'working', timeout?: number) {
-    // Clear any existing timeout
-    if (svgExportStatus.timeout) {
-      clearTimeout(svgExportStatus.timeout);
-    }
-
-    // Set the status
+  // Hide status message
+  function hideStatus() {
     svgExportStatus = {
-      visible: true,
-      type,
-      message,
-      timeout: timeout ? setTimeout(() => {
-        svgExportStatus.visible = false;
-      }, timeout) : undefined
+      ...svgExportStatus,
+      visible: false
     };
   }
 
-  // Hide the status message
-  function hideStatus() {
-    if (svgExportStatus.timeout) {
-      clearTimeout(svgExportStatus.timeout);
-    }
-    svgExportStatus.visible = false;
+  // Check if we're on a drawing page
+  $: isDrawingPage = $page && $page.route && $page.route.id
+    ? $page.route.id.includes('/drawing/')
+    : false;
+
+  // Sync store with props (for backward compatibility)
+  $: {
+    // Subscribe to selection store changes
+    const unsubscribe = selectionStore.subscribe(state => {
+      // Only update if the values have actually changed
+      if (selectedObject !== state.selectedObject) {
+        selectedObject = state.selectedObject;
+      }
+
+      if (selectedObjectType !== state.selectedObjectType) {
+        selectedObjectType = state.selectedObjectType;
+      }
+
+      if (selectedObjects !== state.selectedObjects) {
+        selectedObjects = state.selectedObjects;
+      }
+
+      if (currentPageId !== state.currentPageId && state.currentPageId) {
+        currentPageId = state.currentPageId;
+      }
+    });
+
+    // Clean up subscription on component unmount
+    onMount(() => {
+      return unsubscribe;
+    });
+  }
+
+  // Update selection store from props (for backward compatibility)
+  $: if (selectedObject !== undefined || selectedObjectType !== undefined ||
+         selectedObjects !== undefined || currentPageId !== undefined) {
+    selectionStore.update(state => ({
+      ...state,
+      selectedObject: selectedObject !== undefined ? selectedObject : state.selectedObject,
+      selectedObjectType: selectedObjectType !== undefined ? selectedObjectType : state.selectedObjectType,
+      selectedObjects: selectedObjects !== undefined ? selectedObjects : state.selectedObjects,
+      currentPageId: currentPageId !== undefined ? currentPageId : state.currentPageId
+    }));
   }
 
   // Function to download SVG
@@ -280,6 +335,44 @@
     activeDrawingId.set(currentPageId);
   }
 
+  // Handle events from tool setting components
+  function handleObjectUpdate(event: CustomEvent) {
+    console.log('SidebarRight: Received object update:', event.detail);
+
+    const { object, updates } = event.detail;
+
+    if (!object || !updates) {
+      console.warn('SidebarRight: Missing object or updates in event');
+      return;
+    }
+
+    // Forward the update event to the parent component
+    dispatch('objectUpdate', {
+      object: object, // Use the original object from the event
+      updates: updates
+    });
+  }
+
+  function handleClearSelection() {
+    dispatch('clearSelection');
+  }
+
+  function handleGroupSelection() {
+    dispatch('groupSelection');
+  }
+
+  function handleUngroupSelection() {
+    dispatch('ungroupSelection');
+  }
+
+  function handleAlignSelection(event: CustomEvent) {
+    dispatch('alignSelection', event.detail);
+  }
+
+  function handleDistributeSelection(event: CustomEvent) {
+    dispatch('distributeSelection', event.detail);
+  }
+
   // Add event listener for page changes
   onMount(() => {
     // Immediately load the content on mount if we have an activeDrawingId
@@ -290,291 +383,78 @@
     console.log('SidebarRight mounted, activeDrawingId:', $activeDrawingId);
   });
 
-  // Color picker state
-  let selectedColorHex = $drawingSettings.strokeColor;
-  let hue = 0;
-  let saturation = 100;
-  let lightness = 50;
-  let alpha = 1;
-  let rgbValues = { r: 0, g: 0, b: 0 };
-  let hslValues = { h: 0, s: 100, l: 50 };
-  let colorPickerOpen = false;
-  let colorDisplayElement: HTMLElement | null = null;
+  // Determine what settings panel to show based on mode and selection
+  $: toolToShow = (() => {
+    // Use selectionStore values for determining what to show
+    const storeState = get(selectionStore);
+    const currentObjectType = storeState.selectedObjectType;
+    const hasSelectedObject = storeState.selectedObject !== null;
+    const objectsCount = storeState.selectedObjects?.length || 0;
 
-  // Initialize RGB and HSL from current color
-  $: {
-    if (selectedColorHex) {
-      updateColorValues(selectedColorHex);
-    }
-  }
+    // Add more detailed logging to understand the state
+    console.log('SidebarRight determining toolToShow:', {
+      isDrawingPage,
+      selectedObject: hasSelectedObject ? 'exists' : 'none',
+      currentObjectType,
+      selectedObjectsCount: objectsCount,
+      currentDrawingTool: $drawingSettings.selectedTool
+    });
 
-  // Update RGB and HSL values from hex
-  function updateColorValues(hex: string) {
-    // Convert hex to RGB
-    const r = parseInt(hex.slice(1, 3), 16);
-    const g = parseInt(hex.slice(3, 5), 16);
-    const b = parseInt(hex.slice(5, 7), 16);
-
-    rgbValues = { r, g, b };
-
-    // Convert RGB to HSL
-    const rNorm = r / 255;
-    const gNorm = g / 255;
-    const bNorm = b / 255;
-
-    const max = Math.max(rNorm, gNorm, bNorm);
-    const min = Math.min(rNorm, gNorm, bNorm);
-    const delta = max - min;
-
-    let h = 0;
-    let s = 0;
-    let l = (max + min) / 2;
-
-    if (delta !== 0) {
-      s = l > 0.5 ? delta / (2 - max - min) : delta / (max + min);
-
-      if (max === rNorm) {
-        h = (gNorm - bNorm) / delta + (gNorm < bNorm ? 6 : 0);
-      } else if (max === gNorm) {
-        h = (bNorm - rNorm) / delta + 2;
-      } else {
-        h = (rNorm - gNorm) / delta + 4;
+    // ALWAYS prioritize selected objects first, regardless of page type
+    if (hasSelectedObject && currentObjectType) {
+      console.log('Object is selected, showing object-specific settings');
+      if (currentObjectType === 'text' || currentObjectType?.includes('text')) {
+        console.log('→ Showing TEXT settings');
+        return 'text';
       }
-
-      h = Math.round(h * 60);
+      if (['rect', 'rectangle', 'circle', 'triangle', 'polygon'].includes(currentObjectType)) {
+        console.log('→ Showing SHAPE settings');
+        return 'shape';
+      }
+      if (['line', 'path'].includes(currentObjectType)) {
+        console.log('→ Showing LINE settings');
+        return 'line';
+      }
+      if (currentObjectType === 'image') {
+        console.log('→ Showing IMAGE settings');
+        return 'image';
+      }
     }
 
-    s = Math.round(s * 100);
-    l = Math.round(l * 100);
-
-    hslValues = { h, s, l };
-    hue = h;
-    saturation = s;
-    lightness = l;
-  }
-
-  // Toggle color picker
-  function toggleColorPicker() {
-    colorPickerOpen = !colorPickerOpen;
-  }
-
-  // Convert HSL to hex
-  function hslToHex(h: number, s: number, l: number): string {
-    h /= 360;
-    s /= 100;
-    l /= 100;
-
-    let r, g, b;
-
-    if (s === 0) {
-      r = g = b = l;
-    } else {
-      const hue2rgb = (p: number, q: number, t: number) => {
-        if (t < 0) t += 1;
-        if (t > 1) t -= 1;
-        if (t < 1/6) return p + (q - p) * 6 * t;
-        if (t < 1/2) return q;
-        if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
-        return p;
-      };
-
-      const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
-      const p = 2 * l - q;
-
-      r = hue2rgb(p, q, h + 1/3);
-      g = hue2rgb(p, q, h);
-      b = hue2rgb(p, q, h - 1/3);
+    // Then check for multiple selected objects
+    if (objectsCount > 0) {
+      console.log('→ Showing SELECTION settings for multiple objects');
+      return 'selection';
     }
 
-    const toHex = (x: number) => {
-      const hex = Math.round(x * 255).toString(16);
-      return hex.length === 1 ? '0' + hex : hex;
-    };
-
-    return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
-  }
-
-  // Convert RGB to hex
-  function rgbToHex(r: number, g: number, b: number): string {
-    const toHex = (x: number) => {
-      const hex = Math.max(0, Math.min(255, Math.round(x))).toString(16);
-      return hex.length === 1 ? '0' + hex : hex;
-    };
-
-    return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
-  }
-
-  // Update color from hex input
-  function updateFromHex() {
-    // Validate hex format
-    const isValidHex = /^#[0-9A-Fa-f]{6}$/.test(selectedColorHex);
-
-    if (isValidHex) {
-      updateColorValues(selectedColorHex);
-      setColor(selectedColorHex);
+    // Drawing page specific logic (only if no object is selected)
+    if (isDrawingPage) {
+      if ($drawingSettings.selectedTool === 'select' && $drawingSettings.selectedStrokes.length > 0) {
+        console.log('→ Showing SELECTION settings for strokes');
+        return 'selection';
+      }
+      console.log('→ Showing tool settings for:', $drawingSettings.selectedTool);
+      return $drawingSettings.selectedTool; // 'pen', 'eraser', 'pan', etc.
     }
-  }
 
-  // Update color from HSL values
-  function updateFromHSL() {
-    const newHex = hslToHex(hslValues.h, hslValues.s, hslValues.l);
-    selectedColorHex = newHex;
-    rgbValues = {
-      r: parseInt(newHex.slice(1, 3), 16),
-      g: parseInt(newHex.slice(3, 5), 16),
-      b: parseInt(newHex.slice(5, 7), 16)
-    };
-    setColor(newHex);
-  }
+    // No object selected, show current tool settings
+    console.log('→ No selection, showing tool settings for:', $drawingSettings.selectedTool);
+    return $drawingSettings.selectedTool; // Tool being used but nothing selected
+  })();
 
-  // Update color from RGB values
-  function updateFromRGB() {
-    const newHex = rgbToHex(rgbValues.r, rgbValues.g, rgbValues.b);
-    selectedColorHex = newHex;
-    updateColorValues(newHex);
-    setColor(newHex);
-  }
+  // Determine shape type for shape settings
+  $: shapeType = selectedObjectType === 'rect' || selectedObjectType === 'rectangle' ? 'rect' :
+                  selectedObjectType === 'circle' ? 'circle' :
+                  selectedObjectType === 'triangle' ? 'triangle' :
+                  selectedObjectType === 'polygon' ? 'polygon' : 'rect';
 
-  // Update from color square
-  function handleColorSquareClick(e: MouseEvent) {
-    const rect = (e.target as HTMLElement).getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-
-    const s = Math.round((x / rect.width) * 100);
-    const l = Math.round(100 - (y / rect.height) * 100);
-
-    hslValues.s = Math.max(0, Math.min(100, s));
-    hslValues.l = Math.max(0, Math.min(100, l));
-    saturation = hslValues.s;
-    lightness = hslValues.l;
-
-    updateFromHSL();
-  }
-
-  // Update from hue slider
-  function updateHue(h: number) {
-    hslValues.h = h;
-    updateFromHSL();
-  }
-
-  // Available preset colors
-  const presetColors = [
-    '#000000', // Black
-    '#FFFFFF', // White
-    '#FF0000', // Red
-    '#00FF00', // Green
-    '#0000FF', // Blue
-    '#FFFF00', // Yellow
-    '#FF00FF', // Magenta
-    '#00FFFF', // Cyan
-  ];
-
-  // Function to handle tool changes
-  function setTool(tool: 'pen' | 'select' | 'eraser' | 'pan') {
-    drawingSettings.update(settings => ({
-      ...settings,
-      selectedTool: tool,
-      // Clear selection when switching away from select tool
-      ...(tool !== 'select' && { selectedStrokes: [] })
-    }));
-  }
-
-  // Function to handle color changes
-  function setColor(color: string) {
-    selectedColorHex = color;
-    drawingSettings.update(settings => ({
-      ...settings,
-      strokeColor: color
-    }));
-  }
-
-  // Function to handle size changes
-  function setSize(size: number) {
-    drawingSettings.update(settings => ({
-      ...settings,
-      strokeSize: size
-    }));
-  }
-
-  // Function to handle opacity changes
-  function setOpacity(value: number) {
-    drawingSettings.update(settings => ({
-      ...settings,
-      opacity: value
-    }));
-  }
-
-  // Function to handle thinning changes
-  function setThinning(value: number) {
-    drawingSettings.update(settings => ({
-      ...settings,
-      thinning: value
-    }));
-  }
-
-  // Function to handle smoothing changes
-  function setSmoothing(value: number) {
-    drawingSettings.update(settings => ({
-      ...settings,
-      smoothing: value
-    }));
-  }
-
-  // Function to handle streamline changes
-  function setStreamline(value: number) {
-    drawingSettings.update(settings => ({
-      ...settings,
-      streamline: value
-    }));
-  }
-
-  // Function to toggle pressure sensitivity
-  function togglePressure() {
-    drawingSettings.update(settings => ({
-      ...settings,
-      showPressure: !settings.showPressure
-    }));
-  }
-
-  // Function to toggle cap start
-  function toggleCapStart() {
-    drawingSettings.update(settings => ({
-      ...settings,
-      capStart: !settings.capStart
-    }));
-  }
-
-  // Function to toggle cap end
-  function toggleCapEnd() {
-    drawingSettings.update(settings => ({
-      ...settings,
-      capEnd: !settings.capEnd
-    }));
-  }
-
-  // Function to handle taper start changes
-  function setTaperStart(value: number) {
-    drawingSettings.update(settings => ({
-      ...settings,
-      taperStart: value
-    }));
-  }
-
-  // Function to handle taper end changes
-  function setTaperEnd(value: number) {
-    drawingSettings.update(settings => ({
-      ...settings,
-      taperEnd: value
-    }));
-  }
-
-  // Function to clear selection
-  function clearSelection() {
-    drawingSettings.update(settings => ({
-      ...settings,
-      selectedStrokes: []
-    }));
+  // Add explicit reactivity to log when selectedObjectType changes
+  $: {
+    if (selectedObjectType) {
+      console.log('SidebarRight: selectedObjectType changed to:', selectedObjectType);
+    } else if (selectedObjectType === null) {
+      console.log('SidebarRight: selectedObjectType cleared');
+    }
   }
 </script>
 
@@ -582,200 +462,66 @@
   <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
 </svelte:head>
 
-{#if isDrawingPage}
 <aside class="sidebar-right">
   <div class="sidebar-header">
     <h2>Tool Settings</h2>
   </div>
 
   <div class="sidebar-content">
-    {#if $drawingSettings.selectedTool === 'select' && $drawingSettings.selectedStrokes.length > 0}
-      <section class="sidebar-section selection-section">
-        <h3>Selection</h3>
-        <div class="selection-info">
-          <p>{$drawingSettings.selectedStrokes.length} stroke{$drawingSettings.selectedStrokes.length > 1 ? 's' : ''} selected</p>
-          <button class="clear-selection-btn" on:click={clearSelection}>
-            <span class="material-icons">clear</span>
-            Clear selection
-          </button>
-        </div>
-      </section>
-    {/if}
-
-    {#if $drawingSettings.selectedTool === 'pen'}
-      <section class="sidebar-section colors-section">
-        <h3>Colors</h3>
-        <div class="color-picker-container">
-          <!-- Current color display and hex input - always visible -->
-          <div class="current-color-row">
-            <div
-              class="current-color-display"
-              bind:this={colorDisplayElement}
-              style="background-color: {selectedColorHex}; border: 1px solid {selectedColorHex === '#FFFFFF' ? '#ddd' : 'transparent'};"
-              on:click={toggleColorPicker}
-              title="Click to open color picker"
-            ></div>
-            <div class="color-input-container">
-              <input
-                type="text"
-                class="hex-input"
-                bind:value={selectedColorHex}
-                on:blur={updateFromHex}
-                on:keydown={(e) => e.key === 'Enter' && updateFromHex()}
-              />
-            </div>
-          </div>
-
-          <!-- Color picker popup -->
-          <ColorPickerPopup
-            open={colorPickerOpen}
-            anchor={colorDisplayElement}
-            hue={hue}
-            saturation={saturation}
-            lightness={lightness}
-            rgbValues={rgbValues}
-            hslValues={hslValues}
-            presetColors={presetColors}
-            selectedColorHex={selectedColorHex}
-            onHueChange={updateHue}
-            onColorSquareClick={handleColorSquareClick}
-            onRgbChange={updateFromRGB}
-            onHslChange={updateFromHSL}
-            onColorSelect={setColor}
-          />
-        </div>
-      </section>
-
-      <section class="sidebar-section sliders-section">
-        <h3>Size & Opacity</h3>
-        <div class="slider-row">
-          <label for="stroke-size">Size</label>
-          <input
-            id="stroke-size"
-            type="range"
-            min="1"
-            max="20"
-            step="1"
-            bind:value={$drawingSettings.strokeSize}
-            on:input={() => setSize($drawingSettings.strokeSize)}
-          />
-          <span class="value">{$drawingSettings.strokeSize}px</span>
-        </div>
-
-        <div class="slider-row">
-          <label for="opacity">Opacity</label>
-          <input
-            id="opacity"
-            type="range"
-            min="0.1"
-            max="1"
-            step="0.05"
-            bind:value={$drawingSettings.opacity}
-            on:input={() => setOpacity($drawingSettings.opacity)}
-          />
-          <span class="value">{Math.round($drawingSettings.opacity * 100)}%</span>
-        </div>
-      </section>
-
-      <section class="sidebar-section advanced-section">
+    <!-- Debug info - only visible in development mode -->
+    {#if import.meta.env.DEV}
+      <section class="sidebar-section debug-info">
         <details>
-          <summary>Advanced Stroke Settings</summary>
-          <div class="advanced-options">
-            <div class="slider-row">
-              <label for="thinning">Thinning</label>
-              <input
-                id="thinning"
-                type="range"
-                min="-1"
-                max="1"
-                step="0.1"
-                bind:value={$drawingSettings.thinning}
-                on:input={() => setThinning($drawingSettings.thinning)}
-              />
-              <span class="value">{$drawingSettings.thinning.toFixed(1)}</span>
-            </div>
-
-            <div class="slider-row">
-              <label for="smoothing">Smoothing</label>
-              <input
-                id="smoothing"
-                type="range"
-                min="0"
-                max="1"
-                step="0.1"
-                bind:value={$drawingSettings.smoothing}
-                on:input={() => setSmoothing($drawingSettings.smoothing)}
-              />
-              <span class="value">{$drawingSettings.smoothing.toFixed(1)}</span>
-            </div>
-
-            <div class="slider-row">
-              <label for="streamline">Streamline</label>
-              <input
-                id="streamline"
-                type="range"
-                min="0"
-                max="1"
-                step="0.1"
-                bind:value={$drawingSettings.streamline}
-                on:input={() => setStreamline($drawingSettings.streamline)}
-              />
-              <span class="value">{$drawingSettings.streamline.toFixed(1)}</span>
-            </div>
-
-            <div class="checkbox-row">
-              <label>
-                <input type="checkbox" bind:checked={$drawingSettings.showPressure} on:change={togglePressure} />
-                Pressure Sensitivity
-              </label>
-            </div>
-
-            <div class="checkbox-row">
-              <label>
-                <input type="checkbox" bind:checked={$drawingSettings.capStart} on:change={toggleCapStart} />
-                Cap Start
-              </label>
-            </div>
-
-            <div class="checkbox-row">
-              <label>
-                <input type="checkbox" bind:checked={$drawingSettings.capEnd} on:change={toggleCapEnd} />
-                Cap End
-              </label>
-            </div>
-
-            <div class="slider-row">
-              <label for="taper-start">Taper Start</label>
-              <input
-                id="taper-start"
-                type="range"
-                min="0"
-                max="100"
-                step="5"
-                bind:value={$drawingSettings.taperStart}
-                on:input={() => setTaperStart($drawingSettings.taperStart)}
-              />
-              <span class="value">{$drawingSettings.taperStart}</span>
-            </div>
-
-            <div class="slider-row">
-              <label for="taper-end">Taper End</label>
-              <input
-                id="taper-end"
-                type="range"
-                min="0"
-                max="100"
-                step="5"
-                bind:value={$drawingSettings.taperEnd}
-                on:input={() => setTaperEnd($drawingSettings.taperEnd)}
-              />
-              <span class="value">{$drawingSettings.taperEnd}</span>
-            </div>
-          </div>
+          <summary>Debug Info</summary>
+          <div class="debug-values">
+            <p>Tool: <strong>{toolToShow}</strong></p>
+            <p>Object Type: <strong>{selectedObjectType || 'none'}</strong></p>
+            <p>Has Object: <strong>{selectedObject ? 'yes' : 'no'}</strong></p>
+            <p>Objects Count: <strong>{selectedObjects?.length || 0}</strong></p>
+        </div>
         </details>
       </section>
     {/if}
 
+    <!-- Dynamic Tool Settings -->
+    {#if selectedObjectType === 'pen'}
+      <PenSettings />
+    {:else if selectedObjectType === 'text'}
+      <TextSettings selectedObject={selectedObject} on:update={handleObjectUpdate} />
+    {:else if selectedObjectType === 'shape'}
+      <ShapeSettings selectedObject={selectedObject} shapeType={shapeType} on:update={handleObjectUpdate} />
+    {:else if selectedObjectType === 'selection'}
+      <SelectionSettings
+        selectedObjects={selectedObjects}
+        selectionType={isDrawingPage ? 'drawing' : 'canvas'}
+        on:clearSelection={handleClearSelection}
+        on:groupSelection={handleGroupSelection}
+        on:ungroupSelection={handleUngroupSelection}
+        on:alignSelection={handleAlignSelection}
+        on:distributeSelection={handleDistributeSelection}
+        on:updateSelection={handleObjectUpdate}
+      />
+    {:else if selectedObjectType === 'eraser'}
+      <EraserSettings />
+    {:else if selectedObjectType === 'pan'}
+      <section class="sidebar-section">
+        <h3>Pan Tool</h3>
+        <div class="info-text">
+          <span class="material-icons">info</span>
+          <p>Click and drag to pan the canvas. Use mouse wheel to zoom in and out.</p>
+        </div>
+      </section>
+    {:else}
+      <section class="sidebar-section">
+        <h3>Tool Settings</h3>
+        <div class="info-text">
+          <span class="material-icons">info</span>
+          <p>Select a tool or object to see its settings.</p>
+        </div>
+      </section>
+    {/if}
+
+    <!-- Keyboard Shortcuts -->
     <section class="sidebar-section keyboard-shortcuts">
       <details>
         <summary>Keyboard Shortcuts</summary>
@@ -791,6 +537,14 @@
           <div class="shortcut-item">
             <span class="key">E</span>
             <span class="description">Eraser Tool</span>
+          </div>
+          <div class="shortcut-item">
+            <span class="key">T</span>
+            <span class="description">Text Tool</span>
+          </div>
+          <div class="shortcut-item">
+            <span class="key">R</span>
+            <span class="description">Rectangle Tool</span>
           </div>
           <div class="shortcut-item">
             <span class="key">Space</span>
@@ -824,7 +578,8 @@
       </details>
     </section>
 
-    <!-- New Export Section -->
+    <!-- Export Section (only for drawing pages) -->
+    {#if isDrawingPage}
     <section class="sidebar-section export-section">
       <h3>Export</h3>
 
@@ -919,21 +674,13 @@
         {/if}
       </div>
     </section>
+    {/if}
   </div>
 </aside>
-{:else}
-<!-- Empty sidebar or placeholder message when not in drawing mode -->
-<aside class="sidebar-right sidebar-right-empty">
-  <div class="sidebar-placeholder">
-    <span class="material-icons">info</span>
-    <p>Select a drawing to see tool options</p>
-  </div>
-</aside>
-{/if}
 
 <style lang="scss">
   .sidebar-right {
-    background-color: var(--sidebar-bg);
+
     border-radius: $border-radius-lg;
     box-sizing: border-box;
     width: 220px;
@@ -941,8 +688,9 @@
     overflow-y: auto;
     display: flex;
     flex-direction: column;
-    border: 1px solid var(--border-color);
-    box-shadow: -8px 18px 32px rgba(black, 0.8), inset -2px -6px 12px rgba(black, 0.03);
+   //background-color: var(--sidebar-bg);
+    //border: 1px solid var(--border-color);
+    //box-shadow: -8px 18px 32px rgba(black, 0.8), inset -2px -6px 12px rgba(black, 0.03);
 
     &::-webkit-scrollbar {
       width: 8px;
@@ -951,27 +699,6 @@
     &::-webkit-scrollbar-thumb {
       background-color: rgba(0, 0, 0, 0.2);
       border-radius: 4px;
-    }
-  }
-
-  .sidebar-right-empty {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-
-  .sidebar-placeholder {
-    text-align: center;
-    color: var(--text-color);
-    padding: 1rem;
-
-    .material-icons {
-      font-size: 48px;
-      margin-bottom: 1rem;
-    }
-
-    p {
-      font-size: 14px;
     }
   }
 
@@ -997,70 +724,63 @@
     gap: 24px;
   }
 
-  .selection-info {
+  .info-text {
     display: flex;
-    flex-direction: column;
+    align-items: flex-start;
     gap: 8px;
-  }
-
-  .clear-selection-btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 4px;
+    padding: 10px;
     background-color: var(--hover-bg);
-    border: 1px solid var(--border-color);
     border-radius: $border-radius-md;
-    padding: 6px 12px;
-    font-size: 12px;
-    cursor: pointer;
-    transition: all 0.2s;
-    color: var(--text-color);
-
-    &:hover {
-      background-color: var(--tool-hover-bg);
-    }
+    margin-top: 8px;
 
     .material-icons {
       font-size: 16px;
+      color: var(--text-color);
+      opacity: 0.7;
+    }
+
+    p {
+      font-size: 12px;
+      margin: 0;
+      color: var(--text-color);
+      opacity: 0.9;
+      line-height: 1.4;
     }
   }
 
-  // Color picker specific styles
-  .current-color-row {
+  // Keyboard shortcuts styles
+  .shortcuts-list {
+    padding: 8px;
+    background-color: var(--hover-bg);
+    border-radius: $border-radius-md;
+    margin-top: 8px;
+  }
+
+  .shortcut-item {
     display: flex;
     align-items: center;
-    gap: 8px;
-  }
-
-  .current-color-display {
-    width: 40px;
-    height: 40px;
-    border-radius: $border-radius-sm;
-    border: 1px solid var(--border-color);
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-    cursor: pointer;
-  }
-
-  .color-input-container {
-    flex: 1;
-  }
-
-  .hex-input {
-    width: 100%;
-    padding: 8px;
-    border: 1px solid var(--border-color);
-    border-radius: $border-radius-sm;
-    font-family: monospace;
-    font-size: 14px;
-    text-transform: uppercase;
-    background-color: var(--card-bg);
+    justify-content: space-between;
+    padding: 6px 0;
+    font-size: 12px;
     color: var(--text-color);
+    border-bottom: 1px solid rgba(var(--border-color), 0.5);
 
-    &:focus {
-      outline: none;
-      border-color: var(--primary-color);
-      box-shadow: 0 0 0 2px rgba(var(--primary-color), 0.2);
+    &:last-child {
+      border-bottom: none;
+    }
+
+    .key {
+    font-family: monospace;
+      background-color: var(--hover-bg);
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-weight: 600;
+      font-size: 11px;
+    color: var(--text-color);
+    }
+
+    .description {
+      color: var(--text-color);
     }
   }
 
@@ -1152,42 +872,6 @@
     to { transform: rotate(360deg); }
   }
 
-  // Keyboard shortcuts styles
-  .shortcuts-list {
-    padding: 8px;
-    background-color: var(--hover-bg);
-    border-radius: $border-radius-md;
-    margin-top: 8px;
-  }
-
-  .shortcut-item {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 6px 0;
-    font-size: 12px;
-    color: var(--text-color);
-    border-bottom: 1px solid rgba(var(--border-color), 0.5);
-
-    &:last-child {
-      border-bottom: none;
-    }
-
-    .key {
-      font-family: monospace;
-      background-color: var(--hover-bg);
-      padding: 2px 6px;
-      border-radius: 4px;
-      font-weight: 600;
-      font-size: 11px;
-      color: var(--text-color);
-    }
-
-    .description {
-      color: var(--text-color);
-    }
-  }
-
   // SVG Export options
   .svg-export-options {
     margin: 8px 0;
@@ -1225,10 +909,52 @@
     }
   }
 
+  .checkbox-row {
+    display: flex;
+    align-items: center;
+    margin: 8px 0;
+
+    label {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      color: var(--text-color);
+    }
+  }
+
   .info-tooltip {
     color: var(--text-color);
     opacity: 0.6;
     cursor: help;
     margin-left: 4px;
+  }
+
+  /* Add styles for debug info */
+  .debug-info {
+    padding: 0;
+    margin-bottom: 16px;
+
+    details {
+      summary {
+        font-size: 12px;
+        padding: 8px;
+        cursor: pointer;
+        background-color: rgba(255, 235, 59, 0.1);
+        border-radius: 4px;
+      }
+
+      .debug-values {
+        margin-top: 8px;
+        padding: 8px;
+        background-color: rgba(0, 0, 0, 0.05);
+        border-radius: 4px;
+        font-size: 12px;
+
+        p {
+          margin: 4px 0;
+        }
+      }
+    }
   }
 </style>

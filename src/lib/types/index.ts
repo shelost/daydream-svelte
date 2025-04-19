@@ -123,3 +123,23 @@ export interface ToolSubOption {
 
 // Autosave status
 export type SaveStatus = 'saved' | 'saving' | 'error';
+
+export interface TextStyles {
+  fontFamily: string;
+  fontSize: number;
+  color: string;
+  fontWeight: string; // 'normal' | 'bold'
+  fontStyle: string; // 'normal' | 'italic'
+  textAlign: string; // 'left' | 'center' | 'right' | 'justify'
+  lineHeight: number;
+  letterSpacing: number;
+  underline: boolean;
+  opacity: number;
+  shadow: {
+    enabled: boolean;
+    color: string;
+    blur: number;
+    offsetX: number;
+    offsetY: number;
+  };
+}

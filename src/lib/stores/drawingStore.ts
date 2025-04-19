@@ -10,7 +10,7 @@ export const drawingSettings = writable({
   strokeSize: 3,
   opacity: 1,
   thinning: 0.5,
-  smoothing: 0.5,
+  smoothing: 2,
   streamline: 0.5,
   showPressure: true,
   capStart: true,

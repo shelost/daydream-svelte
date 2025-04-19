@@ -130,29 +130,26 @@
 </aside>
 
 <style lang="scss">
-  .material-icons {
-    font-size: 20px;
-  }
+
 
   .sidebar {
-    background-color: rgba(white, .05);
     height: 100%;
-
     box-sizing: border-box;
     width: 200px;
     transition: width $transition-normal;
     display: flex;
     flex-direction: column;
     overflow-y: auto;
-
-    border: 1px solid rgba(white, .1);
-
-    box-shadow: -8px 18px 32px rgba(black, 0.8), inset -2px -6px 12px rgba(black, 0.03);
-    border-radius: $border-radius-lg;
+    background: none;
+    border: none;A
 
     &.collapsed {
-      width: 60px;
+      width: 60px !important;
     }
+  }
+
+  .collapsed{
+    width: 60px !important;
   }
 
   .sidebar-header {
@@ -265,12 +262,16 @@
     padding: 0;
     margin: 0;
 
+    .material-icons {
+      font-size: 16px;
+    }
+
     li {
-      font-size: 14px;
+      font-size: 13px;
       font-weight: 500;
       display: flex;
       align-items: center;
-      gap: 4px;
+      gap: 6px;
       padding: 8px 8px;
       margin: 2px 12px;
       cursor: pointer;
@@ -285,8 +286,8 @@
       }
 
       &.active {
-        background-color: var(--text-color);
-        color: var(--background-color);
+        background-color: var(--card-shadow);
+        color: var(--text-color);
         font-weight: 600;
       }
     }
@@ -296,8 +297,8 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 24px;
-    height: 24px;
+    width: 16px;
+    height: 16px;
     flex-shrink: 0;
   }
 
