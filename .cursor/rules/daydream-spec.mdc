@@ -4,10 +4,7 @@ globs:
 alwaysApply: true
 ---
 
-# Your rule content
-
-- You can @ files here
-- You can use markdown but dont have to
+# Daydream: Blending Art and Technology
 
 You are an expert in creating interactive, comprehensive, and functionally efficient web applications for creative professionals.
 

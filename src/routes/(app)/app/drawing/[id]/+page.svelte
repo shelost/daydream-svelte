@@ -6,6 +6,7 @@
   import { getPage, updatePage } from '$lib/supabase/pages';
   import type { Tool } from '$lib/types';
   import { afterNavigate, disableScrollHandling } from '$app/navigation';
+  import { currentDrawingContent } from '$lib/stores/drawingContentStore';
 
   import Toolbar from '$lib/components/Toolbar.svelte';
   import TitleBar from '$lib/components/TitleBar.svelte';
@@ -58,6 +59,10 @@
       }
 
       pageData = data;
+
+      // Important: Update the drawing content store immediately when page data loads
+      // This ensures the store always has the correct content for the current page
+      currentDrawingContent.set(data.content);
 
       // Generate a thumbnail if one doesn't exist yet
       setTimeout(() => {
@@ -119,6 +124,10 @@
     if (from && to && from.route.id === to.route.id && from.params?.id !== to.params?.id) {
       const newPageId = to.params?.id;
       if (newPageId && newPageId !== pageId) {
+        // Reset the drawing content store before loading new data
+        // This prevents the old drawing from showing while the new one loads
+        currentDrawingContent.set(null);
+
         pageId = newPageId;
         loadPageData(pageId);
       }
@@ -193,7 +202,12 @@
   function handleDrawingContentUpdate(event: CustomEvent) {
     // Update our local content variable
     drawingContent = event.detail.content;
-    console.log('Drawing content updated:', drawingContent);
+
+    // Only update the store if this is the current active drawing
+    // This prevents interference when multiple drawing components might exist
+    if (pageData && pageData.id === pageId) {
+      currentDrawingContent.set(drawingContent);
+    }
   }
 </script>
 
@@ -272,7 +286,8 @@
   .workspace {
     flex: 1;
     display: flex;
-    overflow: hidden;
+    overflow: visible;
+    position: relative;
   }
 
   .loading-container,

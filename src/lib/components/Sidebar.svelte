@@ -58,6 +58,9 @@
 
 <aside class:collapsed={!$isSidebarOpen} class="sidebar">
   <div class="sidebar-header">
+
+
+
     <img src="/arachne-icon.png" alt="Arachne" class="sidebar-logo" />
     <h2>Daydream</h2>
     <button on:click={toggleSidebar} class="toggle-button">
@@ -160,16 +163,20 @@
     border-bottom: 1px solid $border-color;
 
     img{
-      height: 24px;
+      height: 26px;
+      border-radius: 6px;
     }
 
     h2 {
-      font-size: 1.2rem;
-      font-weight: 600;
+      font-size: 18px;
+      font-weight: 700;
       margin: 0;
+      margin-left: 8px;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
+
+      flex: 1;
     }
   }
 
@@ -267,8 +274,8 @@
     }
 
     li {
-      font-size: 13px;
-      font-weight: 500;
+      font-size: 14px;
+      font-weight: 600;
       display: flex;
       align-items: center;
       gap: 6px;
@@ -279,10 +286,10 @@
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
-      transition: .1s ease;
+      transition: .2s ease;
 
       &:hover {
-        background-color: rgba(var(--text-color), 0.5);
+        background-color: rgba(black, 0.05);
       }
 
       &.active {

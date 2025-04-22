@@ -1,7 +1,7 @@
 :root {
   --primary-color: #00106d;
   --secondary-color: #ff3e00;
-  --background-color: #ffffff;
+  --background-color: #E8EBF1;
   --text-color: #030025;
   --sidebar-bg: #f9f9f9;
   --border-color: #e5e5e5;
@@ -43,7 +43,7 @@
 .theme-light {
   --primary-color: #00106d;
   --secondary-color: #ff3e00;
-  --background-color: #ffffff;
+  --background-color: #E8EBF1;
   --text-color: #030025;
   --sidebar-bg: #f9f9f9;
   --border-color: #e5e5e5;
@@ -74,7 +74,7 @@ html, body {
   font-size: 16px;
   color: var(--text-color, #030025);
   letter-spacing: -0.03em;
-  background-color: var(--background-color, #ffffff);
+  background-color: var(--background-color, #E8EBF1);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   transition: background-color 250ms ease, color 250ms ease;

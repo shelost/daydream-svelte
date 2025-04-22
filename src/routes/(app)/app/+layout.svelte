@@ -5,8 +5,10 @@
   import { supabase } from '$lib/supabase/client';
   import Sidebar from '$lib/components/Sidebar.svelte';
   import SidebarRight from '$lib/components/SidebarRight.svelte';
+  import AIPanel from '$lib/components/AIPanel.svelte';
   import { page } from '$app/stores';
   import { selectionStore } from '$lib/stores/selectionStore';
+  import { currentDrawingContent } from '$lib/stores/drawingContentStore';
 
   let loadingPages = true;
 
@@ -147,6 +149,9 @@
   <div class="main-content">
     <slot />
   </div>
+  <AIPanel />
+
+  <!--
   <SidebarRight
     directDrawingContent={directDrawingContent}
     on:objectUpdate={handleObjectUpdate}
@@ -156,6 +161,7 @@
     on:alignSelection={handleAlignSelection}
     on:distributeSelection={handleDistributeSelection}
   />
+-->
 </div>
 
 <style lang="scss">
@@ -170,8 +176,23 @@
 
   .main-content {
     flex: 1;
-    box-shadow: -2px 24px 48px rgba(#030025, 0.16);
+    min-width: 500px;
+    background: white;
+    box-shadow: -2px 36px 60px rgba(black, 0.15);
     overflow: hidden;
     border-radius: $border-radius-lg;
+    border-radius: 18px;
+    position: relative;
+
+    &::after {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      box-shadow: inset -2px -3px 4px 2px rgba(black, 0.03);
+    }
   }
 </style>

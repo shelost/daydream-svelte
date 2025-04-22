@@ -238,8 +238,18 @@
             backgroundColor: '#ffffff',
             preserveObjectStacking: true,
             stopContextMenu: true,
-            fireRightClick: true
+            fireRightClick: true,
+            // Add these settings to improve rendering consistency:
+            renderOnAddRemove: true,
+            stateful: true
           });
+
+          // Configure global object caching settings for better rendering consistency
+          fabricLib.fabric.Object.prototype.objectCaching = true;
+          // Increase cache dimensions for better quality
+          fabricLib.fabric.Object.prototype.cacheProperties = fabricLib.fabric.Object.prototype.cacheProperties.concat(['strokeWidth', 'strokeDashArray']);
+          // Set higher dirty rendering tolerance to force more re-renders
+          fabricLib.fabric.Object.prototype.statefullCache = false;
 
           // Set default control appearance for all objects
           fabricLib.fabric.Object.prototype.set({
@@ -581,19 +591,19 @@
       const obj = event.target;
 
       // Use our normalization function for all object types
-      untrack(() => {
+        untrack(() => {
         normalizeObjectScaling(obj);
 
-        // Update the canvas
-        canvas.renderAll();
+          // Update the canvas
+          canvas.renderAll();
 
         // Schedule auto save after modifying the object
         scheduleAutoSave();
 
-        // Update toolbar properties if this is the selected object
+      // Update toolbar properties if this is the selected object
         if (selectedObject === obj) {
-          updateToolbarProperties();
-        }
+        updateToolbarProperties();
+      }
       });
     });
 
@@ -612,11 +622,11 @@
       const obj = event.target;
 
       // Use our normalization function for consistent handling
-      untrack(() => {
+        untrack(() => {
         normalizeObjectScaling(obj);
-        canvas.renderAll();
-        scheduleAutoSave();
-      });
+          canvas.renderAll();
+          scheduleAutoSave();
+        });
     });
 
     // Make sure objects are properly selectable
@@ -1422,6 +1432,9 @@
         return;
       }
 
+      // Synchronize canvas layers before saving to ensure correct display
+      syncCanvasLayers();
+
       // Get the current selected object before saving (to restore selection after save)
       const activeObject = canvas.getActiveObject();
       let activeObjectId = null;
@@ -1469,12 +1482,17 @@
             if (activeObject && canvas.contains(activeObject)) {
               // If the original object is still there, re-select it
               canvas.setActiveObject(activeObject);
-              canvas.renderAll();
+
+              // Force a sync after selection to ensure proper display
+              syncCanvasLayers();
 
               // Make sure toolbar shows up for this object
               handleObjectSelected({ target: activeObject });
             }
           });
+        } else {
+          // Even if we don't have a selection to restore, sync canvas layers
+          syncCanvasLayers();
         }
 
         onSaveStatus('saved');
@@ -1483,6 +1501,11 @@
     } catch (err) {
       console.error('Unexpected error saving canvas:', err);
       onSaveStatus('error');
+
+      // Try to sync canvas layers even after error
+      if (canvas) {
+        syncCanvasLayers();
+      }
     } finally {
       // Important: Reset these flags AFTER saving is complete
       isSaving = false;
@@ -1893,10 +1916,9 @@
       untrack(() => {
         // Only process external content changes when they're genuinely different
         // and not during active operations
-        const contentStr = JSON.stringify(content);
-        const localContentStr = JSON.stringify(localContent);
+        if (!isActivelyDrawing && !isSaving && content &&
+            (!localContent || JSON.stringify(content) !== JSON.stringify(localContent))) {
 
-        if (contentStr !== localContentStr && !isActivelyDrawing && !isSaving) {
           log('External content change detected');
 
           // Check if this is a complete refresh needed or a minor update
@@ -1913,7 +1935,7 @@
             // Update local content reference
             localContent = safeClone(content);
 
-            // Set flag to prevent viewport save
+            // Set flag to prevent circular updates
             skipNextViewportSave = true;
 
             // Don't reload the entire canvas, just update viewport if needed
@@ -1924,7 +1946,14 @@
                 content.viewport.panX || 0,
                 content.viewport.panY || 0
               ]);
-              canvas.renderAll();
+
+              // Ensure all object coordinates are updated after viewport change
+              canvas.forEachObject((obj: any) => {
+                if (obj.setCoords) obj.setCoords();
+              });
+
+              // Force a complete sync of display and interactive layers
+              syncCanvasLayers();
             }
 
             log('Soft refresh with selection preservation');
@@ -1955,7 +1984,8 @@
                   ]);
                 }
 
-                canvas.renderAll();
+                // Force a complete sync of all object coordinates and display
+                syncCanvasLayers();
               });
             }
           }
@@ -2529,6 +2559,7 @@
     // Handle object modification
     canvas.on('object:modified', (e: any) => {
       console.log('Object modified:', e.target?.type);
+      e.target?.setCoords()
 
       // Set flag to false after completion
       isActivelyDrawing = false;
@@ -2892,11 +2923,21 @@
       onSaving(true);
       onSaveStatus('saving');
 
-      // Normalize all objects before saving to ensure consistent state
+      // First, force sync all objects to ensure they're properly rendered
       if (canvas) {
+        // Force cache regeneration for all objects
         canvas.forEachObject((obj: any) => {
+          // Clear object cache to force redraw
+          if (obj._clearCache) obj._clearCache();
+
+          // Update coordinates to ensure bounding boxes are correct
+          if (obj.setCoords) obj.setCoords();
+
+          // Normalize object scaling to ensure consistent display
           normalizeObjectScaling(obj);
         });
+
+        // Force a full re-render to ensure display is current
         canvas.renderAll();
       }
 
@@ -2925,6 +2966,18 @@
         console.error('Error saving canvas:', error);
         onSaveStatus('error');
         return false;
+      }
+
+      // After saving, force another sync to ensure everything is properly displayed
+      if (canvas) {
+        // Re-sync all objects
+        canvas.forEachObject((obj: any) => {
+          if (obj._clearCache) obj._clearCache();
+          if (obj.setCoords) obj.setCoords();
+        });
+
+        // Force a full re-render again
+        canvas.requestRenderAll();
       }
 
       // Generate and upload thumbnail if requested
@@ -3466,6 +3519,12 @@
 
                 // Normalize scaling for all objects
                 normalizeObjectScaling(obj);
+
+                // Ensure object coordinates are updated
+                if (obj.setCoords) obj.setCoords();
+
+                // Mark as dirty to force redraw
+                if (obj.set) obj.set({ dirty: true });
               });
 
               // Set viewport after loading, still within untrack
@@ -3478,7 +3537,9 @@
                 ]);
               }
 
-              canvas.renderAll();
+              // Force complete sync of display and interactive layers
+              syncCanvasLayers();
+
               contentLoaded = true;
               initialized = true;
               resolve();
@@ -3500,7 +3561,7 @@
   }
 
   function initializeFabricCanvas() {
-    // ... existing code ...
+    if (!canvas) return;
 
     // Add object:modified handler to handle scaling for text objects
     canvas.on('object:modified', function(event: any) {
@@ -3526,7 +3587,7 @@
           obj._clearCache();
           if (obj.setCoords) obj.setCoords();
 
-          // Update the canvas
+          //
           canvas.renderAll();
 
           // Schedule auto save after modifying the object
@@ -3542,6 +3603,9 @@
       else {
         scheduleAutoSave();
       }
+
+      // Make sure to sync display and interactive layers after any modification
+      syncCanvasLayers();
     });
 
     // Add text:changed handler to ensure proper text object handling after editing
@@ -3550,6 +3614,9 @@
 
       // Schedule an autosave when text content changes
       scheduleAutoSave();
+
+      // Force a sync after text changes
+      syncCanvasLayers();
     });
 
     // Handle exiting text edit mode to ensure proper object dimensions
@@ -3563,11 +3630,41 @@
         normalizeObjectScaling(obj);
         canvas.renderAll();
         scheduleAutoSave();
+
+        // Sync layers after exiting text editing mode
+        syncCanvasLayers();
       });
     });
 
-    // ... existing code ...
+    // Add handler for object scaling to ensure proper display
+    canvas.on('object:scaling', function(event: any) {
+      if (!event.target) return;
+
+      // Update coordinates during scaling to keep interactive layer in sync
+      if (event.target.setCoords) {
+        event.target.setCoords();
+      }
+    });
+
+    // Add handler for after rendering to ensure everything is in sync
+    canvas.on('after:render', function() {
+      // This is a good place to verify all objects have proper coordinates
+      // But we don't want to do it on every render as it would be too expensive
+      // Instead we'll rely on our explicit sync points
+    });
+
+    // Listen for object position changes
+    canvas.on('object:moving', function(event: any) {
+      if (!event.target) return;
+
+      // Update coordinates during movement to keep interactive layer in sync
+      if (event.target.setCoords) {
+        event.target.setCoords();
+      }
+    });
   }
+
+  // ... existing code ...
 
   // ... existing code ...
 
@@ -3654,6 +3751,22 @@
       if (obj._clearCache) obj._clearCache();
       if (obj.setCoords) obj.setCoords();
 
+      // Ensure object's dirty state is set to force re-rendering
+      if (obj.set) {
+        obj.set({ dirty: true });
+      }
+
+      // If the object has objects (like a group), normalize all of them
+      if (obj._objects && Array.isArray(obj._objects)) {
+        obj._objects.forEach((childObj: any) => {
+          normalizeObjectScaling(childObj);
+        });
+      }
+
+      // Force object to update its appearance after modifications
+      if (obj.canvas && obj.canvas.renderAll) {
+        obj.canvas.renderAll();
+      }
     } catch (err) {
       console.error('Error normalizing object scaling:', err, obj);
     }
@@ -3694,6 +3807,7 @@
         if (!canvasObject && object.left !== undefined && object.top !== undefined) {
           canvasObject = findObjectByPosition(object.left, object.top);
         }
+
       }
 
       // If we still don't have an object, use the current active object
@@ -3773,7 +3887,7 @@
         }
 
         // Render the changes
-        canvas.renderAll();
+        //canvas.renderAll();
 
         // Schedule autosave after making changes
         scheduleAutoSave();
@@ -3818,56 +3932,145 @@
 
   // ... existing code ...
 
+  // Add a function to fix canvas positioning issues
+  function fixCanvasPosition() {
+    if (!canvas || !canvasContainer) return;
+
+    try {
+      // Get all canvas-container elements created by Fabric.js
+      const fabricContainers = canvasContainer.querySelectorAll('.canvas-container');
+
+      // Force absolute positioning to avoid display shift issues
+      fabricContainers.forEach((container: HTMLElement) => {
+        container.style.position = 'absolute';
+        container.style.top = '0';
+        container.style.left = '0';
+      });
+
+      // Ensure our canvas wrapper has the correct positioning
+      const wrapper = canvasContainer.querySelector('.canvas-wrapper');
+      if (wrapper) {
+        (wrapper as HTMLElement).style.position = 'relative';
+      }
+    } catch (err) {
+      console.error('Error fixing canvas position:', err);
+    }
+  }
+
   // Setup canvas and bind events
   onMount(async () => {
     // Setup the initial canvas
     await initializeFabricCanvas();
+
+    // Fix canvas positioning
+    fixCanvasPosition();
 
     // Setup event handlers if canvas is initialized
     if (canvas) {
       setupEventHandlers();
       setupSelectionHandlers();
 
-      // Add a custom event listener for object updates
-      if (canvasEl) {
-        // Create an event listener for updating objects
-        canvasEl.addEventListener('fabric:update-object', (event: any) => {
-          console.log('Canvas received fabric:update-object event:', event.detail);
-          const { object, updates } = event.detail;
-          if (object && updates) {
-            updateObject(object, updates);
-          }
-        });
+      try {
+        // Set up object update event listeners
+        if (canvasEl) {
+          // Create an event listener for updating objects
+          canvasEl.addEventListener('fabric:update-object', (event: any) => {
+            console.log('Canvas received fabric:update-object event:', event.detail);
+            const { object, updates } = event.detail;
+            if (object && updates) {
+              updateObject(object, updates);
+            }
+          });
+        }
 
-        // Expose methods to the canvas element for external access
-        // This allows the app layout to find and call our methods
-        canvasEl.__svelte = {
-          updateObject,
-          clearSelection: () => canvas && canvas.discardActiveObject(),
-          groupSelection,
-          ungroupSelection,
-          alignSelection,
-          distributeSelection
-        };
-      }
+        if (window) {
+          // Make canvas instance methods available externally
+          (window as any).canvasAPI = {
+            updateObject,
+            clearSelection: () => canvas && canvas.discardActiveObject(),
+            groupSelection,
+            ungroupSelection,
+            alignSelection,
+            distributeSelection
+          };
+        }
 
-      // Make this instance available globally for debugging/access
-      if (window) {
-        // Cast window to any to avoid TypeScript errors
-        (window as any).canvasInstance = {
-          updateObject,
-          clearSelection: () => canvas && canvas.discardActiveObject(),
-          groupSelection: () => console.log('Group selection not implemented'),
-          ungroupSelection: () => console.log('Ungroup selection not implemented'),
-          alignSelection: () => console.log('Align selection not implemented'),
-          distributeSelection: () => console.log('Distribute selection not implemented')
-        };
+        // Make this instance available globally for debugging/access
+        if (window) {
+          // Cast window to any to avoid TypeScript errors
+          (window as any).canvasInstance = {
+            updateObject,
+            clearSelection: () => canvas && canvas.discardActiveObject(),
+            groupSelection: () => console.log('Group selection not implemented'),
+            ungroupSelection: () => console.log('Ungroup selection not implemented'),
+            alignSelection: () => console.log('Align selection not implemented'),
+            distributeSelection: () => console.log('Distribute selection not implemented')
+          };
+        }
+      } catch (err) {
+        console.error('Error setting up canvas API:', err);
       }
     }
 
-    // Save initial canvas
+    // Now that canvas is ready, attach keyboard and resize handlers
+    window.addEventListener('resize', handleResize);
+
+    // Set up keyboard shortcuts
+    window.addEventListener('keydown', handleKeyDown);
+
+    // Setup initial viewport
+    initializeViewport();
+
+    // Run a full layer sync after initialization
+    syncCanvasLayers();
+
+    // Run fix canvas position again after a short delay to handle any post-init layout changes
+    setTimeout(fixCanvasPosition, 500);
+
     initialized = true;
   });
+
+  // Add a function to sync display and interactive layers
+  function syncCanvasLayers() {
+    if (!canvas) return;
+
+    try {
+      // Force all objects to update their caches and coordinates
+      canvas.forEachObject((obj: any) => {
+        // Clear any caches
+        if (obj._clearCache) obj._clearCache();
+
+        // Update coordinates
+        if (obj.setCoords) obj.setCoords();
+
+        // Mark as dirty to force redraw
+        if (obj.set) obj.set({ dirty: true });
+
+        // Special handling for text objects that might have a separate display
+        if (obj.type === 'text' || obj.type === 'i-text') {
+          // Ensure text rendering and interactive areas match
+          if (obj.initDimensions) obj.initDimensions();
+          if (obj.__lastRenderedText !== obj.text) {
+            obj.__lastRenderedText = obj.text;
+          }
+        }
+
+        // If it's a group, handle all child objects
+        if (obj._objects && Array.isArray(obj._objects)) {
+          obj._objects.forEach((childObj: any) => {
+            if (childObj._clearCache) childObj._clearCache();
+            if (childObj.setCoords) childObj.setCoords();
+            if (childObj.set) childObj.set({ dirty: true });
+          });
+        }
+      });
+
+      // Force a complete redraw of the canvas
+      canvas.requestRenderAll();
+    } catch (err) {
+      console.error('Error syncing canvas layers:', err);
+    }
+  }
 </script>
 
 <svelte:head>
@@ -3938,6 +4141,13 @@
     background: #f5f5f5;
     display: flex;
 
+    /* This forces all fabric.js containers to have consistent positioning */
+    .canvas-container {
+      position: absolute !important;
+      top: 0;
+      left: 0;
+    }
+
     .canvas-wrapper {
       position: relative;
       flex: 1;
@@ -3948,6 +4158,7 @@
       position: absolute;
       top: 0;
       left: 0;
+      border: 1px solid yellow;
     }
 
     .instructions {

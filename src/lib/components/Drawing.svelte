@@ -6,6 +6,7 @@
   import { getStroke } from 'perfect-freehand';
   import { getSvgPathFromStroke, getPerfectFreehandOptions, calculatePressureFromVelocity } from '$lib/utils/drawingUtils';
   import { drawingSettings, activeDrawingId } from '$lib/stores/drawingStore';
+  import { currentDrawingContent } from '$lib/stores/drawingContentStore';
 
   export let pageId: string;
   export let content: DrawingContent;
@@ -15,6 +16,58 @@
   export let onSaveStatus: (status: 'saved' | 'saving' | 'error') => void;
   // Export zoom for TitleBar
   export let zoom: number = 1;
+
+  // Add export for capturing canvas image
+  export function captureCanvasImage(): string | null {
+    if (!canvas || !ctx) return null;
+
+    try {
+      // First render all strokes to make sure the canvas is up to date
+      renderStrokes();
+
+      // For very large canvases, create a smaller version for the snapshot
+      // to avoid excessive token usage with the OpenAI API
+      if (canvas.width > 1200 || canvas.height > 1200) {
+        // Create a temporary canvas at a reduced size
+        const tmpCanvas = document.createElement('canvas');
+        const maxWidth = 1000;
+        const maxHeight = 1000;
+
+        // Calculate new dimensions preserving aspect ratio
+        let newWidth = canvas.width;
+        let newHeight = canvas.height;
+
+        if (canvas.width > maxWidth) {
+          newWidth = maxWidth;
+          newHeight = (canvas.height * maxWidth) / canvas.width;
+        }
+
+        if (newHeight > maxHeight) {
+          newHeight = maxHeight;
+          newWidth = (canvas.width * maxHeight) / canvas.height;
+        }
+
+        tmpCanvas.width = newWidth;
+        tmpCanvas.height = newHeight;
+
+        // Get context and draw resized image
+        const tmpCtx = tmpCanvas.getContext('2d');
+        if (!tmpCtx) return canvas.toDataURL('image/png');
+
+        // Draw the original canvas resized to the temporary one
+        tmpCtx.drawImage(canvas, 0, 0, canvas.width, canvas.height, 0, 0, newWidth, newHeight);
+
+        // Return the data URL from the temporary canvas
+        return tmpCanvas.toDataURL('image/jpeg', 0.85); // JPEG with 85% quality to reduce size
+      }
+
+      // For smaller canvases, use the original with PNG format
+      return canvas.toDataURL('image/png');
+    } catch (error) {
+      console.error('Error capturing canvas image:', error);
+      return null;
+    }
+  }
 
   // Set up event dispatcher
   const dispatch = createEventDispatcher();
@@ -36,6 +89,7 @@
       };
     }
     dispatch('contentUpdate', { content });
+    currentDrawingContent.set(content);
   }
 
   // Sync tool from props with store
@@ -113,6 +167,18 @@
   let resizeHandle = ''; // 'tl', 'tr', 'bl', 'br', etc.
   let selectionControlsVisible = false;
 
+  // Listen for AI modification events
+  let aiModificationListener: (event: CustomEvent) => void;
+
+  // Listen for external changes to content
+  const unsubDrawingContent = currentDrawingContent.subscribe(newContent => {
+    if (newContent && newContent !== content) {
+      content = newContent;
+      renderStrokes();
+      saveHistoryState();
+    }
+  });
+
   onMount(() => {
     try {
       // Check pointer capabilities
@@ -125,6 +191,18 @@
       window.addEventListener('resize', resizeCanvas);
       window.addEventListener('keydown', handleKeyDown);
       window.addEventListener('keyup', handleKeyUp);
+
+      // Listen for AI modifications
+      aiModificationListener = (event: CustomEvent) => {
+        if (event.detail?.strokes && Array.isArray(event.detail.strokes)) {
+          content.strokes = event.detail.strokes;
+          renderStrokes();
+          saveHistoryState();
+          autoSave();
+        }
+      };
+
+      document.addEventListener('ai:drawing-modified', aiModificationListener);
 
       // Hide instructions after 3 seconds
       setTimeout(() => {
@@ -141,6 +219,10 @@
       window.removeEventListener('resize', resizeCanvas);
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
+      document.removeEventListener('ai:drawing-modified', aiModificationListener);
+
+      // Also clean up the drawing content subscription
+      if (unsubDrawingContent) unsubDrawingContent();
     };
   });
 
@@ -1810,6 +1892,30 @@
     console.log('Tool changed to:', selectedTool);
     // Ensure any necessary updates happen when the tool changes
     updateToolMode();
+  }
+
+  // Add the handleZoom function which was missing
+  function handleZoom(delta: number) {
+    zoom = Math.max(Math.min(zoom + delta, 5), 0.5);
+    renderStrokes();
+    dispatch('zoomChange', { zoom });
+  }
+
+  // Export zoom methods for external components
+  export function zoomIn() {
+    handleZoom(0.1);
+  }
+
+  export function zoomOut() {
+    handleZoom(-0.1);
+  }
+
+  export function resetZoom() {
+    zoom = 1;
+    offsetX = 0;
+    offsetY = 0;
+    renderStrokes();
+    dispatch('zoomChange', { zoom });
   }
 </script>
 

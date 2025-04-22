@@ -49,7 +49,7 @@
     width: 100%;
 
     label {
-      width: 90px;
+      width: 40px;
       font-size: 12px;
       color: var(--text-color);
     }

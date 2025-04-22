@@ -69,11 +69,58 @@
 </div>
 
 <style lang="scss">
+
+  .toolbar-container{
+    background: none;
+    border-radius: 0.5rem;
+
+    margin: 12px;
+
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: none;
+    overflow: visible;
+
+    position: absolute;
+    top: 0;
+    left: 0;
+
+  }
   .tools-container {
     display: flex;
     flex-direction: column;
-    gap: 0.5rem;
+    align-items: center;
+    height: fit-content;
+    background: rgba(#000010, .8);
+   // border: 2px solid rgba(white, .5);
+    border-radius: 36px;
+    padding: 8px 8px;
+    box-shadow: -4px 16px 32px rgba(#030025, 0.4),  -2px 4px 8px rgba(black, 0.1), inset -2px -4px 8px rgba(black, 0.02),  inset 1px 2px 6px rgba(white, 0.5);
+    gap: 4px;
+
   }
+
+  .tool-button{
+    background: rgba(white, 0);
+    border-radius: 24px;
+    width: 40px;
+    height: 40px;
+    aspect-ratio: 1/1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--card-bg);
+    span{
+      font-size: 24px;
+    }
+    &.active{
+      background: rgba(white, .3);
+    }
+  }
+
+
 
   // Hide tool labels by default, can be shown in larger viewports if needed
   :global(.tool-button .tool-label) {
