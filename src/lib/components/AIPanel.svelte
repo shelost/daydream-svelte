@@ -476,33 +476,35 @@
         rows="1"
       ></textarea>
 
-      <div class="input-actions">
-        <label class="vision-toggle">
-          <input
-            type="checkbox"
-            bind:checked={useVisionAPI}
-            disabled={$aiChatStore.isLoading || !$aiChatStore.currentDrawingId}
-          />
-          <span class="toggle-slider"></span>
-          <span class="toggle-label">Enhanced Vision Analysis</span>
-          <span class="tooltip">
-            <span class="tooltip-icon">?</span>
-            <span class="tooltip-text">Enables Google Cloud Vision API to help identify what's in your drawing before sending to AI</span>
-          </span>
-        </label>
 
-        <button
-          class="send-button"
-          on:click={handleSendMessage}
-          disabled={$aiChatStore.isLoading || !userInput.trim() || !$aiChatStore.currentDrawingId}
-        >
-          {#if $aiChatStore.isLoading}
-            <span class="loader"></span>
-          {:else}
-            <span>Send</span>
-          {/if}
-        </button>
-      </div>
+    </div>
+
+    <div class="input-actions">
+      <label class="vision-toggle">
+        <input
+          type="checkbox"
+          bind:checked={useVisionAPI}
+          disabled={$aiChatStore.isLoading || !$aiChatStore.currentDrawingId}
+        />
+        <span class="toggle-slider"></span>
+        <span class="toggle-label">Enhanced Vision Analysis</span>
+        <span class="tooltip">
+          <span class="tooltip-icon">?</span>
+          <span class="tooltip-text">Enables Google Cloud Vision API to help identify what's in your drawing before sending to AI</span>
+        </span>
+      </label>
+
+      <button
+        class="send-button"
+        on:click={handleSendMessage}
+        disabled={$aiChatStore.isLoading || !userInput.trim() || !$aiChatStore.currentDrawingId}
+      >
+        {#if $aiChatStore.isLoading}
+          <span class="loader"></span>
+        {:else}
+          <span>Send</span>
+        {/if}
+      </button>
     </div>
   </div>
 </div>
@@ -563,7 +565,7 @@
   .message {
     display: flex;
     gap: 12px;
-    max-width: 80%;
+    max-width: 100%;
 
     &.user {
       align-self: flex-end;
@@ -576,6 +578,7 @@
 
       .message-avatar {
         background-color: #d1e3ff;
+        display: none;
       }
     }
 
@@ -590,6 +593,7 @@
 
       .message-avatar {
         background-color: #f0f0f0;
+        display: none;
       }
     }
 

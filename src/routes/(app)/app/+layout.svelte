@@ -4,11 +4,12 @@
   import { getPages } from '$lib/supabase/pages';
   import { supabase } from '$lib/supabase/client';
   import Sidebar from '$lib/components/Sidebar.svelte';
-  import SidebarRight from '$lib/components/SidebarRight.svelte';
+  import Panel from '$lib/components/Panel.svelte';
   import AIPanel from '$lib/components/AIPanel.svelte';
   import { page } from '$app/stores';
   import { selectionStore } from '$lib/stores/selectionStore';
   import { currentDrawingContent } from '$lib/stores/drawingContentStore';
+  import { fly } from 'svelte/transition';
 
   let loadingPages = true;
 
@@ -53,7 +54,7 @@
     }
   });
 
-  // Handle object updates from SidebarRight
+  // Handle object updates from Panel
   function handleObjectUpdate(event) {
     const { object, updates } = event.detail;
     console.log('App layout: Object update received:', { updates });
@@ -149,39 +150,67 @@
   <div class="main-content">
     <slot />
   </div>
-  <AIPanel />
 
-  <!--
-  <SidebarRight
-    directDrawingContent={directDrawingContent}
-    on:objectUpdate={handleObjectUpdate}
-    on:clearSelection={handleClearSelection}
-    on:groupSelection={handleGroupSelection}
-    on:ungroupSelection={handleUngroupSelection}
-    on:alignSelection={handleAlignSelection}
-    on:distributeSelection={handleDistributeSelection}
-  />
--->
+
+  <div class = 'sidebar'>
+      <Panel
+        on:objectUpdate={handleObjectUpdate}
+        on:clearSelection={handleClearSelection}
+        on:groupSelection={handleGroupSelection}
+        on:ungroupSelection={handleUngroupSelection}
+        on:alignSelection={handleAlignSelection}
+        on:distributeSelection={handleDistributeSelection}
+      />
+
+    {#if $page.url.pathname.includes('drawing')}
+      <div class = 'panel' in:fly={{ x: 500, duration: 600 }} out:fly={{ x: 500, duration: 800 }}>
+        <AIPanel />
+      </div>
+    {/if}
+
+  </div>
+
+
+
 </div>
 
 <style lang="scss">
   .app-layout {
     width: 100%;
     height: calc(100vh);
-    padding: 12px;
     gap: 12px;
     display: flex;
     overflow: hidden;
+    position: relative;
+  }
+
+  .sidebar {
+    position: absolute;
+    box-sizing: border-box;
+    top: 0;
+    right: 0;
+    height: 100%;
+    padding: 18px;
+    background: none;
+    border: none;
+    filter: drop-shadow(24px 48px 48px rgba(black, 0.2));
+  }
+
+  .panel{
+    position: absolute;
+    top: 0;
+    right: 0;
+    height: 100%;
   }
 
   .main-content {
     flex: 1;
     min-width: 500px;
     background: white;
-    box-shadow: -2px 36px 60px rgba(black, 0.15);
+    //box-shadow: -2px 36px 60px rgba(black, 0.15);
     overflow: hidden;
-    border-radius: $border-radius-lg;
-    border-radius: 18px;
+    //border-radius: $border-radius-lg;
+    //border-radius: 18px;
     position: relative;
 
     &::after {

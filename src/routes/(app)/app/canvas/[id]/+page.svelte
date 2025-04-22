@@ -12,7 +12,7 @@
   import Toolbar from '$lib/components/Toolbar.svelte';
   import TitleBar from '$lib/components/TitleBar.svelte';
   import Canvas from '$lib/components/Canvas.svelte';
-  import SidebarRight from '$lib/components/SidebarRight.svelte';
+  import Panel from '$lib/components/Panel.svelte';
   import { selectionStore, updateSelection } from '$lib/stores/selectionStore';
 
   let pageData: any;
@@ -133,8 +133,8 @@
         }
       }, 5000); // Wait 5 seconds for canvas to fully load
 
-      // Update SidebarRight props
-      updateSidebarRightProps();
+      // Update Panel props
+      updatePanelProps();
 
     } catch (err) {
       if (err instanceof Error) {
@@ -261,7 +261,7 @@
 
     console.log('Updated selection state:', { selectedObjectType, objectsCount: selectedObjects.length });
 
-    // Update selection store instead of directly updating SidebarRight
+    // Update selection store instead of directly updating Panel
     updateSelection({
       selectedObject: object,
       selectedObjectType: type,
@@ -270,38 +270,39 @@
     });
   }
 
-  // Function to update SidebarRight props
-  function updateSidebarRightProps() {
+  // Function to update Panel props
+  function updatePanelProps() {
     const parentLayout = document.querySelector('div.app-layout');
     if (!parentLayout) {
-      console.warn('Cannot find app-layout to update SidebarRight props');
+      console.warn('Cannot find app-layout to update Panel props');
       return;
     }
 
-    const sidebarRightElements = parentLayout.querySelectorAll('aside.sidebar-right');
-    if (sidebarRightElements.length === 0) {
-      console.warn('Cannot find SidebarRight element');
+    const panelElements = parentLayout.querySelectorAll('aside.panel');
+    if (panelElements.length === 0) {
+      console.warn('Cannot find Panel element');
       return;
     }
 
-    const sidebarRight = sidebarRightElements[0].__svelte_component__;
-    if (!sidebarRight) {
-      console.warn('SidebarRight Svelte component not found');
+    // Find the Svelte component
+    const panel = panelElements[0].__svelte_component__;
+    if (!panel) {
+      console.warn('Panel Svelte component not found');
       return;
     }
 
-    console.log('Updating SidebarRight with:', {
-      objectType: selectedObjectType,
-      hasObject: selectedObject !== null,
-      objectCount: selectedObjects?.length || 0
-    });
-
-    // Use $set to ensure reactivity - pass all relevant properties
-    sidebarRight.$set({
+    console.log('Updating Panel with:', {
       selectedObject,
       selectedObjectType,
       selectedObjects,
-      currentPageId: pageId
+      currentPageId: $page.params.id
+    });
+
+    panel.$set({
+      selectedObject,
+      selectedObjectType,
+      selectedObjects,
+      currentPageId: $page.params.id
     });
   }
 </script>

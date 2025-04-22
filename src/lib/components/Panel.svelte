@@ -337,12 +337,12 @@
 
   // Handle events from tool setting components
   function handleObjectUpdate(event: CustomEvent) {
-    console.log('SidebarRight: Received object update:', event.detail);
+    console.log('Panel: Received object update:', event.detail);
 
     const { object, updates } = event.detail;
 
     if (!object || !updates) {
-      console.warn('SidebarRight: Missing object or updates in event');
+      console.warn('Panel: Missing object or updates in event');
       return;
     }
 
@@ -380,7 +380,7 @@
       loadDrawingContent($activeDrawingId);
     }
 
-    console.log('SidebarRight mounted, activeDrawingId:', $activeDrawingId);
+    console.log('Panel mounted, activeDrawingId:', $activeDrawingId);
   });
 
   // Determine what settings panel to show based on mode and selection
@@ -392,7 +392,7 @@
     const objectsCount = storeState.selectedObjects?.length || 0;
 
     // Add more detailed logging to understand the state
-    console.log('SidebarRight determining toolToShow:', {
+    console.log('Panel determining toolToShow:', {
       isDrawingPage,
       selectedObject: hasSelectedObject ? 'exists' : 'none',
       currentObjectType,
@@ -451,9 +451,9 @@
   // Add explicit reactivity to log when selectedObjectType changes
   $: {
     if (selectedObjectType) {
-      console.log('SidebarRight: selectedObjectType changed to:', selectedObjectType);
+      console.log('Panel: selectedObjectType changed to:', selectedObjectType);
     } else if (selectedObjectType === null) {
-      console.log('SidebarRight: selectedObjectType cleared');
+      console.log('Panel: selectedObjectType cleared');
     }
   }
 </script>
@@ -462,15 +462,15 @@
   <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
 </svelte:head>
 
-<aside class="sidebar-right">
-  <div class="sidebar-header">
+<aside class="panel">
+  <div class="panel-header">
     <h2>Tool Settings</h2>
   </div>
 
-  <div class="sidebar-content">
+  <div class="panel-content">
     <!-- Debug info - only visible in development mode -->
     {#if import.meta.env.DEV}
-      <section class="sidebar-section debug-info">
+      <section class="panel-section debug-info">
         <details>
           <summary>Debug Info</summary>
           <div class="debug-values">
@@ -504,7 +504,7 @@
     {:else if selectedObjectType === 'eraser'}
       <EraserSettings />
     {:else if selectedObjectType === 'pan'}
-      <section class="sidebar-section">
+      <section class="panel-section">
         <h3>Pan Tool</h3>
         <div class="info-text">
           <span class="material-icons">info</span>
@@ -512,7 +512,7 @@
         </div>
       </section>
     {:else}
-      <section class="sidebar-section">
+      <section class="panel-section">
         <h3>Tool Settings</h3>
         <div class="info-text">
           <span class="material-icons">info</span>
@@ -522,7 +522,7 @@
     {/if}
 
     <!-- Keyboard Shortcuts -->
-    <section class="sidebar-section keyboard-shortcuts">
+    <section class="panel-section keyboard-shortcuts">
       <details>
         <summary>Keyboard Shortcuts</summary>
         <div class="shortcuts-list">
@@ -580,7 +580,7 @@
 
     <!-- Export Section (only for drawing pages) -->
     {#if isDrawingPage}
-    <section class="sidebar-section export-section">
+    <section class="panel-section export-section">
       <h3>Export</h3>
 
       <!-- Status message for SVG export -->
@@ -679,8 +679,7 @@
 </aside>
 
 <style lang="scss">
-  .sidebar-right {
-
+  .panel {
     border-radius: $border-radius-lg;
     box-sizing: border-box;
     width: 220px;
@@ -688,8 +687,8 @@
     overflow-y: auto;
     display: flex;
     flex-direction: column;
-   //background-color: var(--sidebar-bg);
-    //border: 1px solid var(--border-color);
+    background-color: var(--sidebar-bg);
+    border: 1px solid var(--border-color);
     //box-shadow: -8px 18px 32px rgba(black, 0.8), inset -2px -6px 12px rgba(black, 0.03);
 
     &::-webkit-scrollbar {
@@ -702,7 +701,7 @@
     }
   }
 
-  .sidebar-header {
+  .panel-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -717,7 +716,7 @@
     }
   }
 
-  .sidebar-content {
+  .panel-content {
     padding: 1rem;
     display: flex;
     flex-direction: column;

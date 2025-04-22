@@ -11,7 +11,7 @@
   import Toolbar from '$lib/components/Toolbar.svelte';
   import TitleBar from '$lib/components/TitleBar.svelte';
   import Drawing from '$lib/components/Drawing.svelte';
-  import SidebarRight from '$lib/components/SidebarRight.svelte';
+  import Panel from '$lib/components/Panel.svelte';
 
   let pageData: any = null;
   let loading = true;
@@ -98,17 +98,16 @@
     // Disable scroll handling to prevent jumping
     disableScrollHandling();
 
-    // Pass drawing content to SidebarRight in the parent layout
+    // Pass drawing content to Panel in the parent layout
     const parentLayout = document.querySelector('div.app-layout');
     if (parentLayout) {
-      const sidebarRightElements = parentLayout.querySelectorAll('aside.sidebar-right');
-      if (sidebarRightElements.length > 0) {
-        const sidebarRight = sidebarRightElements[0].__svelte_component__;
-        if (sidebarRight) {
-          // Send drawing content to sidebar
-          sidebarRight.$set({
-            directDrawingContent: pageData?.content,
-            selectedObjects: [] // Empty array for Drawing mode
+      const panelElements = parentLayout.querySelectorAll('aside.panel');
+      if (panelElements.length > 0) {
+        const panel = panelElements[0].__svelte_component__;
+        if (panel) {
+          // Update the Panel component with drawing content
+          panel.$set({
+            directDrawingContent: drawingContent
           });
         }
       }

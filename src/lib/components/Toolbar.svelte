@@ -9,7 +9,7 @@
   const dispatch = createEventDispatcher();
 
   const canvasTools: Array<{id: Tool, label: string, icon: string}> = [
-    { id: 'select', label: 'Select', icon: 'touch_app' },
+    { id: 'select', label: 'Select', icon: 'arrow_selector_tool' },
     { id: 'pan', label: 'Pan', icon: 'pan_tool' },
     { id: 'text', label: 'Text', icon: 'text_fields' },
     { id: 'draw', label: 'Draw', icon: 'brush' },
@@ -17,7 +17,7 @@
     { id: 'eraser', label: 'Eraser', icon: 'cleaning_services' }
   ];
 
-  // Mirror the exact tools from SidebarRight for consistency
+  // Mirror the exact tools from Panel for consistency
   const drawingTools: Array<{id: Tool, label: string, icon: string}> = [
     { id: 'select', label: 'Select', icon: 'select_all' },
     { id: 'draw', label: 'Pen', icon: 'edit' },
@@ -93,18 +93,18 @@
     flex-direction: column;
     align-items: center;
     height: fit-content;
-    background: rgba(#000010, .8);
+    background: white;
    // border: 2px solid rgba(white, .5);
-    border-radius: 36px;
+    border-radius: 12px;
     padding: 8px 8px;
-    box-shadow: -4px 16px 32px rgba(#030025, 0.4),  -2px 4px 8px rgba(black, 0.1), inset -2px -4px 8px rgba(black, 0.02),  inset 1px 2px 6px rgba(white, 0.5);
+    box-shadow: -4px 24px 32px rgba(#030025, 0.1), -2px 4px 8px rgba(black, 0.05), inset -2px -4px 8px rgba(black, 0.02),  inset 1px 2px 6px rgba(white, 0.5);
     gap: 4px;
 
   }
 
   .tool-button{
     background: rgba(white, 0);
-    border-radius: 24px;
+    border-radius: 6px;
     width: 40px;
     height: 40px;
     aspect-ratio: 1/1;
@@ -113,10 +113,10 @@
     justify-content: center;
     color: var(--card-bg);
     span{
-      font-size: 24px;
+      font-size: 22px;
     }
     &.active{
-      background: rgba(white, .3);
+      background: rgba(#030025, .05);
     }
   }
 
