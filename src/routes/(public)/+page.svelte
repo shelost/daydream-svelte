@@ -8,10 +8,11 @@
   let subHeading: HTMLElement;
   let loginButton: HTMLElement;
   let signupButton: HTMLElement;
+  let demoButton: HTMLElement;
   let buttonsVisible = false;
 
   onMount(() => {
-    console.log("Component mounted, buttons:", loginButton, signupButton);
+    console.log("Component mounted, buttons:", loginButton, signupButton, demoButton);
 
     // Make buttons immediately visible (fallback if GSAP fails)
     buttonsVisible = true;
@@ -38,7 +39,7 @@
         duration: 0.8,
         ease: "power3.out"
       }, "-=0.5")
-      .from([loginButton, signupButton], {
+      .from([loginButton, signupButton, demoButton], {
         y: 20,
         opacity: 0,
         duration: 0.5,
@@ -63,6 +64,10 @@
   const handleSignup = () => {
     goto('/auth/signup');
   };
+
+  const handleTryDemo = () => {
+    goto('/draw');
+  };
 </script>
 
 <svelte:head>
@@ -72,6 +77,7 @@
 
 <main class="landing-page">
   <div class="hero-container">
+    <img src="/arachne-icon.png" alt="Arachne Logo" class="logo" />
     <h1 bind:this={mainHeading}>Daydream</h1>
     <p bind:this={subHeading}>
       A powerful canvas app for your creative ideas
@@ -93,11 +99,24 @@
         style="opacity: 1; visibility: visible;">
         Sign Up
       </button>
+      <button
+        bind:this={demoButton}
+        class="demo-button"
+        on:click={handleTryDemo}
+        style="opacity: 1; visibility: visible;">
+        Try AI Drawing Demo
+      </button>
     </div>
   </div>
 </main>
 
 <style lang="scss">
+
+  .logo{
+    height: 120px;
+    margin-bottom: 16px;
+  }
+
   .landing-page {
     height: 100vh;
     display: flex;
@@ -131,9 +150,10 @@
     display: flex;
     justify-content: center;
     gap: 1rem;
+    flex-wrap: wrap;
   }
 
-  .login-button, .signup-button {
+  .login-button, .signup-button, .demo-button {
     padding: 0.75rem 1.5rem;
     font-size: 1rem;
     border-radius: $border-radius-md;
@@ -160,6 +180,43 @@
 
     &:hover {
       opacity: 0.9;
+    }
+  }
+
+  .demo-button {
+    background-color: #9c27b0;
+    color: white;
+    border: none;
+    position: relative;
+    overflow: hidden;
+
+    &::after {
+      content: '';
+      position: absolute;
+      top: -50%;
+      left: -50%;
+      width: 200%;
+      height: 200%;
+      background: linear-gradient(45deg, rgba(255,255,255,0) 30%, rgba(255,255,255,0.2) 50%, rgba(255,255,255,0) 70%);
+      transform: rotate(45deg);
+      animation: shine 3s infinite;
+    }
+
+    &:hover {
+      opacity: 0.9;
+      transform: translateY(-2px);
+      box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+    }
+  }
+
+  @keyframes shine {
+    0% {
+      left: -100%;
+      top: -100%;
+    }
+    100% {
+      left: 100%;
+      top: 100%;
     }
   }
 </style>

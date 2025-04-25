@@ -287,7 +287,6 @@
     align-items: center;
     height: 52px;
     backdrop-filter: blur(10px);
-    display: none;
   }
 
   .breadcrumbs {

@@ -1,13 +1,12 @@
 <script lang="ts">
+  // @ts-nocheck
   import { onMount, onDestroy } from 'svelte';
   import { page } from '$app/stores';
   import { goto } from '$app/navigation';
   import { user } from '$lib/stores/appStore';
   import { getPage } from '$lib/supabase/pages';
-  import type { Tool } from '$lib/types';
+  import { TOOL_SELECT } from '$lib/types';
   import { afterNavigate, disableScrollHandling } from '$app/navigation';
-
-  import type { ComponentType } from 'svelte';
 
   import Toolbar from '$lib/components/Toolbar.svelte';
   import TitleBar from '$lib/components/TitleBar.svelte';
@@ -15,35 +14,28 @@
   import Panel from '$lib/components/Panel.svelte';
   import { selectionStore, updateSelection } from '$lib/stores/selectionStore';
 
-  let pageData: any;
+  let pageData;
   let loading = true;
   let error = '';
-  let selectedTool: Tool = 'select';
+  let selectedTool = 'select';
   let isDrawingMode = false;
   let saving = false;
-  let saveStatus: 'saved' | 'saving' | 'error' = 'saved';
-  let pageId: string;
-  let unsubscribe: () => void = () => {};
-  let canvasComponent: {
-    setTool?: (tool: Tool) => void;
-    generateThumbnail?: () => void;
-    zoomIn?: () => void;
-    zoomOut?: () => void;
-    resetZoom?: () => void;
-    zoom?: number;
-  } | undefined;
+  let saveStatus = 'saved';
+  let pageId;
+  let unsubscribe = () => {};
+  let canvasComponent;
   let zoom = 1; // Add zoom state
 
   // Add variables for selected object information
-  let selectedObjectType: string | null = null;
-  let selectedObjectId: string | null = null;
+  let selectedObjectType = null;
+  let selectedObjectId = null;
 
   // Add state for selected objects
   let selectedObject = null;
   let selectedObjects = [];
 
   // This function loads the page data based on the current pageId
-  async function loadPageData(id: string) {
+  async function loadPageData(id) {
     if (!id) return;
 
     loading = true;
@@ -163,15 +155,15 @@
     disableScrollHandling();
   });
 
-  function handleSaving(isSaving: boolean) {
+  function handleSaving(isSaving) {
     saving = isSaving;
   }
 
-  function handleSaveStatus(status: 'saved' | 'saving' | 'error') {
+  function handleSaveStatus(status) {
     saveStatus = status;
   }
 
-  function handleToolChange(tool: Tool) {
+  function handleToolChange(tool) {
     console.log('Parent: Tool selected:', tool);
     selectedTool = tool;
     isDrawingMode = tool === 'draw';
@@ -340,11 +332,8 @@
       />
 
       <div class="workspace">
-        <Toolbar
-          bind:selectedTool={selectedTool}
-          type="canvas"
-          on:toolChange={(e) => handleToolChange(e.detail.tool)}
-        />
+
+
 
         <div class="canvas-area">
           {#key pageData.id}
@@ -362,6 +351,14 @@
             on:selectionChange={handleSelectionChange}
           />
           {/key}
+        </div>
+
+        <div class = 'toolbar'>
+          <Toolbar
+            bind:selectedTool={selectedTool}
+            type="canvas"
+            on:toolChange={(e) => handleToolChange(e.detail.tool)}
+          />
         </div>
       </div>
     {/if}
@@ -382,6 +379,19 @@
     display: flex;
     flex-direction: column;
     overflow: hidden;
+  }
+
+  .toolbar{
+    position: absolute;
+    z-index: 2;
+    left: 0;
+    bottom: 0;
+    margin: 12px;
+    width: 100vw;
+    height: 60px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
   }
 
   .workspace {

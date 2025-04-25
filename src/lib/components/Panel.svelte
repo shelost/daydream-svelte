@@ -13,6 +13,7 @@
   import ShapeSettings from './settings/ShapeSettings.svelte';
   import SelectionSettings from './settings/SelectionSettings.svelte';
   import EraserSettings from './settings/EraserSettings.svelte';
+  import CanvasSettings from './settings/CanvasSettings.svelte';
 
   // For backward compatibility, we still accept props
   // But we prioritize the selectionStore values
@@ -483,6 +484,11 @@
       </section>
     {/if}
 
+    <!-- Canvas Settings - always visible for drawing pages -->
+    {#if isDrawingPage}
+      <CanvasSettings on:canvasSizeChanged={(e) => dispatch('canvasSizeChanged', e.detail)} />
+    {/if}
+
     <!-- Dynamic Tool Settings -->
     {#if selectedObjectType === 'pen'}
       <PenSettings />
@@ -679,8 +685,8 @@
 </aside>
 
 <style lang="scss">
+
   .panel {
-    border-radius: $border-radius-lg;
     box-sizing: border-box;
     width: 220px;
     height: 100%;

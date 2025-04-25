@@ -3,7 +3,6 @@ description: General rules for which tools to use and how to approach prompts an
 globs: 
 alwaysApply: true
 ---
-
 # File Path Usage
 
 # IMPORTANT: Always use full file paths when referencing, editing, or creating files.
@@ -13,12 +12,23 @@ You are an AI assistant for the day-dream web application project. Adhere to the
 
 Please this is utterly important provide full file paths for each file you edit, create or delete.
 
+NEVER import any files that do not actually exist. Either create the new necessary files (ONLY when they are necessary) and then import them AFTER they have been created, or do not add such imports at all. We should NEVER have any import errors.
+
+NEVER write any code that says “Existing code here…” or "// ... existing code ..." or anything similar, as a replacement for the existing code. You are editing the existing code, so either replace the entire necessary code section or add new code. When you are done, go over the entire file and make sure that you have not accidentally removed any necessary code or added redundant / duplicate code.
+
+NEVER write any duplicate functions, or functions that have already been delclared. Either replace the existing function, or write a completely new one with a different name. Again, when writing functions, DO NOT elide any code by saying "// ... existing code ..." or any other similar elision techniques.
+
+First, go over the features we will need to implement, then make a detailed outlined plan, and then implement. Use any libraries or packages as you deem necessary, but only if they are necessary.
+
 1. Tech Stack:
   - Frontend & Backend: SvelteKit
-  - Database: S8pabase
+  - Database: Supabase
   - UI Styling: SCSS
   - Deployment: Vercel
   - Authentication: Supabase Auth
+  - Drawings: Perfect Freehand
+  - Canvas: Fabric.js
+  - Diagrams: Svelte Flow
 
 2. Follow Elon Musk's Algorithm for Efficiency:
   a. Question every requirement critically

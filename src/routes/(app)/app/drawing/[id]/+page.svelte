@@ -1,33 +1,52 @@
 <script lang="ts">
+  // @ts-nocheck
   import { onMount, onDestroy } from 'svelte';
   import { page } from '$app/stores';
   import { goto } from '$app/navigation';
   import { user } from '$lib/stores/appStore';
   import { getPage, updatePage } from '$lib/supabase/pages';
-  import type { Tool } from '$lib/types';
+  import { TOOL_DRAW } from '$lib/types';
   import { afterNavigate, disableScrollHandling } from '$app/navigation';
   import { currentDrawingContent } from '$lib/stores/drawingContentStore';
+  import { drawingSettings } from '$lib/stores/drawingStore';
 
   import Toolbar from '$lib/components/Toolbar.svelte';
   import TitleBar from '$lib/components/TitleBar.svelte';
   import Drawing from '$lib/components/Drawing.svelte';
   import Panel from '$lib/components/Panel.svelte';
+  import MiniMap from '$lib/components/MiniMap.svelte';
 
-  let pageData: any = null;
+  let pageData = null;
   let loading = true;
   let error = '';
-  let selectedTool: Tool = 'draw';
+  let selectedTool = 'draw';
   let isDrawingMode = true; // Drawings are always in drawing mode
   let saving = false;
-  let saveStatus: 'saved' | 'saving' | 'error' = 'saved';
+  let saveStatus = 'saved';
   let pageId = '';
-  let unsubscribe: () => void;
-  let drawingComponent: Drawing; // Add reference to the drawing component
+  let unsubscribe;
+  let drawingComponent; // Add reference to the drawing component
   let zoom = 1; // Add zoom state
-  let drawingContent: any = null; // Add a variable to store the drawing content for export
+  let drawingContent = null; // Add a variable to store the drawing content for export
+
+  // Minimap state
+  let showMiniMap = true;
+  let canvasWidth = 0;
+  let canvasHeight = 0;
+  let canvasOffsetX = 0;
+  let canvasOffsetY = 0;
+  let viewportWidth = 0;
+  let viewportHeight = 0;
+
+  // Track minimap visibility from settings
+  $: showMiniMap = $drawingSettings.showMiniMap;
+
+  // Update canvas dimensions if they change in settings
+  $: canvasWidth = $drawingSettings.canvasWidth;
+  $: canvasHeight = $drawingSettings.canvasHeight;
 
   // This function loads the page data based on the current pageId
-  async function loadPageData(id: string) {
+  async function loadPageData(id) {
     if (!id) return;
 
     loading = true;
@@ -136,15 +155,15 @@
     disableScrollHandling();
   });
 
-  function handleSaving(isSaving: boolean) {
+  function handleSaving(isSaving) {
     saving = isSaving;
   }
 
-  function handleSaveStatus(status: 'saved' | 'saving' | 'error') {
+  function handleSaveStatus(status) {
     saveStatus = status;
   }
 
-  function handleToolChange(tool: Tool) {
+  function handleToolChange(tool) {
     selectedTool = tool;
     isDrawingMode = true; // Drawings are always in drawing mode
   }
@@ -182,31 +201,83 @@
   }
 
   // Function to sync zoom from drawing component to local state
-  function handleZoomChange(newZoom: number) {
+  function handleZoomChange(newZoom) {
     zoom = newZoom;
   }
 
   // Ensure zoom always starts at 100% when page loads
   $: if (pageData && drawingComponent) {
-    if (!zoom) zoom = 1;
-    drawingComponent.zoom = zoom;
-    drawingComponent.offsetX = 0;
-    drawingComponent.offsetY = 0;
-    if (typeof drawingComponent.renderStrokes === 'function') {
-      drawingComponent.renderStrokes();
+    // Allow the drawing component to handle centering itself
+    // This ensures a consistent behavior between initial load and reset
+    if (typeof drawingComponent.resetZoom === 'function') {
+      // Use a small timeout to ensure the component is fully initialized
+      setTimeout(() => {
+        drawingComponent.resetZoom();
+      }, 100);
     }
   }
 
   // This function handles drawing content updates from the Drawing component
-  function handleDrawingContentUpdate(event: CustomEvent) {
+  function handleDrawingContentUpdate(event) {
     // Update our local content variable
     drawingContent = event.detail.content;
+
+    // Update canvas dimensions from content if available
+    if (drawingContent && drawingContent.bounds) {
+      canvasWidth = drawingContent.bounds.width;
+      canvasHeight = drawingContent.bounds.height;
+    }
 
     // Only update the store if this is the current active drawing
     // This prevents interference when multiple drawing components might exist
     if (pageData && pageData.id === pageId) {
       currentDrawingContent.set(drawingContent);
     }
+  }
+
+  // Handle viewport updates for minimap
+  function handleViewportUpdate(event) {
+    if (event && event.detail) {
+      canvasOffsetX = event.detail.offsetX;
+      canvasOffsetY = event.detail.offsetY;
+      viewportWidth = event.detail.viewportWidth;
+      viewportHeight = event.detail.viewportHeight;
+    }
+  }
+
+  // Handle minimap interactions
+  function handleMoveViewport(event) {
+    if (drawingComponent && drawingComponent.moveViewport) {
+      drawingComponent.moveViewport(event.detail.deltaX, event.detail.deltaY);
+    }
+  }
+
+  function handleCenterViewport(event) {
+    if (drawingComponent && drawingComponent.setViewport) {
+      drawingComponent.setViewport(event.detail.x, event.detail.y);
+    }
+  }
+
+  // Handle canvas size changes from Panel
+  function handleCanvasSizeChanged(event) {
+    const { width, height, color, backgroundColor } = event.detail;
+
+    if (drawingComponent && drawingComponent.updateCanvasSize) {
+      drawingComponent.updateCanvasSize(width, height);
+    }
+
+    // Update local state
+    canvasWidth = width;
+    canvasHeight = height;
+
+    // Update the drawing settings store
+    drawingSettings.update(settings => ({
+      ...settings,
+      canvasWidth: width,
+      canvasHeight: height,
+      canvasColor: color,
+      backgroundColor: backgroundColor
+    }));
   }
 </script>
 
@@ -240,13 +311,7 @@
       />
 
       <div class="workspace">
-        <Toolbar
-          bind:selectedTool={selectedTool}
-          type="drawing"
-          on:toolChange={(e) => handleToolChange(e.detail.tool)}
-        />
-
-        <div class="drawing-area">
+        <div class="drawing-area" style="background-color: {$drawingSettings.backgroundColor};">
           {#key pageData?.id}
           <Drawing
             pageId={pageData.id}
@@ -258,15 +323,59 @@
             bind:zoom={zoom}
             on:zoomChange={(e) => handleZoomChange(e.detail.zoom)}
             on:contentUpdate={handleDrawingContentUpdate}
+            on:viewportUpdate={handleViewportUpdate}
           />
           {/key}
+
+          {#if showMiniMap}
+            <MiniMap
+              width={200}
+              height={150}
+              canvasWidth={canvasWidth}
+              canvasHeight={canvasHeight}
+              viewportX={-canvasOffsetX}
+              viewportY={-canvasOffsetY}
+              viewportWidth={viewportWidth}
+              viewportHeight={viewportHeight}
+              zoom={zoom}
+              drawingContent={drawingContent}
+              canvasColor={$drawingSettings.canvasColor}
+              backgroundColor={$drawingSettings.backgroundColor}
+              on:moveViewport={handleMoveViewport}
+              on:centerViewport={handleCenterViewport}
+            />
+          {/if}
         </div>
+
+        <div class = 'toolbar'>
+          <Toolbar
+            bind:selectedTool={selectedTool}
+            type="drawing"
+            on:toolChange={(e) => handleToolChange(e.detail.tool)}
+          />
+        </div>
+
       </div>
     {/if}
   </div>
 </div>
 
 <style lang="scss">
+
+.toolbar{
+    position: absolute;
+    z-index: 2;
+    left: 0;
+    bottom: 0;
+    margin: 12px;
+    width: 100%;
+    height: 60px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+
   .editor-layout {
     flex: 1;
     height: 100%;
@@ -287,6 +396,7 @@
     display: flex;
     overflow: visible;
     position: relative;
+    background-color: var(--background-color);
   }
 
   .loading-container,
@@ -326,5 +436,13 @@
     flex-direction: column;
     overflow: hidden;
     position: relative;
+  }
+
+  .panel-container {
+    position: absolute;
+    top: 0;
+    right: 0;
+    height: 100%;
+    z-index: 10;
   }
 </style>

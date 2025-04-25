@@ -1,0 +1,2605 @@
+<script lang="ts">
+  import { onMount } from 'svelte';
+  import { fade } from 'svelte/transition';
+  import type { Tool, Stroke, StrokePoint } from '$lib/types';
+  import { getStroke } from 'perfect-freehand';
+  import { getSvgPathFromStroke, calculatePressureFromVelocity, calculateMultiStrokeBoundingBox, findRelatedStrokes, normalizeBoundingBox } from '$lib/utils/drawingUtils.js';
+  import VerticalSlider from '$lib/components/VerticalSlider.svelte';
+
+  // Interface extension for Stroke type with hasPressure property
+  interface EnhancedStroke extends Stroke {
+    hasPressure?: boolean;
+  }
+
+  // Drawing content object with enhanced strokes
+  interface EnhancedDrawingContent {
+    strokes: EnhancedStroke[];
+    bounds?: {
+      width: number;
+      height: number;
+    };
+  }
+
+  // Analysis element type
+  interface AnalysisElement {
+    id: string;
+    name: string;
+    category?: string;
+    x: number;
+    y: number;
+    width?: number;
+    height?: number;
+    color: string;
+    isChild?: boolean;
+    parentId?: string;
+    children?: string[];
+    pressure?: number; // Add pressure property for visual effects
+    boundingBox?: {
+      minX: number;
+      minY: number;
+      maxX: number;
+      maxY: number;
+      width: number;
+      height: number;
+    };
+  }
+
+  // State variables
+  let inputCanvas: HTMLCanvasElement;
+  let inputCtx: CanvasRenderingContext2D | null = null;
+  let isDrawing = false;
+  let currentStroke: EnhancedStroke | null = null;
+  let strokeColor = '#000000';
+  let strokeSize = 4;
+  let strokeOpacity = 0.8;
+  let imageData: string | null = null;
+  let pointTimes: number[] = []; // Track time for velocity-based pressure
+  let isGenerating = false;
+  let generatedImageUrl: string | null = null;
+  let generatedByModel: string | null = null;
+  let errorMessage: string | null = null;
+  let showAnalysisView = true; // Toggle for AI analysis view
+  let sketchAnalysis = "Draw something to see AI's interpretation";
+  let previousSketchAnalysis = "";
+  let isAnalyzing = false;
+  let lastAnalysisTime = 0;
+  let strokeRecognition = "Draw something to see shapes recognized";
+  let previousStrokeRecognition = "";
+  let isRecognizingStrokes = false;
+  let lastStrokeAnalysisTime = 0;
+  let additionalContext = "";
+  let analysisElements: AnalysisElement[] = [];
+  let showDebugPressure = false; // Toggle for pressure visualization
+
+  // Drawing content with enhanced strokes
+  let drawingContent: EnhancedDrawingContent = {
+    strokes: [],
+    bounds: { width: 800, height: 600 }
+  };
+
+  // Canvas dimensions
+  let canvasWidth = 800;
+  let canvasHeight = 600;
+
+  // Computed property for stroke count (reactive)
+  $: strokeCount = drawingContent?.strokes?.length || 0;
+
+  // Calculated ANALYSIS_THROTTLE_MS
+  const ANALYSIS_THROTTLE_MS = 2000; // 2 seconds throttle for analysis
+
+  // Debounce timer for live updates
+  let analysisDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+  const ANALYSIS_DEBOUNCE_MS = 1000; // Analyze after 1 second of inactivity
+
+  onMount(() => {
+    // Initialize canvas
+    if (inputCanvas) {
+      // Get context
+      inputCtx = inputCanvas.getContext('2d');
+
+      console.log('Canvas initialized with element size:',
+        { width: inputCanvas.clientWidth, height: inputCanvas.clientHeight });
+
+      // Set canvas size to match the container
+      resizeCanvas();
+
+      // Apply initial rendering after a short delay to ensure DOM is settled
+      setTimeout(() => {
+        resizeCanvas();
+        renderStrokes();
+        console.log('Canvas ready after delay: ',
+          { width: inputCanvas.width, height: inputCanvas.height,
+            displayWidth: inputCanvas.clientWidth, displayHeight: inputCanvas.clientHeight });
+      }, 100);
+
+      // Set up window resize listener
+      window.addEventListener('resize', resizeCanvas);
+    }
+
+    // Initialize drawing content if needed
+    if (!drawingContent) {
+      drawingContent = { strokes: [] };
+    }
+
+    // Ensure drawingContent has a strokes array
+    if (!drawingContent.strokes) {
+      drawingContent.strokes = [];
+    }
+
+    // Clean up
+    return () => {
+      window.removeEventListener('resize', resizeCanvas);
+    };
+  });
+
+  // Make the component reactive to changes in the drawingContent
+  $: if (drawingContent && drawingContent.strokes) {
+    console.log('Reactive: drawingContent strokes updated:', drawingContent.strokes.length);
+
+    // Schedule a debounced analysis when strokes change
+    if (drawingContent.strokes.length > 0) {
+      clearTimeout(analysisDebounceTimer);
+      analysisDebounceTimer = setTimeout(() => {
+        if (!isAnalyzing && !isRecognizingStrokes) {
+          analyzeSketch();
+          recognizeStrokes();
+        }
+      }, ANALYSIS_DEBOUNCE_MS);
+    }
+  }
+
+  // Function to resize canvas
+  function resizeCanvas() {
+    if (!inputCanvas) return;
+
+    const container = inputCanvas.parentElement;
+    if (!container) return;
+
+    // Get the container dimensions (accounting for the vertical toolbar)
+    const containerWidth = container.clientWidth;
+    const containerHeight = container.clientHeight;
+
+    // Ensure square dimensions by taking the minimum of width and height
+    const squareSize = Math.min(containerWidth, containerHeight);
+
+    // Use a fixed internal resolution for high quality
+    const canvasResolution = 1024;
+
+    // Set internal canvas dimensions first (for rendering)
+    inputCanvas.width = canvasResolution;
+    inputCanvas.height = canvasResolution;
+
+    // Set display size as a perfect square
+    inputCanvas.style.width = `${squareSize}px`;
+    inputCanvas.style.height = `${squareSize}px`;
+
+
+
+    // Update drawing content bounds to match square dimensions
+    drawingContent.bounds = {
+      width: canvasResolution,
+      height: canvasResolution
+    };
+
+    // Re-render all strokes
+    renderStrokes();
+
+    console.log(`Canvas resized to ${squareSize}x${squareSize} display size, ${canvasResolution}x${canvasResolution} internal resolution`);
+  }
+
+  // Function to start drawing
+  function startDrawing(e: PointerEvent) {
+    if (e.button !== 0) return; // Only draw on left click/touch
+
+    isDrawing = true;
+    console.log('Drawing started');
+
+    // Get pointer position
+    const point = getPointerPosition(e);
+
+    // Store initial timestamp for pressure calculation
+    const timestamp = Date.now();
+    pointTimes = [timestamp];
+
+    // Check if pressure is supported by the device
+    const hasPressure = e.pressure !== 0 && e.pressure !== 0.5;
+    console.log(`Pressure supported: ${hasPressure}, value: ${e.pressure}`);
+
+    // Create a new stroke
+    currentStroke = {
+      tool: 'pen',
+      points: [point],
+      color: strokeColor,
+      size: strokeSize,
+      opacity: strokeOpacity,
+      hasPressure: hasPressure
+    };
+
+    // Capture pointer
+    inputCanvas.setPointerCapture(e.pointerId);
+  }
+
+  // Function to continue drawing
+  function continueDrawing(e: PointerEvent) {
+    if (!isDrawing || !currentStroke || !inputCtx) return;
+
+    // Get pointer position and pressure
+    const point = getPointerPosition(e);
+
+    // Store timestamp for velocity-based pressure
+    const timestamp = Date.now();
+    pointTimes.push(timestamp);
+
+    // If the device doesn't support pressure, calculate it based on velocity
+    if (!currentStroke.hasPressure && currentStroke.points.length > 1) {
+      // Calculate pressure based on velocity between points
+      const calculatedPressure = calculatePressureFromVelocity(
+        currentStroke.points,
+        currentStroke.points.length - 1,
+        0.2, // velocityScale
+        true, // use time-based velocity
+        pointTimes
+      );
+
+      // Update pressure in the point
+      point.pressure = calculatedPressure;
+    }
+
+    // Add point to current stroke
+    currentStroke.points.push(point);
+
+    // Render all strokes including the current one
+    renderStrokes();
+  }
+
+  // Function to end drawing
+  function endDrawing(e: PointerEvent) {
+    if (!isDrawing || !currentStroke) return;
+
+    console.log('Drawing ended');
+
+    // Add the current stroke to strokes array
+    drawingContent.strokes.push(currentStroke);
+    // Trigger Svelte reactivity with reassignment
+    drawingContent = drawingContent;
+    console.log('Stroke added, total strokes:', drawingContent.strokes.length);
+
+    // Reset current stroke
+    currentStroke = null;
+    isDrawing = false;
+
+    // Release pointer
+    inputCanvas.releasePointerCapture(e.pointerId);
+
+    // Trigger sketch analysis after a short delay to let the canvas update
+    const now = Date.now();
+    if (now - lastAnalysisTime > ANALYSIS_THROTTLE_MS) {
+      setTimeout(() => {
+        analyzeSketch();
+        recognizeStrokes(); // Also run stroke recognition
+      }, 300);
+    }
+  }
+
+  // Function to get pointer position
+  function getPointerPosition(e: PointerEvent): StrokePoint {
+    if (!inputCanvas) {
+      return { x: 0, y: 0, pressure: 0.5 };
+    }
+
+    const rect = inputCanvas.getBoundingClientRect();
+
+    // Calculate scaling factors in case the canvas rendering size differs from its CSS display size
+    const scaleX = inputCanvas.width / rect.width;
+    const scaleY = inputCanvas.height / rect.height;
+
+    // Check if the device provides pressure
+    const pressure = e.pressure !== 0 ? e.pressure : 0.5;
+
+    // Apply the scaling to get the correct position within the canvas
+    return {
+      x: (e.clientX - rect.left) * scaleX,
+      y: (e.clientY - rect.top) * scaleY,
+      pressure: pressure
+    };
+  }
+
+  // Function to render all strokes
+  function renderStrokes() {
+    if (!inputCtx || !inputCanvas) return;
+
+    // Clear canvas
+    inputCtx.clearRect(0, 0, inputCanvas.width, inputCanvas.height);
+
+    // Set background
+    inputCtx.fillStyle = '#f8f8f8';
+    inputCtx.fillRect(0, 0, inputCanvas.width, inputCanvas.height);
+
+    // Function to render a single stroke
+    const renderStroke = (stroke: EnhancedStroke) => {
+      if (stroke.points.length < 2) return;
+
+      // Generate perfect-freehand options
+      const options = {
+        size: stroke.size,
+        thinning: 0.5,     // How much to thin the stroke
+        smoothing: 0.5,    // How much to smooth the stroke
+        streamline: 0.5,   // How much to streamline the stroke
+        easing: (t: number) => t, // Linear easing
+        simulatePressure: !(stroke as EnhancedStroke).hasPressure, // Only simulate if hardware pressure not available
+        last: false,       // Whether this is the last point
+        start: {
+          cap: true,       // Cap at the start
+          taper: 0,        // No taper
+          easing: (t: number) => t, // Linear easing
+        },
+        end: {
+          cap: true,       // Cap at the end
+          taper: 0,        // No taper
+          easing: (t: number) => t, // Linear easing
+        }
+      };
+
+      // Generate stroke with perfect-freehand
+      const freehandStroke = getStroke(
+        stroke.points.map(p => [p.x, p.y, p.pressure || 0.5]),
+        options
+      );
+
+      // Get SVG path
+      const pathData = getSvgPathFromStroke(freehandStroke);
+
+      if (!pathData) return;
+
+      // Create a path from the SVG data
+      const path = new Path2D(pathData);
+
+      // Set fill style
+      inputCtx!.fillStyle = stroke.color;
+      inputCtx!.globalAlpha = stroke.opacity;
+
+      // Fill the path
+      inputCtx!.fill(path);
+    };
+
+    // Render all strokes
+    for (const stroke of drawingContent.strokes) {
+      renderStroke(stroke);
+    }
+
+    // Render current stroke if it exists
+    if (currentStroke) {
+      renderStroke(currentStroke);
+    }
+
+    // Reset alpha
+    inputCtx.globalAlpha = 1;
+  }
+
+  // Function to analyze the current sketch with OpenAI Vision
+  async function analyzeSketch() {
+    if (isAnalyzing || drawingContent.strokes.length === 0) return;
+
+    try {
+      isAnalyzing = true;
+      // Store current analysis before updating
+      previousSketchAnalysis = sketchAnalysis;
+      lastAnalysisTime = Date.now();
+
+      // Capture the current canvas as an image
+      const imageData = inputCanvas.toDataURL('image/png');
+
+      // First, use our enhanced sketch analysis endpoint
+      // This is optimized for detailed object detection with hierarchical structure
+      const response = await fetch('/api/ai/analyze-sketch', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          imageData,
+          enhancedAnalysis: true, // Request the enhanced analysis mode
+          requestHierarchy: true, // Request hierarchical object detection
+          requestPositions: true, // Request accurate position information
+          excludeTrivialElements: true, // Filter out trivial elements like lines
+          context: additionalContext || '' // Pass any additional context provided by the user
+        })
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to analyze sketch');
+      }
+
+      const result = await response.json();
+      sketchAnalysis = result.description || 'No analysis available';
+
+      // If we have detected objects with positions, use them directly
+      if (result.detectedObjects && Array.isArray(result.detectedObjects)) {
+        console.log('Raw detected objects:', result.detectedObjects);
+
+        // Process the detected objects to improve bounding boxes
+        const processedElements = [];
+
+        // Get canvas dimensions for calculations
+        const canvasWidth = inputCanvas.width;
+        const canvasHeight = inputCanvas.height;
+
+        for (const obj of result.detectedObjects) {
+          // Find strokes related to this element - use aggressive mode for better object identification
+          const relatedStrokes = findRelatedStrokes(
+            drawingContent.strokes,
+            obj.x,
+            obj.y,
+            canvasWidth,
+            canvasHeight,
+            0.18, // Slightly larger search radius for better coverage
+            true  // Use aggressive mode to find more related strokes
+          );
+
+          // Only proceed if we found related strokes
+          if (relatedStrokes.length > 0) {
+            // Calculate the precise bounding box for these strokes with padding included
+            const boundingBox = calculateMultiStrokeBoundingBox(relatedStrokes, true);
+
+            // Convert to normalized coordinates
+            const normalizedBox = normalizeBoundingBox(boundingBox, canvasWidth, canvasHeight);
+
+            // Calculate average pressure for the strokes
+            let totalPressure = 0;
+            let pressurePoints = 0;
+            for (const stroke of relatedStrokes) {
+              for (const point of stroke.points) {
+                if (point.pressure !== undefined) {
+                  totalPressure += point.pressure;
+                  pressurePoints++;
+                }
+              }
+            }
+            const avgPressure = pressurePoints > 0 ? totalPressure / pressurePoints : 0.5;
+
+            // Create a new element with precise dimensions
+            const element = {
+              ...obj,
+              // Use the center point from the API but with precise width/height
+              x: obj.x, // Keep original x for consistency
+              y: obj.y, // Keep original y for consistency
+              // Use calculated width/height instead of default or category-based values
+              width: Math.max(normalizedBox.width * canvasWidth, 40), // Minimum size of 40px
+              height: Math.max(normalizedBox.height * canvasHeight, 40), // Minimum size of 40px
+              // Store bounding box information for more precise rendering
+              boundingBox: {
+                minX: normalizedBox.minX,
+                minY: normalizedBox.minY,
+                maxX: normalizedBox.maxX,
+                maxY: normalizedBox.maxY,
+                width: normalizedBox.width,
+                height: normalizedBox.height
+              },
+              // Ensure color is present
+              color: obj.color || getColorForCategory(obj.category || 'default'),
+              // Add pressure information for visual effects
+              pressure: avgPressure
+            };
+            processedElements.push(element);
+
+            console.log(`Element "${obj.name}" found with ${relatedStrokes.length} related strokes, avg pressure: ${avgPressure.toFixed(2)}`);
+          } else {
+            // If no related strokes found, use the original element with calculated size
+            const element = {
+              ...obj,
+              // Default width and height if not provided by API
+              width: obj.width || calculateElementWidth(obj),
+              height: obj.height || calculateElementHeight(obj),
+              // Ensure color is present
+              color: obj.color || getColorForCategory(obj.category || 'default'),
+              // Use default pressure
+              pressure: 0.5
+            };
+            processedElements.push(element);
+
+            console.log(`Element "${obj.name}" found but no related strokes detected`);
+          }
+        }
+
+        analysisElements = processedElements;
+        console.log('Using precise bounding boxes for analysis elements:', analysisElements);
+      } else {
+        // Otherwise, parse the description to extract elements
+      console.log('Sketch analysis updated:', sketchAnalysis);
+        updateAnalysisElements(sketchAnalysis);
+      }
+    } catch (error) {
+      console.error('Error analyzing sketch:', error);
+      sketchAnalysis = `Error analyzing sketch: ${error instanceof Error ? error.message : 'Unknown error'}`;
+
+      // Try to use the stroke recognition as fallback for visual elements
+      if (strokeRecognition && strokeRecognition !== "Draw something to see shapes recognized") {
+        updateAnalysisElements(strokeRecognition);
+      }
+    } finally {
+      isAnalyzing = false;
+    }
+  }
+
+  // Function to analyze stroke data using our custom recognition service
+  async function recognizeStrokes() {
+    if (isRecognizingStrokes || drawingContent.strokes.length === 0) return;
+
+    try {
+      isRecognizingStrokes = true;
+      // Store current recognition before updating
+      previousStrokeRecognition = strokeRecognition;
+      lastStrokeAnalysisTime = Date.now();
+
+      // Send the strokes directly to our stroke analysis API with enhanced options
+      const response = await fetch('/api/ai/analyze-strokes', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          strokes: drawingContent.strokes,
+          enhancedAnalysis: true,
+          context: additionalContext || ''
+        })
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to recognize strokes');
+      }
+
+      const result = await response.json();
+
+      // Format the recognition result for display
+      if (result.analysis.type === 'drawing') {
+        const confidence = Math.round(result.analysis.confidence * 100);
+        strokeRecognition = `Recognized as: ${result.analysis.content} (${confidence}% confident)`;
+
+        // Add top alternatives if available
+        if (result.debug?.shapeRecognition?.allMatches?.length > 1) {
+          const alternatives = result.debug.shapeRecognition.allMatches
+            .slice(1, 3) // Get 2nd and 3rd matches
+            .map(match => `${match.name} (${Math.round(match.confidence * 100)}%)`)
+            .join(', ');
+
+          if (alternatives) {
+            strokeRecognition += `\nAlternatives: ${alternatives}`;
+          }
+        }
+
+        // If we have structured detected shapes, add them to our analysis elements
+        if (result.detectedShapes && Array.isArray(result.detectedShapes) &&
+            (!analysisElements.length || analysisElements.length < result.detectedShapes.length)) {
+
+          // Get canvas dimensions for calculations
+          const canvasWidth = inputCanvas.width;
+          const canvasHeight = inputCanvas.height;
+
+          // Process the detected shapes to include precise bounding boxes
+          const enhancedShapes = result.detectedShapes.map(shape => {
+            // Find strokes related to this element
+            const relatedStrokes = findRelatedStrokes(
+              drawingContent.strokes,
+              shape.x,
+              shape.y,
+              canvasWidth,
+              canvasHeight,
+              0.2 // Larger search radius for shapes
+            );
+
+            // If we found related strokes, calculate precise bounding box
+            if (relatedStrokes.length > 0) {
+              const boundingBox = calculateMultiStrokeBoundingBox(relatedStrokes);
+              const normalizedBox = normalizeBoundingBox(boundingBox, canvasWidth, canvasHeight);
+
+              return {
+                ...shape,
+                // Keep original x,y for consistency with API
+                // Use calculated width/height
+                width: Math.max(normalizedBox.width * canvasWidth, 40), // Minimum size
+                height: Math.max(normalizedBox.height * canvasHeight, 40), // Minimum size
+                // Store precise bounding box for rendering
+                boundingBox: {
+                  minX: normalizedBox.minX,
+                  minY: normalizedBox.minY,
+                  maxX: normalizedBox.maxX,
+                  maxY: normalizedBox.maxY,
+                  width: normalizedBox.width,
+                  height: normalizedBox.height
+                }
+              };
+            }
+
+            // If no related strokes, keep original shape
+            return shape;
+          });
+
+          // Merge with existing elements or replace if we have more detailed information
+          analysisElements = enhancedShapes;
+          console.log('Using enhanced stroke-based object detection:', analysisElements);
+        }
+      } else if (result.analysis.type === 'text') {
+        strokeRecognition = `Detected handwritten text: ${result.analysis.content || ''}`;
+      } else {
+        strokeRecognition = `Unrecognized pattern`;
+      }
+
+      console.log('Stroke recognition updated:', strokeRecognition);
+    } catch (error) {
+      console.error('Error recognizing strokes:', error);
+      strokeRecognition = `Error recognizing strokes: ${error instanceof Error ? error.message : 'Unknown error'}`;
+    } finally {
+      isRecognizingStrokes = false;
+    }
+  }
+
+  // Function to clear the canvas
+  function clearCanvas() {
+    drawingContent.strokes = [];
+    // Trigger Svelte reactivity
+    drawingContent = drawingContent;
+    generatedImageUrl = null;
+    generatedByModel = null;
+    renderStrokes();
+  }
+
+  // Function to generate image from drawing
+  async function generateImage() {
+    if (drawingContent.strokes.length === 0) {
+      errorMessage = "Please draw something first!";
+      setTimeout(() => { errorMessage = null; }, 3000);
+      return;
+    }
+
+    console.log('Starting image generation with', drawingContent.strokes.length, 'strokes');
+    if (additionalContext) {
+      console.log('Additional context provided:', additionalContext);
+    }
+
+    try {
+      isGenerating = true;
+      errorMessage = null;
+      generatedByModel = null;
+
+      // Capture the canvas image and store it for preview during loading
+      imageData = inputCanvas.toDataURL('image/png');
+
+      // Create a deep copy of the drawing content to avoid any reactivity issues
+      const drawingContentCopy = JSON.parse(JSON.stringify(drawingContent));
+
+      // Analyze the drawing to extract any text
+      console.log('Sending to text analysis API...');
+      const textAnalysisResponse = await fetch('/api/ai/analyze', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          drawingContent: drawingContentCopy,
+          userPrompt: "Extract any text or labels from this drawing, and describe what objects or scenes are depicted.",
+          imageData,
+          useVision: true
+        })
+      });
+
+      if (!textAnalysisResponse.ok) {
+        throw new Error("Failed to analyze drawing");
+      }
+
+      const textAnalysis = await textAnalysisResponse.json();
+      console.log('Text analysis completed');
+
+      // Prepare detailed structural information from our analysis elements
+      let structuralDetails = null;
+      if (analysisElements.length > 0) {
+        // Collect information about all analyzed elements and their precise positions
+        structuralDetails = {
+          elementCount: analysisElements.length,
+          elements: analysisElements.map(element => ({
+            id: element.id,
+            name: element.name,
+            category: element.category || 'unknown',
+            position: {
+              x: element.x,
+              y: element.y,
+            },
+            bounds: element.boundingBox ? {
+              minX: element.boundingBox.minX,
+              minY: element.boundingBox.minY,
+              maxX: element.boundingBox.maxX,
+              maxY: element.boundingBox.maxY,
+              width: element.boundingBox.width,
+              height: element.boundingBox.height
+            } : {
+              // Fallback for elements without precise bounds
+              minX: element.x - (element.width / canvasWidth) / 2,
+              minY: element.y - (element.height / canvasHeight) / 2,
+              width: element.width / canvasWidth,
+              height: element.height / canvasHeight
+            },
+            isChild: element.isChild || false,
+            parentId: element.parentId,
+            children: element.children || []
+          }))
+        };
+
+        console.log('Including detailed structural information:', structuralDetails);
+      }
+
+      // Now call the endpoint to generate an image based on the drawing
+      console.log('Sending to image generation API...');
+      const response = await fetch('/api/ai/generate-image', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          drawingContent: drawingContentCopy,
+          imageData,
+          textAnalysis: textAnalysis.message,
+          additionalContext: additionalContext,
+          sketchAnalysis: sketchAnalysis,
+          strokeRecognition: strokeRecognition,
+          structuralDetails: structuralDetails // Send the detailed structural information
+        })
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to generate image');
+      }
+
+      const result = await response.json();
+      console.log('Image generation successful');
+      console.log('API response:', result);
+      console.log('API response type:', typeof result);
+      console.log('API response keys:', Object.keys(result));  // Log all keys in the response
+
+      // Handle different response formats robustly
+      const imageUrl = result.imageUrl || result.url;
+      if (!imageUrl) {
+        console.error('No image URL found in response:', result);
+        errorMessage = 'Missing image URL in API response';
+        return;
+      }
+
+      // Set the URL and model values
+      generatedImageUrl = imageUrl;
+      generatedByModel = result.model || 'AI Model';
+    } catch (error) {
+      console.error('Error generating image:', error);
+      errorMessage = error instanceof Error ? error.message : 'An unknown error occurred';
+    } finally {
+      isGenerating = false;
+    }
+  }
+
+  // Helper function to calculate appropriate width for an element
+  function calculateElementWidth(element) {
+    // Base size - adjusted by category and importance
+    const baseSize = 120;
+
+    // Size multipliers based on category
+    const categoryMultipliers = {
+      'human': 1.2,
+      'animal': 1.1,
+      'vehicle': 1.3,
+      'building': 1.4,
+      'landscape': 1.5,
+      'object': 0.9,
+      'text': 0.8,
+      'detail': 0.7,
+      'default': 1.0
+    };
+
+    // If element has children, make it larger to encompass them
+    const hasChildrenMultiplier = element.children && element.children.length > 0 ? 1.5 : 1.0;
+
+    // If element is a child, make it smaller
+    const isChildMultiplier = element.isChild ? 0.8 : 1.0;
+
+    // Calculate final width
+    const multiplier = categoryMultipliers[element.category || 'default'] * hasChildrenMultiplier * isChildMultiplier;
+    return Math.round(baseSize * multiplier);
+  }
+
+  // Helper function to calculate appropriate height for an element
+  function calculateElementHeight(element) {
+    // Start with the width as a base (for aspect ratio)
+    const width = element.width || calculateElementWidth(element);
+
+    // Aspect ratio adjustments based on category
+    const aspectRatios = {
+      'human': 1.8, // Taller than wide
+      'animal': 0.8, // Wider than tall for most animals
+      'vehicle': 0.6, // Cars are wider
+      'building': 1.5, // Buildings are tall
+      'landscape': 0.5, // Landscapes are wide
+      'object': 1.0, // Default square
+      'text': 0.5, // Text is usually wider
+      'detail': 1.0, // Details are square
+      'default': 1.0 // Default square
+    };
+
+    const aspectRatio = aspectRatios[element.category || 'default'];
+    return Math.round(width * aspectRatio);
+  }
+
+  // Helper function to get a color based on category
+  function getColorForCategory(category) {
+    const categoryColors = {
+      'human': '#FF5733', // Orange-red
+      'animal': '#33FF57', // Light green
+      'vehicle': '#3357FF', // Blue
+      'building': '#8333FF', // Purple
+      'landscape': '#33FFC5', // Teal
+      'object': '#FF33E6', // Pink
+      'text': '#FFD133', // Yellow
+      'detail': '#33B5FF', // Light blue
+      'default': '#FF5733' // Default orange-red
+    };
+
+    return categoryColors[category] || categoryColors['default'];
+  }
+
+  // Function to parse analysis results and extract elements with hierarchical relationships
+  function updateAnalysisElements(analysisText) {
+    // Reset elements
+    analysisElements = [];
+
+    if (!analysisText || analysisText === "Draw something to see AI's interpretation") {
+      return;
+    }
+
+    // Get canvas dimensions
+    const canvasWidth = inputCanvas.width;
+    const canvasHeight = inputCanvas.height;
+
+    // List of important objects to identify (filter out trivial elements like 'line')
+    const significantObjects = [
+      // Human parts
+      'human', 'person', 'face', 'head', 'body', 'torso', 'arm', 'hand', 'leg', 'foot', 'eye', 'nose', 'mouth', 'ear', 'hair',
+      // Animals
+      'animal', 'dog', 'cat', 'bird', 'horse', 'fish',
+      // Structures
+      'house', 'building', 'window', 'door', 'roof', 'tower', 'castle',
+      // Nature
+      'tree', 'mountain', 'river', 'sun', 'moon', 'star', 'cloud', 'flower', 'plant',
+      // Common objects
+      'car', 'chair', 'table', 'book', 'hat', 'crown', 'sword', 'ball'
+    ];
+
+    // Patterns to detect objects and their positions
+    const objectPatterns = [
+      new RegExp(`(${significantObjects.join('|')})\\s(?:in|at|on)\\sthe\\s(top|bottom|left|right|center|upper|lower)(?:\\s(left|right))?`, 'gi'),
+      new RegExp(`(?:a|an)\\s(${significantObjects.join('|')})\\s(?:located|positioned|drawn|depicted)\\s(?:in|at|on)\\sthe\\s(top|bottom|left|right|center|upper|lower)(?:\\s(left|right))?`, 'gi'),
+      new RegExp(`(?:a|an)\\s(${significantObjects.join('|')})`, 'gi'),
+    ];
+
+    // Extract objects and their positions
+    let match;
+    const objects = [];
+
+    // First pass: extract all objects with positions
+    for (const pattern of objectPatterns) {
+      while ((match = pattern.exec(analysisText)) !== null) {
+        const [, objectName, position1, position2] = match;
+        if (objectName) {
+          // Determine position based on text description
+          const position = getPositionFromText(position1, position2);
+
+          // Create object with generated ID and coordinates
+          const objectId = `obj_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+          const category = getCategoryFromObjectName(objectName);
+
+          objects.push({
+            id: objectId,
+            name: objectName.toLowerCase(),
+            category,
+            x: position.x,
+            y: position.y,
+            children: [],
+            isChild: false,
+            color: getColorForCategory(category)
+          });
+        }
+      }
+    }
+
+    // Second pass: detect parent-child relationships
+    // Simple heuristic: if one object's name contains another's, it might be a parent
+    for (let i = 0; i < objects.length; i++) {
+      for (let j = 0; j < objects.length; j++) {
+        if (i !== j) {
+          // Check if object j's name contains object i's name
+          if (objects[j].name.includes(objects[i].name) && objects[i].name.length < objects[j].name.length) {
+            // Object i might be a child of object j
+            if (!objects[j].children.includes(objects[i].id)) {
+              objects[j].children.push(objects[i].id);
+              objects[i].isChild = true;
+              objects[i].parentId = objects[j].id;
+            }
+          }
+        }
+      }
+    }
+
+    // Third pass: calculate precise bounding boxes for each element based on related strokes
+    for (const obj of objects) {
+      // Find strokes related to this object's position
+      const relatedStrokes = findRelatedStrokes(
+        drawingContent.strokes,
+        obj.x,
+        obj.y,
+        canvasWidth,
+        canvasHeight,
+        0.25 // Use a larger search radius for text-based detection which is less precise
+      );
+
+      // Calculate size based on strokes if available
+      if (relatedStrokes.length > 0) {
+        const boundingBox = calculateMultiStrokeBoundingBox(relatedStrokes);
+        const normalizedBox = normalizeBoundingBox(boundingBox, canvasWidth, canvasHeight);
+
+        // Update object with calculated dimensions
+        obj.width = Math.max(normalizedBox.width * canvasWidth, 40);
+        obj.height = Math.max(normalizedBox.height * canvasHeight, 40);
+        obj.boundingBox = {
+          minX: normalizedBox.minX,
+          minY: normalizedBox.minY,
+          maxX: normalizedBox.maxX,
+          maxY: normalizedBox.maxY,
+          width: normalizedBox.width,
+          height: normalizedBox.height
+        };
+      } else {
+        // Fallback to category-based dimensions when no strokes found
+        obj.width = calculateElementWidth(obj);
+        obj.height = calculateElementHeight(obj);
+      }
+    }
+
+    // Update the analysis elements
+    analysisElements = objects;
+    console.log('Created analysis elements from text with precise bounds:', analysisElements);
+  }
+
+  // Helper function to determine coordinates from text position
+  function getPositionFromText(position1, position2) {
+    // Default to center if no position info
+    let x = 0.5;
+    let y = 0.5;
+
+    if (position1) {
+      // Vertical position
+      if (position1 === 'top' || position1 === 'upper') y = 0.25;
+      else if (position1 === 'bottom' || position1 === 'lower') y = 0.75;
+
+      // Horizontal position
+      if (position1 === 'left') x = 0.25;
+      else if (position1 === 'right') x = 0.75;
+    }
+
+    // Handle combined positions (e.g., "top left")
+    if (position2) {
+      if (position2 === 'left') x = 0.25;
+      else if (position2 === 'right') x = 0.75;
+    }
+
+    // Add some randomness to avoid perfect overlaps for elements with same position
+    x += (Math.random() * 0.1) - 0.05;
+    y += (Math.random() * 0.1) - 0.05;
+
+    // Constrain within bounds
+    x = Math.max(0.1, Math.min(0.9, x));
+    y = Math.max(0.1, Math.min(0.9, y));
+
+    return { x, y };
+  }
+
+  // Helper function to determine category from object name
+  function getCategoryFromObjectName(name) {
+    name = name.toLowerCase();
+
+    // Map object names to categories
+    if (['person', 'human', 'face', 'head', 'body', 'arm', 'leg', 'hand', 'foot'].includes(name)) {
+      return 'human';
+    } else if (['dog', 'cat', 'bird', 'horse', 'fish', 'animal'].includes(name)) {
+      return 'animal';
+    } else if (['car', 'vehicle', 'truck', 'boat', 'ship', 'plane'].includes(name)) {
+      return 'vehicle';
+    } else if (['house', 'building', 'tower', 'castle', 'roof', 'window', 'door'].includes(name)) {
+      return 'building';
+    } else if (['mountain', 'river', 'lake', 'tree', 'forest', 'sun', 'moon', 'sky', 'cloud'].includes(name)) {
+      return 'landscape';
+    } else if (['chair', 'table', 'book', 'hat', 'crown', 'sword', 'ball'].includes(name)) {
+      return 'object';
+    } else if (['text', 'word', 'letter', 'number', 'label'].includes(name)) {
+      return 'text';
+    } else {
+      // Default for unrecognized objects
+      return 'detail';
+    }
+  }
+</script>
+
+<svelte:head>
+  <title>Precision AI Structure-Preserving Image Generator | Daydream</title>
+  <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+</svelte:head>
+
+<div class="draw-demo-container">
+  <header class="demo-header">
+    <div class="context-input-container">
+      <input
+        id="context-input"
+        type="text"
+        bind:value={additionalContext}
+        placeholder="Describe what you're drawing (e.g., 'A castle on a mountain at sunset')"
+        class="context-input"
+      />
+    </div>
+  </header>
+
+  <div class="canvas-container">
+    <div class="vertical-toolbar">
+        <div class="tool-group">
+        <span class="material-icons tool-icon-label">brush</span>
+        <VerticalSlider
+          min={1}
+          max={20}
+          step={0.5}
+            bind:value={strokeSize}
+          color="#6355FF"
+          height="100px"
+          onChange={() => renderStrokes()}
+          showValue={true}
+          />
+        </div>
+
+        <div class="tool-group">
+        <span class="material-icons tool-icon-label">palette</span>
+          <input
+            type="color"
+            bind:value={strokeColor}
+            on:change={renderStrokes}
+          />
+        </div>
+
+        <div class="tool-group">
+        <span class="material-icons tool-icon-label">opacity</span>
+        <VerticalSlider
+          min={0.1}
+          max={1}
+          step={0.1}
+            bind:value={strokeOpacity}
+          color="#6355FF"
+          height="100px"
+          onChange={() => renderStrokes()}
+          showValue={true}
+          />
+        </div>
+
+      <div class="tool-group toggle-switch">
+        <span class="material-icons tool-icon-label">insights</span>
+        <div class="switch">
+          <input
+            type="checkbox"
+            id="analysis-toggle"
+            bind:checked={showAnalysisView}
+          />
+          <label for="analysis-toggle"></label>
+      </div>
+      </div>
+
+      <button class="tool-button" on:click={clearCanvas}>
+        <span class="material-icons">delete_outline</span>
+      </button>
+    </div>
+
+    <div class="canvas-wrapper input-canvas">
+      <h2>Your Sketch</h2>
+      <canvas
+        bind:this={inputCanvas}
+        class="drawing-canvas"
+        on:pointerdown={startDrawing}
+        on:pointermove={continueDrawing}
+        on:pointerup={endDrawing}
+        on:pointercancel={endDrawing}
+        on:pointerleave={endDrawing}
+      ></canvas>
+
+      {#if showAnalysisView && analysisElements.length > 0}
+        <div class="analysis-overlay">
+          <!-- First render connection lines -->
+          {#each analysisElements as element (element.id)}
+            <!-- Only show connection lines for parent elements -->
+            {#if element.children && element.children.length > 0}
+              {#each element.children as childId}
+                <!-- Find the child element by ID -->
+                {@const childElement = analysisElements.find(e => e.id === childId)}
+                {#if childElement}
+                  <div
+                    class="connection-line"
+                    style="
+                      top: {Math.min(element.y, childElement.y) * 100 + ((Math.abs(element.y - childElement.y) * 100) / 2)}%;
+                      left: {Math.min(element.x, childElement.x) * 100 + ((Math.abs(element.x - childElement.x) * 100) / 2)}%;
+                      width: {Math.sqrt(Math.pow(Math.abs(element.x - childElement.x) * 100, 2) + Math.pow(Math.abs(element.y - childElement.y) * 100, 2))}px;
+                      transform: rotate({Math.atan2(childElement.y - element.y, childElement.x - element.x) * (180 / Math.PI)}deg);
+                      transform-origin: top left;
+                      background-color: {element.color};
+                      opacity: {element.pressure ? element.pressure * 0.7 : 0.5};
+                      height: 2px;
+                    "
+                  ></div>
+                {/if}
+              {/each}
+            {/if}
+          {/each}
+
+          <!-- Then render bounding boxes -->
+          {#each analysisElements as element (element.id)}
+            <!-- Add bounding box for each element -->
+            <div
+              class="bounding-box {element.category || ''} {element.children && element.children.length > 0 ? 'parent-box' : 'child-box'}"
+              style="
+                --box-color: {element.color};
+                left: {element.boundingBox ? element.boundingBox.minX * 100 : element.x * 100 - element.width / 2}%;
+                top: {element.boundingBox ? element.boundingBox.minY * 100 : element.y * 100 - element.height / 2}%;
+                width: {element.boundingBox ? element.boundingBox.width * 100 : element.width}%;
+                height: {element.boundingBox ? element.boundingBox.height * 100 : element.height}%;
+                border-width: {element.pressure ? Math.max(1, element.pressure * 4) : 2}px;
+                opacity: {element.pressure ? element.pressure * 0.9 : 0.6};
+              "
+            >
+              <div
+                class="box-label"
+                style="
+                  font-weight: {element.pressure && element.pressure > 0.6 ? 600 : 500};
+                  opacity: {element.pressure ? element.pressure * 1.2 : 0.9};
+                  {element.boundingBox && element.boundingBox.width < 0.1 ? 'left: -10px; transform: translateX(-100%);' : ''}
+                "
+              >
+                {#if element.category}
+                  <span class="category-indicator" style="background-color: {element.color}"></span>
+                {/if}
+                {element.name}
+              </div>
+            </div>
+
+            <!-- Render analysis elements (circles) -->
+            <div
+              class="analysis-element {element.isChild ? 'child-element' : 'parent-element'} {element.category || ''}"
+              style="
+                left: {element.x * 100}%;
+                top: {element.y * 100}%;
+                --element-color: {element.color};
+                --element-x: {element.x};
+                --element-y: {element.y};
+                transform: scale({element.pressure ? 0.8 + element.pressure * 0.4 : 1});
+              "
+            >
+              <span class="element-label">{element.name}</span>
+              {#if element.children && element.children.length > 0}
+                <div class="element-badge">{element.children.length}</div>
+              {/if}
+              <!-- Precise position marker -->
+              <div
+                class="position-marker"
+                style="
+                  width: {element.pressure ? 4 + element.pressure * 4 : 6}px;
+                  height: {element.pressure ? 4 + element.pressure * 4 : 6}px;
+                  opacity: {element.pressure ? 0.7 + element.pressure * 0.3 : 0.8};
+                "
+              ></div>
+            </div>
+          {/each}
+        </div>
+      {/if}
+    </div>
+
+    <div class="canvas-wrapper output-canvas">
+      <h2>Generated Image</h2>
+      <div class="output-display">
+        {#if generatedImageUrl}
+          <img src={generatedImageUrl} alt="AI generated image" />
+          {#if generatedByModel}
+            <div class="model-badge">
+              Generated by {generatedByModel === 'gpt-image-1' ? 'GPT-image-1' : generatedByModel}
+            </div>
+          {/if}
+        {:else if isGenerating}
+          <div class="ai-scanning-animation">
+            <!-- Show translucent version of the sketch being analyzed -->
+            <div class="sketch-preview">
+              <img src={imageData} alt="Sketch preview" class="sketch-preview-image" />
+              <div class="scanning-line"></div>
+              <div class="scanning-grid"></div>
+              <div class="scan-highlight"></div>
+            </div>
+            <div class="scanning-status">
+              <span>Analyzing structure</span>
+              <div class="status-text">Preserving exact positions and proportions</div>
+            </div>
+          </div>
+        {:else}
+          <div class="empty-output">
+            <p>Your AI-generated image will appear here</p>
+          </div>
+        {/if}
+      </div>
+    </div>
+  </div>
+
+  <div class="action-area">
+    <button
+      class="generate-button"
+      on:click={generateImage}
+      disabled={isGenerating || strokeCount === 0}
+    >
+      <span class="material-icons">image</span>
+      {isGenerating ? 'Generating...' : 'Generate Structure-Perfect Image'}
+    </button>
+
+    {#if errorMessage}
+      <div class="error-message" transition:fade={{ duration: 200 }}>
+        <span class="material-icons">error_outline</span>
+        {errorMessage}
+      </div>
+    {/if}
+
+    <!-- Debug info -->
+    <div class="debug-info">
+      <p>Button state: {isGenerating ? 'Generating in progress' : (strokeCount === 0 ? 'No strokes drawn' : 'Ready to generate')}</p>
+      <p>Stroke count: {strokeCount}</p>
+
+      <!-- Sketch Analysis Section -->
+      <div class="sketch-analysis">
+        <h4>AI Sketch Interpretation:</h4>
+        <div class="analysis-text">
+          {#if isAnalyzing}
+            <div class="analysis-status-tag analyzing">
+            <div class="mini-spinner"></div>
+              <span>Analyzing...</span>
+            </div>
+            <p>{previousSketchAnalysis}</p>
+          {:else}
+            <div class="analysis-status-tag updated">
+              <span class="material-icons">check_circle</span>
+              <span>Up to date</span>
+            </div>
+            <p>{sketchAnalysis}</p>
+          {/if}
+        </div>
+        <button
+          class="analyze-button"
+          on:click={analyzeSketch}
+          disabled={isAnalyzing || strokeCount === 0}
+        >
+          <span class="material-icons">psychology</span>
+          {isAnalyzing ? 'Analyzing...' : 'Analyze Sketch Now'}
+        </button>
+      </div>
+
+      <!-- Stroke Recognition Section -->
+      <div class="stroke-recognition">
+        <h4>Shape Recognition (Stroke-based):</h4>
+        <div class="analysis-text">
+          {#if isRecognizingStrokes}
+            <div class="analysis-status-tag analyzing">
+              <div class="mini-spinner"></div>
+              <span>Analyzing...</span>
+            </div>
+            <p style="white-space: pre-line">{previousStrokeRecognition}</p>
+          {:else}
+            <div class="analysis-status-tag updated">
+              <span class="material-icons">check_circle</span>
+              <span>Up to date</span>
+            </div>
+            <p style="white-space: pre-line">{strokeRecognition}</p>
+          {/if}
+        </div>
+        <button
+          class="analyze-button"
+          on:click={recognizeStrokes}
+          disabled={isRecognizingStrokes || strokeCount === 0}
+        >
+          <span class="material-icons">category</span>
+          {isRecognizingStrokes ? 'Recognizing...' : 'Recognize Shapes Now'}
+        </button>
+      </div>
+
+      <div class="debug-buttons">
+        <!-- Test button to manually add a stroke -->
+        <button
+          on:click={() => {
+            const testStroke = {
+              tool: 'pen' as const,
+              points: [
+                { x: 100, y: 100, pressure: 0.5 },
+                { x: 200, y: 200, pressure: 0.5 }
+              ],
+              color: '#000000',
+              size: 3,
+              opacity: 1
+            };
+            drawingContent.strokes.push(testStroke);
+            // Trigger Svelte reactivity
+            drawingContent = drawingContent;
+            renderStrokes();
+            console.log('Test stroke added, new count:', drawingContent.strokes.length);
+          }}
+          class="test-button"
+        >
+          Add Test Stroke
+        </button>
+
+        <!-- Refresh button to force reactivity updates -->
+        <button
+          class="test-button"
+          on:click={() => {
+            // Force refresh drawingContent to update UI
+            drawingContent = {...drawingContent, strokes: [...drawingContent.strokes]};
+            console.log('Forced refresh. Current stroke count:', drawingContent.strokes.length);
+          }}
+        >
+          Refresh Count
+        </button>
+
+        <button class="test-button" on:click={() => showDebugPressure = !showDebugPressure}>
+          {showDebugPressure ? 'Hide Pressure Debug' : 'Show Pressure Debug'}
+        </button>
+      </div>
+    </div>
+
+    {#if showDebugPressure && drawingContent.strokes.length > 0}
+      <div class="pressure-debug-overlay">
+        {#each drawingContent.strokes as stroke, i}
+          {#each stroke.points as point, j}
+            {#if point.pressure !== undefined}
+              <div
+                class="pressure-point"
+                style="
+                  left: {point.x}px;
+                  top: {point.y}px;
+                  background-color: hsl({Math.floor(point.pressure * 240)}, 100%, 50%);
+                  opacity: {point.pressure};
+                  width: {Math.max(4, point.pressure * 16)}px;
+                  height: {Math.max(4, point.pressure * 16)}px;
+                "
+                title="Pressure: {point.pressure.toFixed(2)}"
+              ></div>
+            {/if}
+          {/each}
+        {/each}
+    </div>
+    {/if}
+
+  </div>
+</div>
+
+<style lang="scss">
+  .draw-demo-container {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    width: 100%;
+    padding: 1rem;
+  }
+
+  .demo-header {
+    text-align: center;
+    margin-bottom: 1rem;
+
+    h1 {
+      font-size: 2rem;
+      margin-bottom: 0.5rem;
+    }
+
+    p {
+      font-size: 1rem;
+      color: #666;
+      margin-bottom: 1rem;
+    }
+
+    .context-input-container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      margin-top: 0.5rem;
+
+      label {
+        font-size: 0.9rem;
+        color: #666;
+        margin-bottom: 0.25rem;
+      }
+
+      .context-input {
+        width: 90%;
+        max-width: 600px;
+        padding: 0.75rem;
+        border: 1px solid #ddd;
+        border-radius: 32px;
+        font-size: 1rem;
+        box-shadow: 0 8px 12px rgba(black, 0.1);
+
+        &:focus {
+          outline: none;
+          //border-color: #9c27b0;
+          //box-shadow: 0 0 0 2px rgba(156, 39, 176, 0.2);
+        }
+      }
+    }
+  }
+
+  .canvas-container {
+    display: flex;
+    justify-content: center;
+    flex: 1;
+    gap: 1rem;
+    margin-bottom: 1rem;
+    min-width: 400px;
+    max-width: 100vw;
+    position: relative;
+
+    @media (max-width: 768px) {
+      flex-direction: column;
+      max-height: none;
+    }
+  }
+
+  .vertical-toolbar {
+    width: 70px;
+    background: #f8f8f8;
+    border: 1px solid #ddd;
+    border-radius: 8px 0 0 8px;
+    display: flex;
+    flex-direction: column;
+    padding: 16px 8px;
+    align-items: center;
+    gap: 24px;
+    z-index: 10;
+    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.1);
+
+    .tool-group {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+      width: 100%;
+      position: relative;
+
+      .tool-icon-label {
+        font-size: 18px;
+        color: #555;
+        margin-bottom: 4px;
+        text-align: center;
+      }
+
+      input[type="color"] {
+        width: 32px;
+        height: 32px;
+        padding: 0;
+        border: 2px solid #ccc;
+        border-radius: 50%;
+        cursor: pointer;
+        background: none;
+        transition: transform 0.2s;
+
+        &::-webkit-color-swatch-wrapper {
+          padding: 0;
+        }
+
+        &::-webkit-color-swatch {
+          border: none;
+          border-radius: 50%;
+        }
+
+        &:hover {
+          transform: scale(1.1);
+          border-color: #6355FF;
+        }
+      }
+
+      &.toggle-switch {
+        .switch {
+          position: relative;
+          width: 34px;
+          height: 18px;
+
+          input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+
+            &:checked + label {
+              background-color: #6355FF;
+
+              &:before {
+                transform: translateX(16px);
+              }
+            }
+          }
+
+          label {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            writing-mode: horizontal-tb;
+            transform: none;
+            margin: 0;
+            background-color: #ccc;
+            transition: .3s;
+            border-radius: 34px;
+
+            &:before {
+              position: absolute;
+              content: "";
+              height: 14px;
+              width: 14px;
+              left: 2px;
+              bottom: 2px;
+              background-color: white;
+              transition: .3s;
+              border-radius: 50%;
+              box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+            }
+          }
+        }
+      }
+    }
+
+    .tool-button {
+      padding: 10px 0;
+      width: 100%;
+      background: none;
+      border: none;
+      cursor: pointer;
+      transition: all 0.2s;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      border-radius: 4px;
+
+      .material-icons {
+        font-size: 22px;
+        color: #555;
+        transition: color 0.2s;
+      }
+
+      &:hover {
+        background: #e0e0e0;
+
+        .material-icons {
+          color: #6355FF;
+        }
+      }
+    }
+  }
+
+  .canvas-wrapper {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    border: 1px solid #e0e0e0;
+    border-radius: 8px;
+    overflow: hidden;
+    background: white;
+    position: relative;
+    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.1);
+    transition: transform 0.3s, box-shadow 0.3s;
+
+    /* Set a consistent aspect ratio */
+    aspect-ratio: 1 / 1;
+
+    /* Allow the canvas to be responsive but maintain max size */
+    //max-width: calc(70vh - 2rem - 70px);
+
+    /* Minimum size constraints */
+    min-height: 300px;
+    min-width: 300px;
+
+    &:hover {
+      box-shadow: 0 12px 30px rgba(0, 0, 0, 0.15);
+      transform: translateY(-2px);
+    }
+
+    h2 {
+      padding: 0.75rem 1rem;
+      margin: 0;
+      background: #f8f8f8;
+      font-size: 1rem;
+      font-weight: 500;
+      color: #424242;
+      border-bottom: 1px solid #e0e0e0;
+      display: none;
+    }
+
+    &.input-canvas {
+      margin-left: 0; /* Remove left margin to connect with toolbar */
+      border-top-left-radius: 0;
+      border-bottom-left-radius: 0;
+    }
+  }
+
+  .drawing-canvas {
+    flex: 1;
+    touch-action: none;
+    display: block;
+    width: 100%;
+    height: 100%;
+    background: #ffffff;
+    cursor: crosshair;
+    /* Ensure the canvas is positioned correctly */
+    position: absolute;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    right: 0;
+    margin: auto;
+  }
+
+  .analysis-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 10;
+  }
+
+  .connection-line {
+    position: absolute;
+    pointer-events: none;
+    opacity: 0.6;
+    z-index: 1;
+  }
+
+  .analysis-element {
+    position: absolute;
+    width: 36px;
+    height: 36px;
+    margin-left: -18px;  /* Half the width */
+    margin-top: -18px;   /* Half the height */
+    border: 2px solid var(--element-color);
+    background-color: rgba(255, 255, 255, 0.9);
+    border-radius: 50%;
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 3px 8px rgba(0, 0, 0, 0.2);
+    transition: transform 0.3s cubic-bezier(0.25, 0.8, 0.25, 1), box-shadow 0.3s ease;
+
+    &:hover {
+      transform: scale(1.15);
+      z-index: 5;
+      box-shadow: 0 6px 12px rgba(0, 0, 0, 0.3);
+    }
+
+    /* Different styles based on categories */
+    &.human, &.animal {
+      &::before {
+        content: '';
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        width: 20px;
+        height: 20px;
+        border-radius: 50%;
+        background-color: rgba(255, 255, 255, 0.2);
+        transform: translate(-50%, -50%);
+        z-index: -1;
+      }
+    }
+
+    &.building, &.landscape {
+      &::before {
+        content: '';
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        width: 16px;
+        height: 16px;
+        background-color: rgba(255, 255, 255, 0.2);
+        transform: translate(-50%, -50%) rotate(45deg);
+        z-index: -1;
+      }
+    }
+
+    &.parent-element {
+      z-index: 3;
+
+      &::after {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        border: 2px dashed var(--element-color);
+        border-radius: 50%;
+        opacity: 0.4;
+        animation: pulsate 3s ease-out infinite;
+      }
+    }
+
+    &.child-element {
+      width: 28px;
+      height: 28px;
+      margin-left: -14px;
+      margin-top: -14px;
+      opacity: 0.9;
+    }
+
+    /* Element label styling */
+    .element-label {
+      position: absolute;
+      top: -24px;
+      left: 50%;
+      transform: translateX(-50%);
+      white-space: nowrap;
+      background-color: var(--element-color);
+      color: white;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 0.7rem;
+      font-weight: 600;
+      opacity: 0;
+      transition: opacity 0.2s, transform 0.2s;
+      pointer-events: none;
+    }
+
+    &:hover .element-label {
+      opacity: 1;
+      transform: translateX(-50%) translateY(-4px);
+    }
+
+    /* Badge for parent elements with children */
+    .element-badge {
+      position: absolute;
+      bottom: -4px;
+      right: -4px;
+      width: 18px;
+      height: 18px;
+      background-color: var(--element-color);
+      border: 2px solid white;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      font-size: 0.6rem;
+      font-weight: bold;
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+    }
+
+    /* Position marker dot for precise center point */
+    .position-marker {
+      position: absolute;
+      width: 6px;
+      height: 6px;
+      background-color: var(--element-color);
+      border-radius: 50%;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.8);
+      opacity: 0.8;
+      pointer-events: none;
+      transition: all 0.3s ease;
+    }
+
+    &:hover .position-marker {
+      width: 8px;
+      height: 8px;
+      box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.9), 0 0 12px rgba(0,0,0,0.3);
+      opacity: 1;
+    }
+  }
+
+  @keyframes pulsate {
+    0% {
+      transform: scale(1);
+      opacity: 0.4;
+    }
+    50% {
+      transform: scale(1.2);
+      opacity: 0.2;
+    }
+    100% {
+      transform: scale(1);
+      opacity: 0.4;
+    }
+  }
+
+  .analysis-element::before {
+    content: '';
+    position: absolute;
+    width: 40px;
+    height: 40px;
+    border: 2px dashed var(--element-color);
+    border-radius: 50%;
+    opacity: 0.6;
+    transform: translate(-50%, -50%);
+    left: 50%;
+    top: 50%;
+    pointer-events: none;
+    animation: rotate 10s infinite linear;
+  }
+
+  /* Add a central dot to mark the exact position */
+  .analysis-element::after {
+    content: '';
+    position: absolute;
+    width: 8px;
+    height: 8px;
+    background-color: var(--element-color);
+    border: 2px solid white;
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+    left: 50%;
+    top: 50%;
+    pointer-events: none;
+    z-index: 25;
+    box-shadow: 0 0 4px rgba(0, 0, 0, 0.3);
+  }
+
+  @keyframes rotate {
+    0% { transform: translate(-50%, -50%) rotate(0deg); }
+    100% { transform: translate(-50%, -50%) rotate(360deg); }
+  }
+
+  .parent-element {
+    z-index: 20;
+  }
+
+  .child-element {
+    height: 24px;
+    min-width: 50px;
+    z-index: 15;
+    font-size: 11px;
+  }
+
+  .child-element::before {
+    width: 30px;
+    height: 30px;
+  }
+
+  .element-badge {
+    position: absolute;
+    top: -8px;
+    right: -8px;
+    background-color: #fff;
+    color: #333;
+    font-size: 10px;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+    border: 1px solid var(--element-color);
+    transition: transform 0.2s;
+
+    &:hover {
+      transform: scale(1.1);
+    }
+  }
+
+  .element-label {
+    color: white;
+    font-size: 11px;
+    font-weight: 600;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+    white-space: nowrap;
+    text-transform: capitalize;
+  }
+
+  @keyframes pulse {
+    0% {
+      opacity: 0.8;
+      transform: translate(-50%, -50%) scale(1);
+      box-shadow: 0 3px 10px rgba(0, 0, 0, 0.2);
+    }
+    50% {
+      opacity: 1;
+      transform: translate(-50%, -50%) scale(1.05);
+      box-shadow: 0 5px 15px rgba(0, 0, 0, 0.25);
+    }
+    100% {
+      opacity: 0.8;
+      transform: translate(-50%, -50%) scale(1);
+      box-shadow: 0 3px 10px rgba(0, 0, 0, 0.2);
+    }
+  }
+
+  .output-display {
+    flex: 1;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    overflow: hidden;
+    background: #f8f8f8;
+    position: relative;
+    aspect-ratio: 1 / 1;
+
+    img {
+      max-width: 100%;
+      max-height: 100%;
+      object-fit: contain;
+      transition: transform 0.3s ease;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+      border-radius: 4px;
+
+      &:hover {
+        transform: scale(1.02);
+      }
+    }
+
+    .model-badge {
+      position: absolute;
+      bottom: 10px;
+      right: 10px;
+      background: rgba(0, 0, 0, 0.7);
+      color: white;
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 0.8rem;
+      backdrop-filter: blur(4px);
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+    }
+
+    .empty-output {
+      color: #999;
+      text-align: center;
+      padding: 2rem;
+    }
+
+    .ai-scanning-animation {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 1rem;
+      width: 90%;
+      max-width: 400px;
+
+      .sketch-preview {
+        position: relative;
+        width: 100%;
+        height: 0;
+        padding-bottom: 100%;
+        overflow: hidden;
+        border-radius: 12px;
+        background: rgba(0, 0, 0, 0.05);
+        box-shadow: 0 6px 20px rgba(0, 0, 0, 0.15);
+
+        .sketch-preview-image {
+          position: absolute;
+          width: 100%;
+          height: 100%;
+          object-fit: contain;
+          opacity: 0.7;
+          filter: contrast(1.1) brightness(1.05);
+        }
+
+        .scanning-line {
+          position: absolute;
+          top: 0;
+          left: 0;
+          width: 100%;
+          height: 6px;
+          background: linear-gradient(to right,
+            rgba(156, 39, 176, 0),
+            rgba(156, 39, 176, 0.7) 50%,
+            rgba(156, 39, 176, 0)
+          );
+          box-shadow: 0 0 15px rgba(156, 39, 176, 0.5);
+          transform: translateY(-100%);
+          animation: scanning-line 2s linear infinite;
+        }
+
+        .scanning-grid {
+          position: absolute;
+          top: 0;
+          left: 0;
+          width: 100%;
+          height: 100%;
+          background-image:
+            linear-gradient(rgba(65, 105, 225, 0.05) 1px, transparent 1px),
+            linear-gradient(90deg, rgba(65, 105, 225, 0.05) 1px, transparent 1px);
+          background-size: 20px 20px;
+          opacity: 0;
+          animation: grid-fade 4s ease-in-out infinite;
+        }
+
+        .scan-highlight {
+          position: absolute;
+        width: 40px;
+        height: 40px;
+        border-radius: 50%;
+          background: radial-gradient(circle, rgba(156, 39, 176, 0.2) 0%, rgba(0, 0, 0, 0) 70%);
+          box-shadow: 0 0 20px rgba(156, 39, 176, 0.3);
+          filter: blur(5px);
+          opacity: 0;
+          animation: scan-point 4s ease-in-out infinite;
+        }
+
+        @keyframes scanning-line {
+          0% { transform: translateY(-100%); }
+          100% { transform: translateY(1000%); }
+        }
+
+        @keyframes grid-fade {
+          0%, 100% { opacity: 0; }
+          50% { opacity: 1; }
+        }
+
+        @keyframes scan-point {
+          0%, 100% {
+            opacity: 0;
+            top: 10%;
+            left: 20%;
+          }
+          25% {
+            opacity: 0.8;
+            top: 30%;
+            left: 70%;
+          }
+          50% {
+            opacity: 0.5;
+            top: 60%;
+            left: 30%;
+          }
+          75% {
+            opacity: 0.8;
+            top: 80%;
+            left: 60%;
+          }
+        }
+      }
+
+      .scanning-status {
+        text-align: center;
+        color: #424242;
+
+        span {
+          font-size: 1rem;
+          font-weight: 500;
+          display: block;
+          margin-bottom: 0.25rem;
+          color: #9c27b0;
+        }
+
+        .status-text {
+          font-size: 0.9rem;
+          opacity: 0.8;
+
+          &::after {
+            content: "";
+            animation: ellipsis-dot 1.5s infinite;
+          }
+        }
+
+        @keyframes ellipsis-dot {
+          0% { content: ""; }
+          25% { content: "."; }
+          50% { content: ".."; }
+          75% { content: "..."; }
+          100% { content: ""; }
+        }
+      }
+    }
+  }
+
+  .action-area {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1.5rem;
+    padding: 1rem 0;
+    max-width: 800px;
+    margin: 0 auto;
+
+    .generate-button, .analyze-button {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      background: linear-gradient(45deg, #7b1fa2, #9c27b0);
+      color: white;
+      border: none;
+      border-radius: 30px;
+      padding: 10px 24px;
+      font-size: 15px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.3s ease;
+      box-shadow: 0 4px 10px rgba(156, 39, 176, 0.3);
+      min-width: 230px;
+      position: relative;
+      overflow: hidden;
+
+      &::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: linear-gradient(45deg, rgba(255,255,255,0.1), rgba(255,255,255,0));
+        opacity: 0;
+        transition: opacity 0.3s ease;
+      }
+
+      &:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 6px 15px rgba(156, 39, 176, 0.4);
+
+        &::before {
+          opacity: 1;
+        }
+      }
+
+      &:active {
+        transform: translateY(1px);
+        box-shadow: 0 2px 5px rgba(156, 39, 176, 0.4);
+      }
+
+      &:disabled {
+        background: linear-gradient(45deg, #9e9e9e, #bdbdbd);
+        cursor: not-allowed;
+        box-shadow: none;
+
+        &:hover {
+          transform: none;
+        }
+      }
+
+      .material-icons {
+        font-size: 18px;
+      }
+    }
+
+    .analyze-button {
+      background: linear-gradient(45deg, #1976d2, #2196f3);
+      box-shadow: 0 4px 10px rgba(33, 150, 243, 0.3);
+
+      &:hover {
+        box-shadow: 0 6px 15px rgba(33, 150, 243, 0.4);
+      }
+
+      &:active {
+        box-shadow: 0 2px 5px rgba(33, 150, 243, 0.4);
+      }
+    }
+
+    .error-message {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: #d32f2f;
+      background: #ffebee;
+      padding: 10px 16px;
+      border-radius: 8px;
+      margin-top: 8px;
+      font-size: 14px;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+      border: 1px solid rgba(211, 47, 47, 0.3);
+      animation: error-pulse 2s infinite;
+
+      .material-icons {
+        color: #d32f2f;
+      }
+
+      @keyframes error-pulse {
+        0%, 100% { box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1); }
+        50% { box-shadow: 0 2px 12px rgba(211, 47, 47, 0.3); }
+      }
+    }
+
+    .mini-spinner {
+      width: 16px;
+      height: 16px;
+      border: 2px solid rgba(255, 255, 255, 0.3);
+      border-top-color: white;
+      border-radius: 50%;
+      animation: spinner 0.8s linear infinite;
+      margin-right: 8px;
+    }
+
+    @keyframes spinner {
+      to {
+        transform: rotate(360deg);
+      }
+    }
+
+    .debug-info {
+      color: #666;
+      padding: 1rem;
+      background: #f5f5f5;
+      border-radius: 8px;
+      width: 100%;
+      max-width: 800px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+      border: 1px solid #e0e0e0;
+
+      p {
+        margin: 0.25rem 0;
+      }
+
+      .sketch-analysis, .stroke-recognition {
+        margin-top: 1rem;
+        padding: 1rem;
+        background: #fff;
+        border-radius: 8px;
+        border: 1px solid #ddd;
+        text-align: left;
+        box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.05);
+
+        h4 {
+          margin: 0 0 0.75rem 0;
+          font-size: 1.1rem;
+          color: #333;
+          display: flex;
+          align-items: center;
+          gap: 8px;
+
+          &::before {
+            content: '';
+            display: block;
+            width: 4px;
+            height: 16px;
+            background-color: #2196f3;
+            border-radius: 2px;
+          }
+        }
+
+        .analysis-text {
+          background: #f8f8f8;
+          padding: 0.75rem;
+          border-radius: 6px;
+          margin: 0.5rem 0;
+          border: 1px solid #e0e0e0;
+          max-height: 150px;
+          overflow-y: auto;
+          position: relative;
+
+          p {
+            margin: 0;
+            opacity: 0.9;
+            line-height: 1.5;
+          }
+        }
+      }
+
+      .stroke-recognition h4::before {
+        background-color: #ff9800;
+      }
+
+      .debug-buttons {
+        display: flex;
+        gap: 8px;
+        margin-top: 1rem;
+
+      .test-button {
+          background: #f5f5f5;
+          border: 1px solid #ddd;
+          padding: 6px 12px;
+        border-radius: 4px;
+          font-size: 12px;
+        cursor: pointer;
+          transition: all 0.2s;
+
+        &:hover {
+            background: #e0e0e0;
+          }
+        }
+      }
+    }
+
+    .tips {
+      max-width: 600px;
+      text-align: left;
+
+      h3 {
+        margin-bottom: 0.5rem;
+      }
+
+      ul {
+        padding-left: 1.5rem;
+        margin: 0;
+
+        li {
+          margin-bottom: 0.25rem;
+        }
+      }
+    }
+  }
+
+  .analysis-status-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 0.7rem;
+    font-weight: 500;
+    margin-bottom: 6px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+
+    &.analyzing {
+      background-color: #FFF3E0;
+      border: 1px solid #FFB74D;
+      color: #E65100;
+    }
+
+    &.updated {
+      background-color: #E8F5E9;
+      border: 1px solid #81C784;
+      color: #2E7D32;
+    }
+
+    .material-icons {
+      font-size: 0.9rem;
+    }
+
+    .mini-spinner {
+      width: 10px;
+      height: 10px;
+      margin-right: 0;
+      border-width: 1px;
+    }
+  }
+
+  .bounding-box {
+    position: absolute;
+    border: 2px dashed var(--box-color);
+    border-radius: 6px;
+    pointer-events: none;
+    opacity: 0.5;
+    transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+    z-index: 1;
+    box-shadow: 0 0 0 rgba(0, 0, 0, 0);
+
+    &:hover {
+      opacity: 0.85;
+      border-width: 3px;
+      box-shadow: 0 0 12px rgba(0, 0, 0, 0.15);
+    }
+
+    /* Different styles for parent vs child boxes */
+    &.parent-box {
+      border-style: dashed;
+      border-width: 3px;
+    }
+
+    &.child-box {
+      border-style: dotted;
+      border-width: 2px;
+    }
+
+    /* Category-specific styles */
+    &.human, &.animal {
+      border-style: solid;
+    }
+
+    &.building, &.landscape {
+      border-style: dashed;
+      border-width: 3px;
+    }
+
+    &.text {
+      border-style: dotted;
+      border-width: 2px;
+    }
+
+    .box-label {
+      position: absolute;
+      top: -28px;
+      left: 0;
+      background-color: var(--box-color);
+      color: white;
+      font-size: 0.8rem;
+      padding: 4px 10px;
+      border-radius: 6px;
+      white-space: nowrap;
+      text-transform: capitalize;
+      font-weight: 600;
+      box-shadow: 0 3px 6px rgba(0, 0, 0, 0.25);
+      opacity: 0.95;
+      pointer-events: none;
+      transform: translateY(0);
+      transition: transform 0.2s ease-out, box-shadow 0.2s ease;
+      letter-spacing: 0.02em;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 5px;
+
+      &:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+      }
+
+      .category-indicator {
+        display: inline-block;
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background-color: inherit;
+        border: 1px solid rgba(255, 255, 255, 0.8);
+      }
+    }
+
+    /* Highlight box corners */
+    &::before, &::after {
+      content: '';
+      position: absolute;
+      width: 8px;
+      height: 8px;
+      border: 2px solid var(--box-color);
+      background: white;
+      opacity: 0.75;
+      transition: opacity 0.3s, width 0.2s, height 0.2s, background 0.2s;
+      pointer-events: none;
+    }
+
+    &::before {
+      top: -5px;
+      left: -5px;
+      border-radius: 50%;
+    }
+
+    &::after {
+      bottom: -5px;
+      right: -5px;
+      border-radius: 50%;
+    }
+
+    &:hover::before, &:hover::after {
+      opacity: 1;
+      width: 10px;
+      height: 10px;
+      background: var(--box-color);
+      border-color: white;
+    }
+  }
+
+  .connection-line {
+    position: absolute;
+    pointer-events: none;
+    opacity: 0.5;
+    z-index: 0;
+    transition: opacity 0.3s, transform 0.3s;
+
+    &::before, &::after {
+      content: '';
+      position: absolute;
+      width: 4px;
+      height: 4px;
+      background-color: currentColor;
+      border-radius: 50%;
+      opacity: 0.8;
+    }
+
+    &::before {
+      left: 0;
+      top: 0;
+      transform: translate(-50%, -50%);
+    }
+
+    &::after {
+      right: 0;
+      top: 0;
+      transform: translate(50%, -50%);
+    }
+  }
+
+  .analysis-element {
+    transition: transform 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+
+    &:hover {
+      transform: scale(1.15);
+      z-index: 5;
+    }
+
+    /* Different styles based on category */
+    &.human, &.animal {
+      &::before {
+        content: '';
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        width: 20px;
+        height: 20px;
+        border-radius: 50%;
+        background-color: rgba(255, 255, 255, 0.2);
+        transform: translate(-50%, -50%);
+        z-index: -1;
+      }
+    }
+
+    &.building, &.landscape {
+      &::before {
+        content: '';
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        width: 16px;
+        height: 16px;
+        background-color: rgba(255, 255, 255, 0.2);
+        transform: translate(-50%, -50%) rotate(45deg);
+        z-index: -1;
+      }
+    }
+
+    /* Position marker dot for precise center point */
+    .position-marker {
+      position: absolute;
+      width: 6px;
+      height: 6px;
+      background-color: var(--element-color);
+      border-radius: 50%;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.8);
+      opacity: 0.8;
+      pointer-events: none;
+      transition: all 0.3s ease;
+    }
+
+    &:hover .position-marker {
+      width: 8px;
+      height: 8px;
+      box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.9), 0 0 12px rgba(0,0,0,0.3);
+      opacity: 1;
+    }
+  }
+
+  .pressure-debug-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 10;
+  }
+
+  .pressure-point {
+    position: absolute;
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+    box-shadow: 0 0 2px rgba(0, 0, 0, 0.3);
+  }
+
+  .debug-buttons {
+    display: flex;
+    gap: 8px;
+    margin-top: 1rem;
+
+    .test-button {
+      background: #f5f5f5;
+      border: 1px solid #ddd;
+      padding: 6px 12px;
+      border-radius: 4px;
+      font-size: 12px;
+      cursor: pointer;
+      transition: all 0.2s;
+
+      &:hover {
+        background: #e0e0e0;
+      }
+    }
+  }
+</style>

@@ -15,6 +15,8 @@ The tech stack:
 - Supabase, for storing and accessing data
 - Fabric.js, for creating and dealing with the canvas pages
 - Perfect-freehand, for dealing with drawing on the Fabric.js canvas in certain areas (see app description below)
+- Svelte Flow, for diagrams with node connections
+- OpenAI API, for AI responses and image generation (gpt-image-1 model for images)
 - GSAP for UI animations
 - SCSS for all styles
 

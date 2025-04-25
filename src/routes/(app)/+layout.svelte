@@ -129,10 +129,11 @@
 <style lang="scss">
   .app-container {
     width: 100%;
-    height: 100vh;
+    height: 100%;
     display: flex;
     flex-direction: column;
     background-color: var(--background-color);
+    background: rgb(145, 150, 185);
     color: var(--text-color);
     transition: background-color 0.3s ease, color 0.3s ease;
   }

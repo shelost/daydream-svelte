@@ -24,7 +24,9 @@ A sophisticated canvas drawing application built with SvelteKit, Fabric.js, Perf
 
 ### Prerequisites
 
-- Node.js (v16+)
+- **Node.js**: Version 18 or higher (required)
+  - We recommend using [nvm](https://github.com/nvm-sh/nvm) to manage Node.js versions
+  - Run `nvm use` in the project directory to automatically use the correct version
 - npm or yarn
 - Supabase account and project
 
@@ -36,22 +38,27 @@ A sophisticated canvas drawing application built with SvelteKit, Fabric.js, Perf
    cd daydream-svelte
    ```
 
-2. Install dependencies
+2. Ensure you're using Node.js 18+
+   ```
+   nvm use
+   ```
+
+3. Install dependencies
    ```
    npm install
    ```
 
-3. Set up environment variables
+4. Set up environment variables
    Create a `.env` file in the root directory with the following variables:
    ```
    PUBLIC_SUPABASE_URL=https://your-supabase-project.supabase.co
    PUBLIC_SUPABASE_ANON_KEY=your-anon-key
    ```
 
-4. Run the SQL schema in your Supabase project
+5. Run the SQL schema in your Supabase project
    Copy the contents of `schema.sql` and run it in the Supabase SQL editor
 
-5. Start the development server
+6. Start the development server
    ```
    npm run dev
    ```

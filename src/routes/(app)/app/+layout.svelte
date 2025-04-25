@@ -146,13 +146,18 @@
 </script>
 
 <div class="app-layout">
-  <Sidebar currentPageId={currentPageId} />
+
+  <div class = 'navbar'>
+    <Sidebar currentPageId={currentPageId} />
+  </div>
+
   <div class="main-content">
     <slot />
   </div>
 
+  {#if $page.url.pathname !== '/app' }
 
-  <div class = 'sidebar'>
+  <div class = 'sidebar' in:fly={{ x: 500, duration: 600 }} out:fly={{ x: 500, duration: 800 }}>
       <Panel
         on:objectUpdate={handleObjectUpdate}
         on:clearSelection={handleClearSelection}
@@ -162,13 +167,16 @@
         on:distributeSelection={handleDistributeSelection}
       />
 
+      <!--
     {#if $page.url.pathname.includes('drawing')}
       <div class = 'panel' in:fly={{ x: 500, duration: 600 }} out:fly={{ x: 500, duration: 800 }}>
         <AIPanel />
       </div>
     {/if}
+  -->
 
   </div>
+  {/if}
 
 
 
@@ -177,20 +185,39 @@
 <style lang="scss">
   .app-layout {
     width: 100%;
-    height: calc(100vh);
-    gap: 12px;
+    height: 100%;
+    gap: 0px;
     display: flex;
     overflow: hidden;
     position: relative;
+    border-radius: 0px;
+    box-shadow: -20px 40px 60px 0 rgba(black, 0.5);
+  }
+
+  .navbar{
+    /*
+    position: absolute;
+    top: 0;
+    left: 0;
+    */
+    box-sizing: border-box;
+    height: 100%;
+    border: none;
+    z-index: 2;
+    filter: drop-shadow(-24px 36px 48px rgba(black, 0.2));
   }
 
   .sidebar {
+    /*
     position: absolute;
-    box-sizing: border-box;
+
     top: 0;
     right: 0;
+
+    */
+
+    box-sizing: border-box;
     height: 100%;
-    padding: 18px;
     background: none;
     border: none;
     filter: drop-shadow(24px 48px 48px rgba(black, 0.2));

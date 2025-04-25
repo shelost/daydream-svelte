@@ -2,7 +2,7 @@ import { json } from '@sveltejs/kit';
 import { OPENAI_API_KEY } from '$env/static/private';
 import type { RequestHandler } from './$types';
 import type { ChatMessage } from '$lib/openai/api';
-import { svgFromStrokes } from '$lib/utils/drawingUtils';
+import { svgFromStrokes } from '$lib/utils/drawingUtils.js';
 import { analyzeImageWithVision, generateImageDescription } from '$lib/services/googleVision';
 
 // Define types for OpenAI responses
@@ -194,8 +194,8 @@ export const POST: RequestHandler = async (event) => {
 
     // Determine which OpenAI model to use based on if we're using image data
     const model = imageData && imageData.startsWith('data:image/')
-      ? 'gpt-4-turbo' // Use vision-capable model for images
-      : 'gpt-4-turbo'; // Use text-only model for SVG
+      ? 'gpt-4o' // Use vision-capable model for images
+      : 'gpt-4o'; // Use text-only model for SVG
 
     // Make API call to OpenAI
     const response = await fetch('https://api.openai.com/v1/chat/completions', {

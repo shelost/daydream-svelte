@@ -8,7 +8,7 @@
   import { pages } from '$lib/stores/pages';
   import type { Tool, CanvasContent, DrawingContent } from '$lib/types';
   import { updatePageContent, createPage, getPage, uploadThumbnail } from '$lib/supabase/pages';
-  import { getSvgPathFromStroke } from '$lib/utils/drawingUtils';
+  import { getSvgPathFromStroke } from '$lib/utils/drawingUtils.js';
   import { user } from '$lib/stores/auth';
   import ZoomControl from './ZoomControl.svelte';
 
@@ -4307,7 +4307,6 @@
       position: absolute;
       top: 0;
       left: 0;
-      border: 1px solid yellow;
     }
 
     .instructions {

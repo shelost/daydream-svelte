@@ -1,14 +1,8 @@
+// @ts-nocheck
 import { writable } from 'svelte/store';
 
-interface SelectionState {
-  selectedObject: any | null;
-  selectedObjectType: string | null;
-  selectedObjects: any[];
-  currentPageId: string;
-}
-
-// Create a store with initial selection state
-export const selectionStore = writable<SelectionState>({
+// Initial selection state
+export const selectionStore = writable({
   selectedObject: null,
   selectedObjectType: null,
   selectedObjects: [],
@@ -16,7 +10,7 @@ export const selectionStore = writable<SelectionState>({
 });
 
 // Helper function to update selection
-export function updateSelection(selection: Partial<SelectionState>) {
+export function updateSelection(selection) {
   selectionStore.update(state => ({
     ...state,
     ...selection

@@ -139,12 +139,13 @@
     height: 100%;
     box-sizing: border-box;
     width: 200px;
-    transition: width $transition-normal;
+    transition: $transition-normal;
     display: flex;
     flex-direction: column;
     overflow-y: auto;
-    background: none;
-    border: none;A
+    background: var(--sidebar-bg);
+    border: none;
+    box-shadow: none;
 
     &.collapsed {
       width: 60px !important;

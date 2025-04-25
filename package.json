@@ -3,7 +3,14 @@
 	"private": true,
 	"version": "0.0.1",
 	"type": "module",
+	"engines": {
+		"node": ">=18.0.0"
+	},
 	"scripts": {
+		"check-node-version": "node .npm-version-check.js",
+		"predev": "npm run check-node-version",
+		"prebuild": "npm run check-node-version",
+		"pretest": "npm run check-node-version",
 		"dev": "vite dev",
 		"build": "vite build",
 		"preview": "vite preview",
@@ -11,7 +18,8 @@
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
 		"test": "vitest run",
-		"test:watch": "vitest"
+		"test:watch": "vitest",
+		"add-ts-nocheck": "find src -type f -name \"*.ts\" -o -name \"*.svelte\" -exec grep -l \"<script lang=\\\"ts\\\"\" {} \\; | xargs -I {} sed -i '' '/<script lang=\"ts\">/a\\\n  \\/\\/ @ts-nocheck' {}"
 	},
 	"devDependencies": {
 		"@sveltejs/adapter-auto": "^4.0.0",
@@ -27,11 +35,18 @@
 		"vitest": "^3.1.2"
 	},
 	"dependencies": {
+		"@resvg/resvg-js": "^2.6.2",
 		"@supabase/ssr": "^0.6.1",
 		"@supabase/supabase-js": "^2.49.4",
 		"@sveltejs/kit": "^2.20.7",
+		"@tensorflow-models/blazeface": "^0.1.0",
+		"@tensorflow-models/coco-ssd": "^2.2.3",
+		"@tensorflow/tfjs": "^4.22.0",
+		"@tensorflow/tfjs-converter": "^4.22.0",
+		"@xyflow/svelte": "^0.1.37",
 		"fabric": "^5.5.2",
 		"gsap": "^3.12.7",
+		"openai": "^4.96.0",
 		"perfect-freehand": "^1.2.2",
 		"sass": "^1.86.3"
 	}

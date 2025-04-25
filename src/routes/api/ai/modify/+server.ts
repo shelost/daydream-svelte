@@ -2,7 +2,7 @@ import { json } from '@sveltejs/kit';
 import { OPENAI_API_KEY } from '$env/static/private';
 import type { RequestHandler } from './$types';
 import type { Stroke } from '$lib/types';
-import { svgFromStrokes } from '$lib/utils/drawingUtils';
+import { svgFromStrokes } from '$lib/utils/drawingUtils.js';
 
 export const POST: RequestHandler = async ({ request }) => {
   try {

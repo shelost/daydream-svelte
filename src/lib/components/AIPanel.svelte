@@ -514,7 +514,7 @@
     display: flex;
     flex-direction: column;
     height: 100%;
-    width: 300px;
+    width: 260px;
     background-color: #fafafa;
     border-radius: 12px;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);

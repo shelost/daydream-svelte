@@ -1,21 +1,21 @@
 import { writable, derived } from 'svelte/store';
 import type { User } from '@supabase/supabase-js';
-import type { Page, Tool, SaveStatus, Profile } from '$lib/types';
 
 // Initialize stores
-export const user = writable<User | null>(null);
-export const profile = writable<Profile | null>(null);
-export const currentPage = writable<Page | null>(null);
-export const pages = writable<Page[]>([]);
-export const selectedTool = writable<Tool>('select');
-export const saveStatus = writable<SaveStatus>('saved');
-export const isSidebarOpen = writable<boolean>(true);
+export const user = writable(null);
+export const profile = writable(null);
+export const currentPage = writable(null);
+export const pages = writable([]);
+export const selectedTool = writable('select');
+export const saveStatus = writable('saved');
+export const isSidebarOpen = writable(true);
 
 // Derived stores
 export const pagesByType = derived(pages, ($pages) => {
   const canvasPages = $pages.filter(page => page.type === 'canvas');
   const drawingPages = $pages.filter(page => page.type === 'drawing');
-  return { canvasPages, drawingPages };
+  const diagramPages = $pages.filter(page => page.type === 'diagram');
+  return { canvasPages, drawingPages, diagramPages };
 });
 
 export const isLoggedIn = derived(user, ($user) => $user !== null);
@@ -31,7 +31,7 @@ export const userInitials = derived(profile, ($profile) => {
 });
 
 // Helper function to update save status with auto-reset
-export function updateSaveStatus(status: SaveStatus) {
+export function updateSaveStatus(status) {
   saveStatus.set(status);
 
   if (status === 'saving') {
