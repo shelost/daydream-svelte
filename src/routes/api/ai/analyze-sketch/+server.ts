@@ -122,74 +122,90 @@ Provide a clear, detailed analysis that helps understand the structure and conte
     // Extract results
     const analysisResult = response.choices[0].message.content;
 
-    // For enhanced analysis with JSON, parse the results
-    if (enhancedAnalysis && requestHierarchy && requestPositions && responseFormat) {
-      try {
-        const parsedResult = JSON.parse(analysisResult || '{}');
-
-        // Ensure we have the expected fields
-        if (!parsedResult.detectedObjects) {
-          parsedResult.detectedObjects = [];
-        }
-
-        // Set default colors for categories if not provided
-        if (Array.isArray(parsedResult.detectedObjects)) {
-          const categoryColors = {
-            'human': '#FF5733',
-            'animal': '#FF33A5',
-            'building': '#3357FF',
-            'nature': '#33FF57',
-            'object': '#33A5FF',
-            'vehicle': '#FF9900',
-            'face': '#FF7F50',
-            'head': '#FFA07A',
-            'body': '#E9967A',
-            'default': '#9C27B0'
-          };
-
-          // Process each object to ensure it has all required properties
-          parsedResult.detectedObjects.forEach((obj: any, index: number) => {
-            // Ensure object has an ID
-            if (!obj.id) {
-              obj.id = `obj_${index}`;
-            }
-
-            // Ensure position values are valid numbers between 0 and 1
-            if (typeof obj.x !== 'number' || obj.x < 0 || obj.x > 1) {
-              obj.x = 0.5; // Default to center if invalid
-            }
-            if (typeof obj.y !== 'number' || obj.y < 0 || obj.y > 1) {
-              obj.y = 0.5; // Default to center if invalid
-            }
-
-            // Set colors based on category
-            if (!obj.color) {
-              const category = (obj.category || '').toLowerCase();
-              const name = (obj.name || '').toLowerCase();
-
-              obj.color = categoryColors[category] ||
-                          categoryColors[name] ||
-                          categoryColors.default;
-            }
-
-            // Ensure children array exists
-            if (!Array.isArray(obj.children)) {
-              obj.children = [];
-            }
-          });
-        }
-
-        console.log('Processed detected objects:', parsedResult.detectedObjects.length);
-        return json(parsedResult);
-      } catch (error) {
-        console.error('Error parsing JSON response from OpenAI:', error);
-        // Fall back to text response if JSON parsing fails
-        return json({ description: analysisResult });
-      }
+    // Return simple text description for basic analysis
+    if (!enhancedAnalysis || !requestHierarchy || !requestPositions) {
+      return json({
+        description: analysisResult,
+        // Add analysis object for consistency with ShapeRecognitionDialog expectations
+        analysis: {
+          content: analysisResult || 'No analysis available',
+          confidence: 0.8 // Default confidence for text analysis
+        },
+        detectedObjects: [] // Empty array to avoid null/undefined
+      });
     }
 
-    // Return simple text description for basic analysis
-    return json({ description: analysisResult });
+    // Return structured JSON response for enhanced analysis
+    try {
+      const parsedResult = JSON.parse(analysisResult || '{}');
+
+      // Ensure we have the expected fields
+      if (!parsedResult.detectedObjects) {
+        parsedResult.detectedObjects = [];
+      }
+
+      // Add analysis object for consistency with ShapeRecognitionDialog expectations
+      if (!parsedResult.analysis) {
+        parsedResult.analysis = {
+          content: parsedResult.description || 'No analysis available',
+          confidence: 0.8 // Default confidence
+        };
+      }
+
+      // Set default colors for categories if not provided
+      if (Array.isArray(parsedResult.detectedObjects)) {
+        const categoryColors = {
+          'human': '#FF5733',
+          'animal': '#FF33A5',
+          'building': '#3357FF',
+          'nature': '#33FF57',
+          'object': '#33A5FF',
+          'vehicle': '#FF9900',
+          'face': '#FF7F50',
+          'head': '#FFA07A',
+          'body': '#E9967A',
+          'default': '#9C27B0'
+        };
+
+        // Process each object to ensure it has all required properties
+        parsedResult.detectedObjects.forEach((obj: any, index: number) => {
+          // Ensure object has an ID
+          if (!obj.id) {
+            obj.id = `obj_${index}`;
+          }
+
+          // Ensure position values are valid numbers between 0 and 1
+          if (typeof obj.x !== 'number' || obj.x < 0 || obj.x > 1) {
+            obj.x = 0.5; // Default to center if invalid
+          }
+          if (typeof obj.y !== 'number' || obj.y < 0 || obj.y > 1) {
+            obj.y = 0.5; // Default to center if invalid
+          }
+
+          // Set colors based on category
+          if (!obj.color) {
+            const category = (obj.category || '').toLowerCase();
+            const name = (obj.name || '').toLowerCase();
+
+            obj.color = categoryColors[category] ||
+                        categoryColors[name] ||
+                        categoryColors.default;
+          }
+
+          // Ensure children array exists
+          if (!Array.isArray(obj.children)) {
+            obj.children = [];
+          }
+        });
+      }
+
+      console.log('Processed detected objects:', parsedResult.detectedObjects.length);
+      return json(parsedResult);
+    } catch (error) {
+      console.error('Error parsing JSON response from OpenAI:', error);
+      // Fall back to text response if JSON parsing fails
+      return json({ description: analysisResult });
+    }
   } catch (error) {
     console.error('Error analyzing sketch:', error);
     return json({ error: error instanceof Error ? error.message : 'Internal server error' }, { status: 500 });

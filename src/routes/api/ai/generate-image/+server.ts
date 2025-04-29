@@ -107,7 +107,8 @@ export const POST: RequestHandler = async (event) => {
       additionalContext,
       sketchAnalysis,
       strokeRecognition,
-      structuralDetails
+      structuralDetails,
+      aspectRatio
     } = await event.request.json();
 
     if (!drawingContent || !imageData) {
@@ -119,78 +120,7 @@ export const POST: RequestHandler = async (event) => {
 
     // Log received data for debugging
     console.log('Drawing content received, strokes:', drawingContent.strokes?.length);
-
-    // Sanitize the additional context provided by the user
-    const sanitizedContext = sanitizeInput(additionalContext || '');
-    if (sanitizedContext) {
-      console.log('Sanitized context:', sanitizedContext);
-    }
-
-    // Sanitize the sketch analysis if provided
-    const sanitizedSketchAnalysis = sanitizeInput(sketchAnalysis || '');
-    if (sanitizedSketchAnalysis && sanitizedSketchAnalysis !== "draw something to see ai's interpretation") {
-      console.log('Sketch analysis included:', sanitizedSketchAnalysis.substring(0, 100) + '...');
-    }
-
-    // Sanitize the stroke recognition if provided
-    const sanitizedStrokeRecognition = sanitizeInput(strokeRecognition || '');
-    if (sanitizedStrokeRecognition && sanitizedStrokeRecognition !== "draw something to see shapes recognized") {
-      console.log('Stroke recognition included:', sanitizedStrokeRecognition.substring(0, 100) + '...');
-    }
-
-    // Check if we have detailed structural information
-    let structuralGuideFromElements = '';
-    if (structuralDetails && structuralDetails.elements && structuralDetails.elements.length > 0) {
-      console.log('Detailed structural information provided for', structuralDetails.elementCount, 'elements');
-
-      // Create a detailed structural guide based on the precise element positions
-      structuralGuideFromElements = 'PRECISE ELEMENT POSITIONS AND DIMENSIONS:\n';
-
-      structuralDetails.elements.forEach(element => {
-        // Add each element with its precise position and size
-        structuralGuideFromElements += `- ${element.name.toUpperCase()}: located at coordinates (${(element.position.x * 100).toFixed(1)}%, ${(element.position.y * 100).toFixed(1)}%) `;
-
-        // Add bounding box information if available
-        if (element.bounds) {
-          structuralGuideFromElements += `with bounding box from (${(element.bounds.minX * 100).toFixed(1)}%, ${(element.bounds.minY * 100).toFixed(1)}%) `;
-          structuralGuideFromElements += `to (${(element.bounds.maxX * 100).toFixed(1)}%, ${(element.bounds.maxY * 100).toFixed(1)}%), `;
-          structuralGuideFromElements += `width ${(element.bounds.width * 100).toFixed(1)}% of canvas, `;
-          structuralGuideFromElements += `height ${(element.bounds.height * 100).toFixed(1)}% of canvas. `;
-        }
-
-        // Add parent/child relationships if applicable
-        if (element.isChild && element.parentId) {
-          const parentElement = structuralDetails.elements.find(e => e.id === element.parentId);
-          if (parentElement) {
-            structuralGuideFromElements += `Part of ${parentElement.name}. `;
-          }
-        }
-
-        if (element.children && element.children.length > 0) {
-          structuralGuideFromElements += `Contains ${element.children.length} child elements. `;
-        }
-
-        structuralGuideFromElements += '\n';
-      });
-
-      // Add information about spatial relationships between elements
-      structuralGuideFromElements += '\nSPATIAL RELATIONSHIPS:\n';
-
-      // For elements with children, describe their relationship
-      const parentsWithChildren = structuralDetails.elements.filter(e => e.children && e.children.length > 0);
-
-      parentsWithChildren.forEach(parent => {
-        const childrenElements = parent.children.map(childId =>
-          structuralDetails.elements.find(e => e.id === childId)
-        ).filter(Boolean);
-
-        if (childrenElements.length > 0) {
-          structuralGuideFromElements += `- ${parent.name.toUpperCase()} contains: ${childrenElements.map(c => c.name).join(', ')}.\n`;
-        }
-      });
-
-      console.log('Generated structural guide from element data');
-    }
+    console.log('Aspect ratio received:', aspectRatio);
 
     // Extract any text detected in the drawing from the textAnalysis
     let extractedText = '';
@@ -269,7 +199,7 @@ Analyze the image as if it were to be precisely replicated with perfect structur
     });
 
     // Extract the detailed structural analysis
-    const structuralGuide = structuralGuideFromElements || structureAnalysis.choices[0].message.content;
+    const structuralGuide = structureAnalysis.choices[0].message.content;
     console.log('Detailed structural analysis obtained');
 
     // Now perform a compositional analysis focused specifically on the canvas proportions and framing
@@ -365,15 +295,13 @@ Focus on:
     prompt += `CONTENT DESCRIPTION: ${contentGuide}\n\n`;
 
     // Add user's additional context if provided (preserve this as high priority)
+    const sanitizedContext = sanitizeInput(additionalContext || '');
     if (sanitizedContext) {
       prompt += `USER'S CONTEXT: "${sanitizedContext}"\n\n`;
     }
 
     // Include the detailed structural information if available (highest priority)
-    if (structuralGuideFromElements) {
-      prompt += `PRECISE ELEMENT LOCATIONS: ${structuralGuideFromElements}\n\n`;
-    } else {
-      // Include the detailed structural analysis (reduced priority)
+    if (structuralGuide) {
       prompt += `STRUCTURAL GUIDE: ${structuralGuide}\n\n`;
     }
 
@@ -381,13 +309,14 @@ Focus on:
     prompt += `COMPOSITION GUIDE: ${compositionGuide}\n\n`;
 
     // Add stroke-based recognition if available
+    const sanitizedStrokeRecognition = sanitizeInput(strokeRecognition || '');
     if (sanitizedStrokeRecognition && sanitizedStrokeRecognition !== "draw something to see shapes recognized") {
       prompt += `RECOGNIZED SHAPES: ${sanitizedStrokeRecognition}\n\n`;
     }
 
     // Include sketch analysis if available
-    if (sanitizedSketchAnalysis && sanitizedSketchAnalysis !== "draw something to see ai's interpretation") {
-      prompt += `USER'S SKETCH ANALYSIS: ${sanitizedSketchAnalysis}\n\n`;
+    if (sketchAnalysis && sketchAnalysis !== "draw something to see ai's interpretation") {
+      prompt += `USER'S SKETCH ANALYSIS: ${sketchAnalysis}\n\n`;
     }
 
     // Add information about detected objects/text if available
@@ -407,14 +336,32 @@ Focus on:
 
     console.log('Generating image with GPT-Image-1, prompt length:', prompt.length);
 
+    // Determine image size based on aspect ratio
+    let imageSize: "1024x1024" | "1792x1024" | "1024x1792" = "1024x1024"; // Default square
+    if (aspectRatio) {
+      switch(aspectRatio) {
+        case '4:5':
+          imageSize = "1024x1792"; // For portrait 4:5 ratio, use the portrait option
+          break;
+        case '1:1':
+          imageSize = "1024x1024"; // Square
+          break;
+        case '9:16':
+          imageSize = "1024x1792"; // For tall portrait 9:16 ratio, also use portrait option
+          break;
+        default:
+          imageSize = "1024x1024"; // Default to square if unknown ratio
+      }
+    }
+    console.log('Using image size:', imageSize);
+
     try {
       // Use GPT-Image-1 model with only supported parameters
       const response = await openai.images.generate({
         model: "gpt-image-1",
         prompt: prompt,
         n: 1,
-        size: "1024x1024" // Square canvas to match our sketches
-        // Removed DALL-E specific parameters: style and quality
+        size: imageSize
       });
 
       // Check if the response has the expected format
@@ -430,13 +377,15 @@ Focus on:
           return json({
             imageUrl: generatedImage.url,
             url: generatedImage.url,
-            model: "gpt-image-1"
+            model: "gpt-image-1",
+            aspectRatio: aspectRatio // Return the aspect ratio used
           });
         } else if (generatedImage.b64_json) {
           return json({
             imageUrl: `data:image/png;base64,${generatedImage.b64_json}`,
             url: `data:image/png;base64,${generatedImage.b64_json}`,
-            model: "gpt-image-1"
+            model: "gpt-image-1",
+            aspectRatio: aspectRatio // Return the aspect ratio used
           });
         }
       }

@@ -112,6 +112,11 @@
   let previousAnalyzedStrokeCount = 0; // Track stroke count for analysis
   let previousRecognizedStrokeCount = 0; // Track stroke count for recognition
 
+  // Variables for latest analysis results from API endpoints
+  let sketchAnalysisOutput: any = null; // Store the full sketch analysis result
+  let strokesAnalysisOutput: any = null; // Store the full stroke analysis result
+  let currentCanvasSnapshot: string = ''; // Store the current canvas snapshot
+
   // Function to determine if an event is a real user edit vs. a programmatic change
   function isRealUserEdit(): boolean {
     // Skip during resize events - these aren't user edits
@@ -221,30 +226,44 @@
 
     const container = inputCanvas.parentElement;
     const containerWidth = container.clientWidth;
-    const containerHeight = container.clientHeight;
+    const containerHeight = container.clientHeight - 50; // Account for header
 
     // Get the selected aspect ratio value
     const targetRatio = aspectRatios[selectedAspectRatio];
 
-    let newCanvasWidth = containerWidth;
-    let newCanvasHeight = containerWidth / targetRatio;
+    // Calculate dimensions that will fit in the container while maintaining aspect ratio
+    let newCanvasWidth = 0;
+    let newCanvasHeight = 0;
 
-    // Adjust if height exceeds container height
-    if (newCanvasHeight > containerHeight) {
-      newCanvasHeight = containerHeight;
-      newCanvasWidth = containerHeight * targetRatio;
+    // For vertical aspect ratios (height > width)
+    if (targetRatio < 1) {
+      // Start by trying to fit the height
+      newCanvasHeight = Math.min(containerHeight, 800); // Cap at 800px height
+      newCanvasWidth = newCanvasHeight * targetRatio;
+
+      // If width exceeds container width, recalculate based on width
+      if (newCanvasWidth > containerWidth) {
+        newCanvasWidth = containerWidth;
+        newCanvasHeight = newCanvasWidth / targetRatio;
+      }
     }
+    // For square or horizontal aspect ratios
+    else {
+      // Start by trying to fit the width
+      newCanvasWidth = Math.min(containerWidth, 800); // Cap at 800px width
+      newCanvasHeight = newCanvasWidth / targetRatio;
 
-    // Ensure width doesn't exceed container width (can happen if container is tall and thin)
-    if (newCanvasWidth > containerWidth) {
-      newCanvasWidth = containerWidth;
-      newCanvasHeight = containerWidth / targetRatio;
+      // If height exceeds container height, recalculate based on height
+      if (newCanvasHeight > containerHeight) {
+        newCanvasHeight = containerHeight;
+        newCanvasWidth = newCanvasHeight * targetRatio;
+      }
     }
 
     // Use a fixed internal resolution for high quality, but maintain the aspect ratio
     const internalResolutionBase = 1024;
-    const internalWidth = internalResolutionBase;
-    const internalHeight = Math.round(internalResolutionBase / targetRatio);
+    const internalWidth = Math.round(internalResolutionBase * targetRatio);
+    const internalHeight = internalResolutionBase;
 
     // Set internal canvas dimensions (for rendering)
     inputCanvas.width = internalWidth;
@@ -546,7 +565,7 @@
 
       try {
         // Capture the current canvas as an image
-        const imageData = inputCanvas.toDataURL('image/png');
+        const imageData = captureCanvasSnapshot();
 
         // First, use our enhanced sketch analysis endpoint
         const response = await fetch('/api/ai/analyze-sketch', {
@@ -581,6 +600,25 @@
 
         const result = await response.json();
         sketchAnalysis = result.description || 'No analysis available';
+
+        // Format the sketchAnalysisOutput properly for the ShapeRecognitionDialog
+        sketchAnalysisOutput = {
+          ...result,
+          // Ensure there's an analysis object with content and confidence properties
+          analysis: {
+            content: result.description || 'No content analysis',
+            confidence: 0.8 // Default confidence if not provided by API
+          },
+          // Ensure each detected object has a valid confidence value
+          detectedObjects: Array.isArray(result.detectedObjects)
+            ? result.detectedObjects.map(obj => ({
+                ...obj,
+                confidence: typeof obj.confidence === 'number' ? obj.confidence : 0.7 // Default confidence
+              }))
+            : []
+        };
+
+        console.log('Formatted sketch analysis output:', sketchAnalysisOutput);
 
         // Process detected objects as before
         if (result.detectedObjects && Array.isArray(result.detectedObjects)) {
@@ -876,6 +914,7 @@
 
         const result = await response.json();
         recognitionResult = result; // Store the full API response
+        strokesAnalysisOutput = result; // Store the full API response for the dialog
 
         // Format the recognition result for display
         if (result.analysis.type === 'drawing') {
@@ -1048,6 +1087,11 @@
       errorMessage = null;
       generatedByModel = null;
 
+      // Store the current aspect ratio to use for the generated image
+      // This ensures the generated image matches the drawing canvas
+      generatedImageAspectRatio = selectedAspectRatio;
+      console.log(`Using aspect ratio ${selectedAspectRatio} (${aspectRatios[selectedAspectRatio]}) for generated image`);
+
       // Capture the canvas image and store it for preview during loading
       imageData = inputCanvas.toDataURL('image/png');
 
@@ -1128,7 +1172,8 @@
           sketchAnalysis: sketchAnalysis,
           strokeRecognition: strokeRecognition,
           structuralDetails: structuralDetails, // Send the detailed structural information
-          aspectRatio: selectedAspectRatio // Add the selected aspect ratio
+          aspectRatio: selectedAspectRatio, // Explicitly set the selected aspect ratio
+          aspectRatioValue: aspectRatios[selectedAspectRatio] // Also pass the numerical value for precision
         })
       });
 
@@ -1151,9 +1196,12 @@
         return;
       }
 
-      // Set the URL and model values
+      // Set the URL and model values, and store returned aspect ratio if available
       generatedImageUrl = imageUrl;
       generatedByModel = result.model || 'AI Model';
+      if (result.aspectRatio) {
+        generatedImageAspectRatio = result.aspectRatio;
+      }
     } catch (error) {
       console.error('Error generating image:', error);
       errorMessage = error instanceof Error ? error.message : 'An unknown error occurred';
@@ -1574,11 +1622,14 @@
 
   // State variables for Shape Recognition Dialog
   let showShapeRecognitionDialog = false;
-  let shapeDialogPosition = { right: '20px', top: '80px' }; // Updated type to match expected
   let showAIDebugMode = false;
 
   // Function to toggle Shape Recognition Dialog
   function toggleShapeRecognitionDialog() {
+    // Capture canvas snapshot when dialog is opened
+    if (!showShapeRecognitionDialog) {
+      currentCanvasSnapshot = captureCanvasSnapshot();
+    }
     showShapeRecognitionDialog = !showShapeRecognitionDialog;
   }
 
@@ -1587,18 +1638,60 @@
     showAIDebugMode = !showAIDebugMode;
   }
 
-  let buttonPosition = { right: '20px', bottom: '20px' }; // Declare buttonPosition
+  // Position for the shape recognition button
+  let buttonPosition = { right: '20px', bottom: '70px' };
+  // Position for the shape recognition dialog
+  let shapeDialogPosition = { right: '20px', top: '120px' };
 
   // State for aspect ratio
-  let selectedAspectRatio = '4:5'; // Default aspect ratio
+  let selectedAspectRatio = '4:5'; // Default aspect ratio (vertical 4:5)
   const aspectRatios = {
-    '4:5': 4 / 5,
-    '1:1': 1 / 1,
-    '9:16': 9 / 16
+    '4:5': 4 / 5,   // Vertical 4:5 aspect ratio
+    '1:1': 1 / 1,   // Square aspect ratio
+    '9:16': 9 / 16  // Vertical 9:16 aspect ratio (more extreme vertical)
   };
+
+  // Store the aspect ratio of the generated image
+  let generatedImageAspectRatio = '4:5'; // Default to match the selectedAspectRatio
+
+  // Update the generated image aspect ratio when the canvas aspect ratio changes
+  $: {
+    if (selectedAspectRatio) {
+      // When aspect ratio changes, update the generated image aspect ratio
+      // This ensures that the AI output will match the drawing canvas
+      generatedImageAspectRatio = selectedAspectRatio;
+
+      // Trigger resize when aspect ratio changes
+      if (browser) {
+        resizeCanvas();
+        // Force redraw of the canvas content at the new aspect ratio
+        if (drawingContent.strokes.length > 0) {
+          renderStrokes();
+        }
+      }
+    }
+  }
+
+  // Function to capture the current canvas as an image
+  function captureCanvasSnapshot() {
+    if (!inputCanvas || !drawingContent || drawingContent.strokes.length === 0) {
+      return '';
+    }
+
+    try {
+      // Ensure the canvas is rendered before capturing
+      renderStrokes();
+      const snapshot = inputCanvas.toDataURL('image/png');
+      return snapshot;
+    } catch (error) {
+      console.error('Error capturing canvas snapshot:', error);
+      return '';
+    }
+  }
 </script>
 
 <svelte:head>
+  // ... existing code ...
   <title>Precision AI Structure-Preserving Image Generator | Daydream</title>
   <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
   <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
@@ -1619,104 +1712,89 @@
 
   <div class="canvas-container">
     <div class="vertical-toolbar">
-        <div class="tool-group">
-        <span class="material-icons tool-icon-label">brush</span>
-        <VerticalSlider
-          min={1}
-          max={20}
-          step={0.5}
-          bind:value={strokeSize}
-          color="#6355FF"
-          height="100px"
-          onChange={() => renderStrokes()}
-          showValue={true}
-          />
+        <div class="tools-group">
+          <div class="tool-group">
+            <span class="material-icons tool-icon-label">brush</span>
+            <VerticalSlider
+              min={1}
+              max={20}
+              step={0.5}
+              bind:value={strokeSize}
+              color="#6355FF"
+              height="100px"
+              onChange={() => renderStrokes()}
+              showValue={true}
+            />
+          </div>
+
+          <div class="tool-group">
+            <span class="material-icons tool-icon-label">palette</span>
+            <input
+              type="color"
+              bind:value={strokeColor}
+              on:change={renderStrokes}
+            />
+          </div>
+
+          <div class="tool-group">
+            <span class="material-icons tool-icon-label">opacity</span>
+            <VerticalSlider
+              min={0.1}
+              max={1}
+              step={0.1}
+              bind:value={strokeOpacity}
+              color="#6355FF"
+              height="100px"
+              onChange={() => renderStrokes()}
+              showValue={true}
+            />
+          </div>
+
+          <!-- Aspect Ratio Selector -->
+          <div class="tool-group aspect-ratio-selector">
+            <span class="material-icons tool-icon-label">aspect_ratio</span>
+            <select bind:value={selectedAspectRatio} on:change={resizeCanvas}>
+              {#each Object.keys(aspectRatios) as ratioKey}
+                <option value={ratioKey}>{ratioKey}</option>
+              {/each}
+            </select>
+            <span class="tool-label">Aspect Ratio</span>
+          </div>
+
+          <!-- Updated analysis toggles to show both separately -->
+          <div class="tool-group toggle-switch">
+            <span class="material-icons tool-icon-label">auto_awesome</span>
+            <div class="switch">
+              <input
+                type="checkbox"
+                id="analysis-toggle"
+                bind:checked={showAnalysisView}
+              />
+              <label for="analysis-toggle"></label>
+            </div>
+            <span class="tool-label">AI Overlay</span>
+          </div>
+
+          <div class="tool-group toggle-switch">
+            <span class="material-icons tool-icon-label">description</span>
+            <div class="switch">
+              <input
+                type="checkbox"
+                id="stroke-overlay-toggle"
+                bind:checked={showStrokeOverlay}
+              />
+              <label for="stroke-overlay-toggle"></label>
+            </div>
+            <span class="tool-label">Stroke Recognition</span>
+          </div>
+
+          <button class="tool-button" on:click={clearCanvas}>
+            <span class="material-icons">delete_outline</span>
+          </button>
         </div>
-
-        <div class="tool-group">
-        <span class="material-icons tool-icon-label">palette</span>
-          <input
-            type="color"
-            bind:value={strokeColor}
-            on:change={renderStrokes}
-          />
-        </div>
-
-        <div class="tool-group">
-        <span class="material-icons tool-icon-label">opacity</span>
-        <VerticalSlider
-          min={0.1}
-          max={1}
-          step={0.1}
-          bind:value={strokeOpacity}
-          color="#6355FF"
-          height="100px"
-          onChange={() => renderStrokes()}
-          showValue={true}
-          />
-        </div>
-
-      <!-- Aspect Ratio Selector -->
-      <div class="tool-group aspect-ratio-selector">
-        <span class="material-icons tool-icon-label">aspect_ratio</span>
-        <select bind:value={selectedAspectRatio} on:change={resizeCanvas}>
-          {#each Object.keys(aspectRatios) as ratioKey}
-            <option value={ratioKey}>{ratioKey}</option>
-          {/each}
-        </select>
-        <span class="tool-label">Aspect Ratio</span>
-      </div>
-
-      <!-- Updated analysis toggles to show both separately -->
-      <div class="tool-group toggle-switch">
-        <span class="material-icons tool-icon-label">auto_awesome</span>
-        <div class="switch">
-          <input
-            type="checkbox"
-            id="gpt-overlay-toggle"
-            bind:checked={showGPTOverlay}
-            on:change={handleGPTOverlayToggle}
-          />
-          <label for="gpt-overlay-toggle"></label>
-        </div>
-        <span class="tool-label">GPT Overlay</span>
-      </div>
-
-      <div class="tool-group toggle-switch">
-        <span class="material-icons tool-icon-label">analytics</span>
-        <div class="switch">
-          <input
-            type="checkbox"
-            id="tf-overlay-toggle"
-            bind:checked={showTFOverlay}
-            on:change={handleTFOverlayToggle}
-          />
-          <label for="tf-overlay-toggle"></label>
-        </div>
-        <span class="tool-label">TensorFlow</span>
-      </div>
-
-      <div class="tool-group toggle-switch">
-        <span class="material-icons tool-icon-label">description</span>
-        <div class="switch">
-          <input
-            type="checkbox"
-            id="stroke-overlay-toggle"
-            bind:checked={showStrokeOverlay}
-          />
-          <label for="stroke-overlay-toggle"></label>
-        </div>
-        <span class="tool-label">Stroke Recognition</span>
-      </div>
-
-      <div class="toolbar-section">
-        <button class="tool-button" on:click={clearCanvas}>
-          <span class="material-icons">delete_outline</span>
-        </button>
-      </div>
     </div>
 
-    <div class="canvas-wrapper input-canvas">
+    <div class="canvas-wrapper input-canvas" class:ratio-4-5={selectedAspectRatio === '4:5'} class:ratio-1-1={selectedAspectRatio === '1:1'} class:ratio-9-16={selectedAspectRatio === '9:16'}>
       <h2>Your Sketch</h2>
       <canvas
         bind:this={inputCanvas}
@@ -1768,9 +1846,9 @@
       {/if}
     </div>
 
-    <div class="canvas-wrapper output-canvas">
+    <div class="canvas-wrapper output-canvas" class:ratio-4-5={generatedImageAspectRatio === '4:5'} class:ratio-1-1={generatedImageAspectRatio === '1:1'} class:ratio-9-16={generatedImageAspectRatio === '9:16'}>
       <h2>Generated Image</h2>
-      <div class="output-display">
+      <div class="output-display" class:ratio-4-5={generatedImageAspectRatio === '4:5'} class:ratio-1-1={generatedImageAspectRatio === '1:1'} class:ratio-9-16={generatedImageAspectRatio === '9:16'}>
         {#if generatedImageUrl}
           <img src={generatedImageUrl} alt="AI generated image" />
           {#if generatedByModel}
@@ -2023,6 +2101,9 @@
       active={showShapeRecognitionDialog}
       objectCount={analysisElements.length}
       isAnalyzing={isAnalyzing || isRecognizingStrokes}
+      hasTextAnalysis={sketchAnalysis && sketchAnalysis.length > 0}
+      hasStrokesAnalysis={strokeRecognition && strokeRecognition.length > 0}
+      hasSketchAnalysis={analysisElements.length > 0}
       on:toggle={toggleShapeRecognitionDialog}
     ></ShapeRecognitionButton>
 
@@ -2032,9 +2113,15 @@
       position={shapeDialogPosition}
       detectedObjects={analysisElements}
       isAnalyzing={isAnalyzing || isRecognizingStrokes}
+      isAnalyzingText={isAnalyzing}
+      sketchAnalysis={sketchAnalysis}
+      strokeRecognition={strokeRecognition}
       debugMode={showAIDebugMode}
       on:close={() => showShapeRecognitionDialog = false}
       on:toggleDebug={toggleDebugMode}
+      canvasSnapshot={currentCanvasSnapshot || captureCanvasSnapshot()}
+      sketchAnalysisOutput={sketchAnalysisOutput}
+      strokesAnalysisOutput={strokesAnalysisOutput}
     />
 
     {#if showDebugPressure && drawingContent.strokes.length > 0}
@@ -2140,253 +2227,160 @@
     }
   }
 
+  /* Toolbar styles */
   .vertical-toolbar {
-    width: 70px;
-    background: #f8f8f8;
-    border: 1px solid #ddd;
-    border-radius: 8px 0 0 8px;
+    background: white;
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    padding: 0;
+    width: 60px;
     display: flex;
     flex-direction: column;
-    padding: 16px 8px;
+    gap: 20px;
+    z-index: 5;
+  }
+
+  .tool-group {
+    display: flex;
+    flex-direction: column;
     align-items: center;
-    gap: 24px;
-    z-index: 10;
-    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.1);
+    gap: 8px;
+  }
 
-    .tool-group {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 8px;
-      width: 100%;
-      position: relative;
+  .tool-icon-label {
+    color: #555;
+    font-size: 20px;
+  }
 
-      .tool-icon-label {
-        font-size: 18px;
-        color: #555;
-        margin-bottom: 4px;
-        text-align: center;
-      }
+  /* Color picker styles */
+  input[type="color"] {
+    -webkit-appearance: none;
+    border: none;
+    width: 40px;
+    height: 40px;
+    border-radius: 20px;
+    cursor: pointer;
+    overflow: hidden;
+  }
 
-      .tool-label {
-        font-size: 10px;
-        color: #555;
-        margin-top: 4px;
-        text-align: center;
-        font-weight: 500;
-        letter-spacing: 0.02em;
-      }
+  input[type="color"]::-webkit-color-swatch-wrapper {
+    padding: 0;
+  }
 
-      input[type="color"] {
-        width: 32px;
-        height: 32px;
-        padding: 0;
-        border: 2px solid #ccc;
-        border-radius: 50%;
-        cursor: pointer;
-        background: none;
-        transition: transform 0.2s;
+  input[type="color"]::-webkit-color-swatch {
+    border: none;
+    border-radius: 20px;
+  }
 
-        &::-webkit-color-swatch-wrapper {
-          padding: 0;
-        }
+  /* Aspect ratio selector styles */
+  .aspect-ratio-selector select {
+    width: 100%;
+    padding: 0.5rem;
+    border-radius: 4px;
+    background: #f0f0f0;
+    border: 1px solid #ddd;
+    font-size: 14px;
+    cursor: pointer;
+  }
 
-        &::-webkit-color-swatch {
-          border: none;
-          border-radius: 50%;
-        }
+  .aspect-ratio-selector select:hover {
+    background: #e8e8e8;
+  }
 
-        &:hover {
-          transform: scale(1.1);
-          border-color: #6355FF;
-        }
-      }
+  .aspect-ratio-selector select:focus {
+    outline: none;
+    border-color: #6355FF;
+    box-shadow: 0 0 0 2px rgba(99, 85, 255, 0.2);
+  }
 
-      &.toggle-switch {
-        margin: 0.5rem 0;
-
-        .tool-icon-label {
-          color: #555;
-          margin-bottom: 0.25rem;
-        }
-
-        .tool-label {
-          font-size: 0.8rem;
-          color: #444;
-          margin-top: 0.25rem;
-          text-align: center;
-        }
-
-        .switch {
-          position: relative;
-          display: inline-block;
-          width: 40px;
-          height: 20px;
-
-          input {
-            opacity: 0;
-            width: 0;
-            height: 0;
-
-            &:checked + label {
-              background-color: #6355FF;
-            }
-
-            &:checked + label:before {
-              transform: translateX(18px);
-            }
-
-            /* Different colors for different toggles */
-            &#gpt-overlay-toggle:checked + label {
-              background-color: #43A047; /* Green for GPT */
-            }
-
-            &#tf-overlay-toggle:checked + label {
-              background-color: #FB8C00; /* Orange for TensorFlow */
-            }
-
-            &#stroke-overlay-toggle:checked + label {
-              background-color: #3949AB; /* Blue for Stroke Recognition */
-            }
-
-            &:focus + label {
-              box-shadow: 0 0 1px #6355FF;
-            }
-
-            &:disabled + label {
-              background-color: #ccc;
-              cursor: not-allowed;
-              opacity: 0.6;
-            }
-
-            &:disabled + label:before {
-              background-color: #eee;
-            }
-          }
-
-          label {
-            position: absolute;
-            cursor: pointer;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background-color: #ccc;
-            transition: 0.4s;
-            border-radius: 20px;
-            box-shadow: inset 0 0 5px rgba(0, 0, 0, 0.2);
-
-            &:before {
-              position: absolute;
-              content: "";
-              height: 16px;
-              width: 16px;
-              left: 3px;
-              bottom: 2px;
-              background-color: white;
-              transition: 0.4s;
-              border-radius: 50%;
-              box-shadow: 0 2px 5px rgba(0, 0, 0, 0.3);
-            }
-
-            &:hover {
-              &:before {
-                box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
-              }
-            }
-          }
-        }
-      }
-    }
-
-    .tool-button {
-      padding: 10px 0;
-      width: 100%;
-      background: none;
-      border: none;
-      cursor: pointer;
-      transition: all 0.2s;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      border-radius: 4px;
-
-      .material-icons {
-        font-size: 22px;
-        color: #555;
-        transition: color 0.2s;
-      }
-
-      &:hover {
-        background: #e0e0e0;
-
-        .material-icons {
-          color: #6355FF;
-        }
-      }
-    }
+  .tool-label {
+    font-size: 12px;
+    color: #666;
+    text-align: center;
+    margin-top: 4px;
   }
 
   .canvas-wrapper {
     flex: 1;
     display: flex;
     flex-direction: column;
-    //border: 1px solid #e0e0e0;
-    border-radius: 8px;
-    overflow: hidden;
-    background: rgba(white, .2);
     position: relative;
-    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.1);
-    transition: transform 0.3s, box-shadow 0.3s;
+    background: white;
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    padding: 1rem;
+    margin: 0 1rem;
+    transition: all 0.3s ease;
+    overflow: hidden;
 
-    /* Set a consistent aspect ratio */
-    aspect-ratio: 1 / 1;
+    &.input-canvas {
+      min-width: 300px;
+      max-width: 800px;
 
-    /* Allow the canvas to be responsive but maintain max size */
-    //max-width: calc(70vh - 2rem - 70px);
+      // Adjust dimensions based on aspect ratio
+      &.ratio-4-5 {
+        min-height: calc(300px * (5/4));
+        max-height: calc(800px * (5/4));
+        aspect-ratio: 4 / 5;
+      }
 
-    /* Minimum size constraints */
-    min-height: 300px;
-    min-width: 300px;
+      &.ratio-1-1 {
+        min-height: 300px;
+        max-height: 800px;
+        aspect-ratio: 1 / 1;
+      }
 
-    &:hover {
-      box-shadow: 0 12px 30px rgba(0, 0, 0, 0.15);
-      transform: translateY(-2px);
+      &.ratio-9-16 {
+        min-height: calc(300px * (16/9));
+        max-height: calc(800px * (16/9));
+        aspect-ratio: 9 / 16;
+      }
+
+      .drawing-canvas {
+        background: white;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        margin: 0 auto;
+        display: block;
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        cursor: crosshair;
+        touch-action: none; /* Prevent browser handling of drags/pinch gestures */
+      }
+    }
+
+    &.output-canvas {
+      min-width: 300px;
+      max-width: 800px;
+      background: #fafafa;
+
+      // Adjust dimensions based on aspect ratio
+      &.ratio-4-5 {
+        min-height: calc(300px * (5/4));
+        max-height: calc(800px * (5/4));
+        aspect-ratio: 4 / 5;
+      }
+
+      &.ratio-1-1 {
+        min-height: 300px;
+        max-height: 800px;
+        aspect-ratio: 1 / 1;
+      }
+
+      &.ratio-9-16 {
+        min-height: calc(300px * (16/9));
+        max-height: calc(800px * (16/9));
+        aspect-ratio: 9 / 16;
+      }
     }
 
     h2 {
-      padding: 0.75rem 1rem;
-      margin: 0;
-      background: #f8f8f8;
-      font-size: 1rem;
-      font-weight: 500;
-      color: #424242;
-      border-bottom: 1px solid #e0e0e0;
-      display: none;
+      margin: 0 0 1rem 0;
+      font-size: 1.25rem;
+      color: #555;
     }
-
-    &.input-canvas {
-      margin-left: 0; /* Remove left margin to connect with toolbar */
-      //border-top-left-radius: 0;
-      //border-bottom-left-radius: 0;
-    }
-  }
-
-  .drawing-canvas {
-    flex: 1;
-    touch-action: none;
-    display: block;
-    width: 100%;
-    height: 100%;
-    background: #ffffff;
-    cursor: crosshair;
-    /* Ensure the canvas is positioned correctly */
-    position: absolute;
-    top: 0;
-    left: 0;
-    bottom: 0;
-    right: 0;
-    margin: auto;
   }
 
   .analysis-overlay {
@@ -2667,14 +2661,26 @@
   }
 
   .output-display {
-    flex: 1;
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    overflow: hidden;
-    background: #f8f8f8;
     position: relative;
-    aspect-ratio: 1 / 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: 100%;
+    background: #f8f8f8;
+
+    // Dynamically adjust aspect ratio based on the generated image
+    &.ratio-4-5 {
+      aspect-ratio: 4 / 5; /* Portrait 4:5 */
+    }
+
+    &.ratio-1-1 {
+      aspect-ratio: 1 / 1; /* Square 1:1 */
+    }
+
+    &.ratio-9-16 {
+      aspect-ratio: 9 / 16; /* Portrait 9:16 */
+    }
 
     img {
       max-width: 100%;
@@ -2699,148 +2705,6 @@
       border-radius: 4px;
       font-size: 0.8rem;
       backdrop-filter: blur(4px);
-      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
-    }
-
-    .empty-output {
-      color: #999;
-      text-align: center;
-      padding: 2rem;
-    }
-
-    .ai-scanning-animation {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 1rem;
-      width: 90%;
-      max-width: 400px;
-
-      .sketch-preview {
-        position: relative;
-        width: 100%;
-        height: 0;
-        padding-bottom: 100%;
-        overflow: hidden;
-        border-radius: 12px;
-        background: rgba(0, 0, 0, 0.05);
-        box-shadow: 0 6px 20px rgba(0, 0, 0, 0.15);
-
-        .sketch-preview-image {
-          position: absolute;
-          width: 100%;
-          height: 100%;
-          object-fit: contain;
-          opacity: 0.7;
-          filter: contrast(1.1) brightness(1.05);
-        }
-
-        .scanning-line {
-          position: absolute;
-          top: 0;
-          left: 0;
-          width: 100%;
-          height: 6px;
-          background: linear-gradient(to right,
-            rgba(156, 39, 176, 0),
-            rgba(156, 39, 176, 0.7) 50%,
-            rgba(156, 39, 176, 0)
-          );
-          box-shadow: 0 0 15px rgba(156, 39, 176, 0.5);
-          transform: translateY(-100%);
-          animation: scanning-line 2s linear infinite;
-        }
-
-        .scanning-grid {
-          position: absolute;
-          top: 0;
-          left: 0;
-          width: 100%;
-          height: 100%;
-          background-image:
-            linear-gradient(rgba(65, 105, 225, 0.05) 1px, transparent 1px),
-            linear-gradient(90deg, rgba(65, 105, 225, 0.05) 1px, transparent 1px);
-          background-size: 20px 20px;
-          opacity: 0;
-          animation: grid-fade 4s ease-in-out infinite;
-        }
-
-        .scan-highlight {
-          position: absolute;
-        width: 40px;
-        height: 40px;
-        border-radius: 50%;
-          background: radial-gradient(circle, rgba(156, 39, 176, 0.2) 0%, rgba(0, 0, 0, 0) 70%);
-          box-shadow: 0 0 20px rgba(156, 39, 176, 0.3);
-          filter: blur(5px);
-          opacity: 0;
-          animation: scan-point 4s ease-in-out infinite;
-        }
-
-        @keyframes scanning-line {
-          0% { transform: translateY(-100%); }
-          100% { transform: translateY(1000%); }
-        }
-
-        @keyframes grid-fade {
-          0%, 100% { opacity: 0; }
-          50% { opacity: 1; }
-        }
-
-        @keyframes scan-point {
-          0%, 100% {
-            opacity: 0;
-            top: 10%;
-            left: 20%;
-          }
-          25% {
-            opacity: 0.8;
-            top: 30%;
-            left: 70%;
-          }
-          50% {
-            opacity: 0.5;
-            top: 60%;
-            left: 30%;
-          }
-          75% {
-            opacity: 0.8;
-            top: 80%;
-            left: 60%;
-          }
-        }
-      }
-
-      .scanning-status {
-        text-align: center;
-        color: #424242;
-
-        span {
-          font-size: 1rem;
-          font-weight: 500;
-          display: block;
-          margin-bottom: 0.25rem;
-          color: #9c27b0;
-        }
-
-        .status-text {
-          font-size: 0.9rem;
-          opacity: 0.8;
-
-          &::after {
-            content: "";
-            animation: ellipsis-dot 1.5s infinite;
-          }
-        }
-
-        @keyframes ellipsis-dot {
-          0% { content: ""; }
-          25% { content: "."; }
-          50% { content: ".."; }
-          75% { content: "..."; }
-          100% { content: ""; }
-        }
-      }
     }
   }
 
@@ -3538,5 +3402,150 @@
         font-size: 0.7rem;
       }
     }
+  }
+
+  .aspect-ratio-selector {
+    .aspect-selector {
+      width: 100%;
+      padding: 0.5rem 0;
+
+      select {
+        width: 100%;
+        padding: 0.5rem;
+        border-radius: 4px;
+        background: #f0f0f0;
+        border: 1px solid #ddd;
+        font-size: 14px;
+        cursor: pointer;
+
+        &:hover {
+          background: #e8e8e8;
+        }
+
+        &:focus {
+          outline: none;
+          border-color: #6355FF;
+          box-shadow: 0 0 0 2px rgba(99, 85, 255, 0.2);
+        }
+      }
+    }
+  }
+
+  /* Toggle switch styles */
+  .tool-group.toggle-switch {
+    margin: 0.5rem 0;
+  }
+
+  .tool-group.toggle-switch .tool-icon-label {
+    color: #555;
+    margin-bottom: 0.25rem;
+  }
+
+  .tool-group.toggle-switch .tool-label {
+    font-size: 0.8rem;
+    color: #444;
+    margin-top: 0.25rem;
+  }
+
+  .switch {
+    position: relative;
+    display: inline-block;
+    width: 40px;
+    height: 20px;
+  }
+
+  .switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+  }
+
+  .switch input:checked + label {
+    background-color: #6355FF;
+  }
+
+  .switch input:checked + label:before {
+    transform: translateX(18px);
+  }
+
+  /* Different colors for different toggles */
+  .switch input#analysis-toggle:checked + label {
+    background-color: #43A047; /* Green for AI analysis */
+  }
+
+  .switch input#stroke-overlay-toggle:checked + label {
+    background-color: #3949AB; /* Blue for Stroke Recognition */
+  }
+
+  .switch input:focus + label {
+    box-shadow: 0 0 1px #6355FF;
+  }
+
+  .switch input:disabled + label {
+    background-color: #ccc;
+    cursor: not-allowed;
+    opacity: 0.6;
+  }
+
+  .switch input:disabled + label:before {
+    background-color: #eee;
+  }
+
+  .switch label {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: #ccc;
+    transition: 0.4s;
+    border-radius: 20px;
+    box-shadow: inset 0 0 5px rgba(0, 0, 0, 0.2);
+  }
+
+  .switch label:before {
+    position: absolute;
+    content: "";
+    height: 16px;
+    width: 16px;
+    left: 3px;
+    bottom: 2px;
+    background-color: white;
+    transition: 0.4s;
+    border-radius: 50%;
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.3);
+  }
+
+  .switch label:hover:before {
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+  }
+
+  /* Tool button styles */
+  .tool-button {
+    padding: 10px 0;
+    width: 100%;
+    background: none;
+    border: none;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    border-radius: 4px;
+  }
+
+  .tool-button .material-icons {
+    font-size: 22px;
+    color: #555;
+    transition: color 0.2s;
+  }
+
+  .tool-button:hover {
+    background: #e0e0e0;
+  }
+
+  .tool-button:hover .material-icons {
+    color: #6355FF;
   }
 </style>

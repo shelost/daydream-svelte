@@ -132,7 +132,7 @@
 
       // If different objects or object types
       if (!previous || current.name !== previous.name ||
-          (current.type !== previous.type) || current.id !== previous.id) {
+          (current.detectionSource !== previous.detectionSource) || current.id !== previous.id) {
         return true;
       }
 
