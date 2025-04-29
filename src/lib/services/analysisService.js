@@ -1,8 +1,10 @@
 /**
  * Analysis integration service combining TensorFlow.js object detection with OpenAI Vision
+ * and CNN-based sketch recognition
  */
 
 import { analyzeTensorflowBoundingBoxes, findContours } from './tensorflowService';
+import { enhanceWithSketchCNN, analyzeSketchRegions } from './sketchCNN';
 import {
   calculateMultiStrokeBoundingBox,
   findRelatedStrokes,
@@ -10,7 +12,7 @@ import {
 } from '$lib/utils/drawingUtils.js';
 
 /**
- * Combines OpenAI Vision analysis with TensorFlow object detection
+ * Combines all available analysis techniques including CNN-based sketch recognition
  * @param {HTMLCanvasElement} canvas - Canvas element with the drawing
  * @param {Array} openAiElements - Elements detected by OpenAI Vision API
  * @param {Array} strokes - Drawing strokes data
@@ -26,7 +28,7 @@ export async function enhanceBoundingBoxes(canvas, openAiElements, strokes) {
     const tfDetections = await analyzeTensorflowBoundingBoxes(canvas);
 
     // Enhance OpenAI detections with TensorFlow results
-    const enhancedElements = await mergeDetections(
+    const tfEnhancedElements = await mergeDetections(
       openAiElements,
       tfDetections,
       strokes,
@@ -34,15 +36,30 @@ export async function enhanceBoundingBoxes(canvas, openAiElements, strokes) {
       canvas.height
     );
 
+    // Further enhance with CNN-based sketch recognition
+    const cnnEnhancedElements = await enhanceWithSketchCNN(
+      tfEnhancedElements,
+      canvas,
+      strokes
+    );
+
     // Find contours for the enhanced elements
-    const elementsWithContours = await findContours(canvas, enhancedElements);
+    const elementsWithContours = await findContours(canvas, cnnEnhancedElements);
 
     return elementsWithContours;
   } catch (error) {
     console.error('Error enhancing bounding boxes:', error);
 
     // Fallback to stroke-based bounding boxes
-    return enhanceWithStrokes(openAiElements, strokes, canvas.width, canvas.height);
+    const enhancedWithStrokes = enhanceWithStrokes(openAiElements, strokes, canvas.width, canvas.height);
+
+    // Try to use CNN as a final fallback
+    try {
+      return await enhanceWithSketchCNN(enhancedWithStrokes, canvas, strokes);
+    } catch (cnnError) {
+      console.error('CNN enhancement failed as fallback:', cnnError);
+      return enhancedWithStrokes;
+    }
   }
 }
 
@@ -94,7 +111,9 @@ async function mergeDetections(openAiElements, tfDetections, strokes, canvasWidt
       return {
         ...oaiElement,
         boundingBox: normalizedBounds,
-        detectionSource: 'strokes'
+        detectionSource: 'strokes',
+        strokeIds: relatedStrokes.map(s => s.id || ''),
+        enhancedByStrokes: true
       };
     }
 
@@ -166,7 +185,7 @@ function enhanceWithStrokes(elements, strokes, canvasWidth, canvasHeight) {
 
   return elements.map(element => {
     // Skip if already has a bounding box
-    if (element.boundingBox) return element;
+    if (element.boundingBox && element.enhancedByStrokes) return element;
 
     // Get the position of the element
     const elementX = element.position?.x || 0.5;
@@ -196,6 +215,8 @@ function enhanceWithStrokes(elements, strokes, canvasWidth, canvasHeight) {
       return {
         ...element,
         boundingBox: normalizedBounds,
+        strokeIds: relatedStrokes.map(s => s.id || ''),
+        enhancedByStrokes: true,
         detectionSource: 'strokes'
       };
     }
@@ -230,7 +251,10 @@ function createFallbackBoundingBox(element) {
   } else if (name.includes('eye')) {
     width = 0.05;
     height = 0.03;
-  } else if (name.includes('nose') || name.includes('mouth')) {
+  } else if (name.includes('nose')) {
+    width = 0.05; // Made smaller for more precise detection
+    height = 0.08;
+  } else if (name.includes('mouth')) {
     width = 0.08;
     height = 0.04;
   } else if (name.includes('hair')) {
@@ -258,6 +282,27 @@ function createFallbackBoundingBox(element) {
     },
     detectionSource: 'fallback'
   };
+}
+
+/**
+ * Directly run sketch recognition using CNN without other detectors
+ * Useful for initial sketch analysis before OpenAI Vision
+ * @param {HTMLCanvasElement} canvas - The canvas element
+ * @param {Array} strokes - Stroke data
+ * @returns {Promise<Array>} Detected objects
+ */
+export async function analyzeSketchWithCNN(canvas, strokes) {
+  if (!canvas || !strokes || strokes.length === 0) {
+    return [];
+  }
+
+  try {
+    // Run direct CNN analysis
+    return await analyzeSketchRegions(canvas, strokes);
+  } catch (error) {
+    console.error('Error in direct CNN sketch analysis:', error);
+    return [];
+  }
 }
 
 /**

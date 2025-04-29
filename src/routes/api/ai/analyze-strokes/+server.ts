@@ -1,10 +1,15 @@
 import { json } from '@sveltejs/kit';
-import { OPENAI_API_KEY } from '$env/static/private';
-import type { RequestHandler } from './$types';
-import OpenAI from 'openai';
-import type { Stroke } from '$lib/types';
-import { svgFromStrokes } from '$lib/utils/drawingUtils.js';
-import { svgToPngDataUrl, validateImageDataUrl } from '$lib/utils/imageUtils';
+import { detectShapes } from '$lib/services/shapeRecognition';
+import { svgToPngDataUrl } from '$lib/utils/imageUtils';
+import { convertStrokesToSvg } from '$lib/utils/svgUtils';
+import type { Stroke } from '$lib/types/drawing';
+import type { DetectedObject } from '$lib/types/detectedObject';
+import { validateImageDataUrl } from '$lib/utils/imageUtils';
+import { enhanceWithOpenAI } from '$lib/services/openai';
+import { analyzeSketchWithCNN } from '$lib/services/analysisService';
+import { normalizeBoundingBox, completeBoundingBox } from '$lib/utils/boundingBoxUtils';
+import { analyzeQuickDraw } from '$lib/services/quickDrawRecognition';
+import { analyzeTensorflowBoundingBoxes } from '$lib/services/tensorflowService.js';
 
 // Constants for shape recognition
 const SHAPE_CONFIDENCE_THRESHOLD = 0.7;
@@ -14,243 +19,477 @@ const MIN_POINTS_FOR_RECOGNITION = 3;
  * API endpoint to analyze sketch strokes directly using our custom implementation
  * Processes stroke data instead of images, inspired by Google's Digital Ink Recognition
  */
-export const POST: RequestHandler = async (event) => {
+export async function POST({ request, fetch }) {
   try {
-    console.log('Received request to analyze-strokes endpoint');
-    const { strokes, enhancedAnalysis = false, context = '' } = await event.request.json();
+    // Parse and validate the request body
+    const body = await request.json();
 
-    if (!strokes || !Array.isArray(strokes) || strokes.length === 0) {
-      console.error('Invalid request: No valid stroke data provided');
-      return json({
-        error: 'Valid stroke data is required'
-      }, { status: 400 });
+    if (!body || !body.strokes || !Array.isArray(body.strokes) || body.strokes.length === 0) {
+      console.error('Invalid request: Missing or empty strokes data');
+      return json({ error: 'Invalid request: Missing or empty strokes' }, { status: 400 });
     }
 
-    // Basic validation - make sure strokes have points
-    const validStrokes = strokes.filter(stroke =>
-      stroke && stroke.points && Array.isArray(stroke.points) && stroke.points.length > 0
-    );
+    const { strokes, enhancedAnalysis = false, context = '' } = body;
 
-    if (validStrokes.length === 0) {
-      console.error('Invalid request: No valid strokes found in data');
-      return json({
-        error: 'No valid strokes found in the data'
-      }, { status: 400 });
+    // Input validation
+    try {
+      validateStrokes(strokes);
+    } catch (error) {
+      console.error('Stroke validation error:', error instanceof Error ? error.message : error);
+      return json({ error: `Invalid stroke data: ${error instanceof Error ? error.message : error}` }, { status: 400 });
     }
 
-    // Extract stroke data
-    console.log(`Analyzing ${validStrokes.length} strokes with ${validStrokes.reduce((sum, s) => sum + s.points.length, 0)} total points`);
+    console.log(`Processing ${strokes.length} strokes for analysis`);
 
-    // Generate SVG from the strokes for visualization and analysis
-    const svgResult = svgFromStrokes(validStrokes, 1024, 1024, 'white', {
-      debug: true,
-      optimizeViewBox: true
-    });
-
-    // Check if we have valid SVG data
-    if (svgResult.error) {
-      console.error('Error generating SVG:', svgResult.error);
+    // First, generate an SVG from the strokes
+    let svgString;
+    try {
+      svgString = convertStrokesToSvg(strokes, 600, 600);
+      if (!svgString || svgString.length < 100) {
+        throw new Error('Generated SVG is too small or empty');
+      }
+    } catch (svgError) {
+      console.error('Error generating SVG from strokes:', svgError);
       return json({
-        error: `Failed to generate SVG for analysis: ${svgResult.error}`
+        error: 'Failed to convert strokes to SVG',
+        debug: { error: svgError instanceof Error ? svgError.message : String(svgError) }
       }, { status: 500 });
     }
 
-    // First, perform simple shape detection based on stroke patterns
-    const shapeAnalysis = analyzeStrokePatterns(validStrokes);
+    // Basic shape detection using our improved shape recognition service
+    const shapeRecognitionResult = detectShapes(strokes);
 
-    // For enhanced analysis, use OpenAI to get deeper insights
-    let enhancedShapeRecognition = null;
-    let detectedShapes = [];
+    // Create a temporary canvas to use for CNN and Quick Draw analysis
+    let canvas = null;
+    let pngDataUrl = null;
 
-    if (enhancedAnalysis) {
-      try {
-        // Check if OpenAI API key is available
-        if (!OPENAI_API_KEY) {
-          console.warn('Enhanced analysis requested but OpenAI API key is not configured');
-          return json({
-            analysis: {
-              type: 'drawing',
-              content: shapeAnalysis.bestMatch?.name || 'unrecognized shape',
-              confidence: shapeAnalysis.bestMatch?.confidence || 0.5
-            },
-            debug: {
-              strokeCount: validStrokes.length,
-              pointCount: validStrokes.reduce((sum, s) => sum + s.points.length, 0),
-              shapeRecognition: shapeAnalysis,
-              enhancedRecognition: null
-            },
-            error: 'OpenAI API key is not configured for enhanced analysis'
-          });
-        }
+    try {
+      // Convert SVG to PNG for analysis
+      pngDataUrl = await svgToPngDataUrl(svgString, 600, 600);
+      console.log('Generated PNG data URL successfully');
 
-        // Convert SVG to PNG format accepted by OpenAI's vision API
-        console.log('SVG content length:', svgResult.svg.length);
+      // Check if we're in a browser environment
+      const isBrowser = typeof document !== 'undefined' && typeof window !== 'undefined';
 
-        let pngDataUrl;
-        try {
-          pngDataUrl = svgToPngDataUrl(svgResult.svg, 1024, 1024);
+      if (isBrowser) {
+        console.log('Creating canvas for TensorFlow analysis in browser environment');
+        // Create a canvas element to work with TensorFlow
+        canvas = document.createElement('canvas');
+        canvas.width = 600;
+        canvas.height = 600;
 
-          // Validate the PNG data URL
-          if (!validateImageDataUrl(pngDataUrl)) {
-            throw new Error('Generated PNG data URL failed validation');
-          }
+        // Load the PNG into the canvas
+        const img = new Image();
 
-          console.log('PNG data URL generated successfully, length:', pngDataUrl.length);
-        } catch (error) {
-          console.error('Error in SVG to PNG conversion:', error);
+        // Add error handling for image loading
+        img.onerror = (err) => {
+          console.error('Error loading image into canvas:', err);
+        };
 
-          // Fall back to basic shape recognition
-          return json({
-            analysis: {
-              type: 'drawing',
-              content: shapeAnalysis.bestMatch?.name || 'unrecognized shape',
-              confidence: shapeAnalysis.bestMatch?.confidence || 0.5
-            },
-            debug: {
-              strokeCount: validStrokes.length,
-              pointCount: validStrokes.reduce((sum, s) => sum + s.points.length, 0),
-              shapeRecognition: shapeAnalysis,
-              enhancedRecognition: null
-            },
-            error: `Image conversion failed: ${error instanceof Error ? error.message : String(error)}`
-          });
-        }
+        img.onload = () => {
+          console.log('Image loaded into canvas successfully');
+          const ctx = canvas.getContext('2d');
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+          ctx.drawImage(img, 0, 0);
+        };
 
-        console.log('Initializing OpenAI client for enhanced analysis');
-        const openai = new OpenAI({
-          apiKey: OPENAI_API_KEY
-        });
+        img.src = pngDataUrl;
 
-        // Use OpenAI Vision to analyze the PNG
-        console.log('Sending PNG image to OpenAI Vision API for analysis...');
-        const response = await openai.chat.completions.create({
-          model: "gpt-4o",
-          messages: [
-            {
-              role: "system",
-              content: `You are an expert at analyzing drawings and identifying shapes, objects, and their components.
-                       Your task is to identify what objects are present in this stroke-based drawing and their hierarchical relationships.
-
-                       The drawing appears to be a ${shapeAnalysis.bestMatch?.name || 'drawing'}. ${context ? `The user says it's supposed to be: "${context}".` : ''}
-
-                       For each detected object:
-                       1. Identify the main objects in the drawing
-                       2. Break down each object into its components (e.g., a human has a head, body, arms, legs)
-                       3. Estimate the position of each component (using values from 0-1 for both x and y coordinates)
-
-                       Provide your response as a structured JSON object with a "detectedShapes" array containing objects with:
-                       - id: unique identifier string
-                       - name: element name (e.g., "head", "eye")
-                       - category: type category (e.g., "human", "animal", "geometric", "abstract")
-                       - x: horizontal position (0-1, from left to right)
-                       - y: vertical position (0-1, from top to bottom)
-                       - children: array of child object ids (if any)
-                       - isChild: boolean indicating if this is a child element
-                       - parentId: id of parent element if isChild is true`
-            },
-            {
-              role: "user",
-              content: [
-                {
-                  type: "text",
-                  text: "Analyze this stroke-based drawing and identify all objects and their components. Format your response as JSON with a detectedShapes array."
-                },
-                {
-                  type: "image_url",
-                  image_url: { url: pngDataUrl }
-                }
-              ]
-            }
-          ],
-          response_format: { type: "json_object" },
-          max_tokens: 1500
-        });
-
-        const analysisResult = response.choices[0].message.content;
-        console.log('Received analysis from OpenAI');
-
-        try {
-          // Parse the JSON response
-          const parsedResult = JSON.parse(analysisResult || '{}');
-
-          // Extract detected shapes if available
-          if (parsedResult.detectedShapes && Array.isArray(parsedResult.detectedShapes)) {
-            detectedShapes = parsedResult.detectedShapes;
-
-            // Assign colors if not provided
-            const categoryColors = {
-              'human': '#FF5733',
-              'person': '#FF5733',
-              'face': '#FF7F50',
-              'head': '#FF7F50',
-              'body': '#FF7F50',
-              'animal': '#FF33A5',
-              'building': '#3357FF',
-              'nature': '#33FF57',
-              'geometric': '#33A5FF',
-              'abstract': '#9C27B0',
-              'default': '#9C27B0'
+        // Wait for image to load
+        await new Promise((resolve, reject) => {
+          if (img.complete) {
+            console.log('Image was already complete');
+            resolve(null);
+          } else {
+            img.onload = () => {
+              console.log('Image loaded asynchronously');
+              resolve(null);
+            };
+            img.onerror = (err) => {
+              console.error('Error loading image:', err);
+              reject(new Error('Failed to load image'));
             };
 
-            detectedShapes.forEach(shape => {
-              if (!shape.color) {
-                shape.color = categoryColors[shape.category?.toLowerCase()] ||
-                              categoryColors[shape.name?.toLowerCase()] ||
-                              categoryColors.default;
+            // Set a timeout in case the image never loads
+            setTimeout(() => {
+              if (!img.complete) {
+                console.warn('Image load timed out, continuing anyway');
+                resolve(null);
               }
+            }, 3000);
+          }
+        });
 
-              // Ensure position values are valid
-              if (typeof shape.x !== 'number' || shape.x < 0 || shape.x > 1) {
-                shape.x = 0.5; // Default to center if invalid
-              }
-              if (typeof shape.y !== 'number' || shape.y < 0 || shape.y > 1) {
-                shape.y = 0.5; // Default to center if invalid
-              }
+        // Verify canvas has content
+        const ctx = canvas.getContext('2d');
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const hasContent = Array.from(imageData.data).some(val => val !== 0);
 
-              // Ensure children array exists
-              if (!Array.isArray(shape.children)) {
-                shape.children = [];
+        if (!hasContent) {
+          console.warn('Canvas appears to be empty after drawing image');
+        } else {
+          console.log('Canvas contains image data, proceeding with analysis');
+        }
+      } else {
+        console.log('Skipping canvas creation - running in server environment');
+      }
+    } catch (canvasError) {
+      console.error('Error creating canvas for analysis:', canvasError);
+      // Continue with basic shape recognition
+    }
+
+    // Extract recognized shapes with high confidence
+    const recognizedShapes = [
+      ...shapeRecognitionResult.shapes.filter(shape => shape.confidence >= SHAPE_CONFIDENCE_THRESHOLD),
+      ...(shapeRecognitionResult.multiStrokeShapes || []).filter(shape => shape.confidence >= SHAPE_CONFIDENCE_THRESHOLD - 0.1)
+    ].sort((a, b) => b.confidence - a.confidence);
+
+    // Check if we need to detect a house or building specifically
+    const maybeHouse = checkForHouseOrBuildingPattern(strokes);
+    if (maybeHouse) {
+      console.log('Detected house-like pattern in strokes');
+      recognizedShapes.unshift({
+        type: 'house',
+        confidence: 0.85,
+        properties: { isRegular: true },
+        boundingBox: maybeHouse.boundingBox,
+        strokeIds: maybeHouse.strokeIds
+      });
+    }
+
+    // Find the best match (highest confidence)
+    const bestMatch = recognizedShapes.length > 0 ? recognizedShapes[0] : null;
+
+    // Initialize analysis with basic shape recognition
+    let analysis = {
+      type: 'drawing',
+      content: bestMatch?.type || 'unrecognized shape',
+      confidence: bestMatch?.confidence || 0
+    };
+
+    // Convert recognized shapes to a format suitable for the UI
+    let detectedShapes: (DetectedObject & {
+      enhancedByQuickDraw?: boolean;
+      enhancedByCNN?: boolean;
+      enhancedByTensorFlow?: boolean;
+      enhancedByStrokes?: boolean;
+    })[] = recognizedShapes.map(shape => {
+      // Normalize the bounding box format
+      const normalizedBox = shape.boundingBox ?
+        normalizeBoundingBox(shape.boundingBox, 600, 600) : null;
+
+      return {
+        name: shape.type,
+        confidence: shape.confidence,
+        boundingBox: normalizedBox,
+        properties: shape.properties,
+        strokeIds: shape.strokeIds,
+        source: 'shape-recognition'
+      };
+    });
+
+    // Try direct TensorFlow analysis first if we have a canvas
+    if (canvas) {
+      try {
+        console.log('Running TensorFlow direct analysis on canvas');
+        const tensorflowResults = await analyzeTensorflowBoundingBoxes(canvas);
+
+        if (tensorflowResults && tensorflowResults.length > 0) {
+          console.log(`TensorFlow detected ${tensorflowResults.length} objects: ${tensorflowResults.map(obj => obj.name).join(', ')}`);
+
+          // Add TensorFlow results to detected shapes
+          for (const tfObject of tensorflowResults) {
+            const existingIndex = detectedShapes.findIndex(shape =>
+              shape.name.toLowerCase() === tfObject.name.toLowerCase());
+
+            if (existingIndex >= 0) {
+              // If we already have this object, update if TensorFlow has higher confidence
+              if (tfObject.confidence > detectedShapes[existingIndex].confidence) {
+                detectedShapes[existingIndex] = {
+                  ...detectedShapes[existingIndex],
+                  name: tfObject.name,
+                  confidence: tfObject.confidence,
+                  boundingBox: tfObject.boundingBox || detectedShapes[existingIndex].boundingBox,
+                  source: "tensorflow",
+                  enhancedByTensorFlow: true
+                };
               }
-            });
+            } else {
+              // Add new object from TensorFlow
+              detectedShapes.push({
+                name: tfObject.name,
+                confidence: tfObject.confidence,
+                boundingBox: tfObject.boundingBox,
+                source: "tensorflow",
+                enhancedByTensorFlow: true
+              });
+            }
           }
 
-          enhancedShapeRecognition = parsedResult;
-          console.log('Enhanced shape recognition processed successfully');
-        } catch (error) {
-          console.error('Error parsing JSON response from shape analysis:', error);
-          // Continue with basic recognition
+          // Sort by confidence
+          detectedShapes.sort((a, b) => b.confidence - a.confidence);
+        } else {
+          console.log('TensorFlow did not detect any objects');
         }
-      } catch (error) {
-        console.error('Error calling OpenAI for enhanced shape recognition:', error);
-        // Continue with basic recognition
+      } catch (tfError) {
+        console.error('TensorFlow analysis failed:', tfError);
+        // Continue with other methods
       }
     }
 
-    // Determine the analysis result
-    const analysisType = determineAnalysisType(shapeAnalysis, enhancedShapeRecognition);
+    // Variable to store Quick Draw results
+    let quickDrawResults: {
+      name: string;
+      confidence: number;
+      boundingBox?: any;
+      source: "tensorflow" | "cnn" | "shape-recognition" | "strokes" | "openai" | "fallback" | "hybrid";
+    }[] | null = null;
 
-    // Format the response
+    // Run Quick Draw analysis if canvas is available
+    if (canvas) {
+      try {
+        console.log('Running Quick Draw analysis on sketch');
+        quickDrawResults = await analyzeQuickDraw(canvas, strokes);
+
+        if (quickDrawResults && quickDrawResults.length > 0) {
+          console.log(`Quick Draw detected ${quickDrawResults.length} objects: ${quickDrawResults.map(obj => obj.name).join(', ')}`);
+
+          // Add Quick Draw results to detected shapes
+          // For objects already detected, use the one with higher confidence
+          for (const quickDrawObject of quickDrawResults) {
+            const existingIndex = detectedShapes.findIndex(shape =>
+              shape.name.toLowerCase() === quickDrawObject.name.toLowerCase());
+
+            if (existingIndex >= 0) {
+              // If we already have this object, update if Quick Draw has higher confidence
+              if (quickDrawObject.confidence > detectedShapes[existingIndex].confidence) {
+                detectedShapes[existingIndex] = {
+                  ...detectedShapes[existingIndex],
+                  name: quickDrawObject.name,
+                  confidence: quickDrawObject.confidence,
+                  boundingBox: quickDrawObject.boundingBox || detectedShapes[existingIndex].boundingBox,
+                  source: "tensorflow", // Use tensorflow as the source for Quick Draw results
+                  enhancedByQuickDraw: true
+                };
+              }
+            } else {
+              // Add new object from Quick Draw
+              detectedShapes.push({
+                name: quickDrawObject.name,
+                confidence: quickDrawObject.confidence,
+                boundingBox: quickDrawObject.boundingBox,
+                source: "tensorflow", // Use tensorflow as the source for Quick Draw results
+                enhancedByQuickDraw: true
+              });
+            }
+          }
+
+          // Sort by confidence
+          detectedShapes.sort((a, b) => b.confidence - a.confidence);
+
+          // Update analysis with best Quick Draw result if confidence is high
+          if (quickDrawResults[0].confidence > 0.7 && (!bestMatch || quickDrawResults[0].confidence > bestMatch.confidence)) {
+            analysis = {
+              type: 'drawing',
+              content: quickDrawResults[0].name,
+              confidence: quickDrawResults[0].confidence
+            };
+          }
+        }
+      } catch (quickDrawError) {
+        console.error('Quick Draw analysis failed:', quickDrawError);
+        // Continue with shape recognition results
+      }
+
+      // Run CNN analysis as a fallback if Quick Draw didn't produce good results
+      try {
+        console.log('Running CNN analysis on sketch');
+        const cnnResults = await analyzeSketchWithCNN(canvas, strokes);
+
+        if (cnnResults && cnnResults.length > 0 && (!quickDrawResults || quickDrawResults.length === 0 || quickDrawResults[0].confidence < 0.6)) {
+          console.log(`CNN detected ${cnnResults.length} objects`);
+
+          // Merge CNN results with existing shape detection
+          // For existing shapes, enhance with CNN bounding boxes if available
+          for (const shape of detectedShapes) {
+            const matchingCnn = cnnResults.find(cnn =>
+              cnn.name.toLowerCase() === shape.name.toLowerCase());
+
+            if (matchingCnn && matchingCnn.boundingBox) {
+              // Use the CNN bounding box which should be more precise
+              shape.boundingBox = completeBoundingBox(matchingCnn.boundingBox);
+              shape.confidence = Math.max(shape.confidence, matchingCnn.confidence);
+              shape.enhancedByCNN = true;
+            }
+          }
+
+          // Add new shapes detected by CNN but not by other methods
+          for (const cnnObject of cnnResults) {
+            const exists = detectedShapes.some(shape =>
+              shape.name.toLowerCase() === cnnObject.name.toLowerCase());
+
+            if (!exists) {
+              detectedShapes.push({
+                name: cnnObject.name,
+                confidence: cnnObject.confidence,
+                boundingBox: completeBoundingBox(cnnObject.boundingBox),
+                source: 'cnn',
+                enhancedByCNN: true
+              });
+            }
+          }
+
+          // If we got good CNN results but no good shape recognition or Quick Draw,
+          // use the best CNN result for the analysis
+          if (bestMatch?.confidence < 0.6 && cnnResults[0]?.confidence > 0.7) {
+            analysis = {
+              type: 'drawing',
+              content: cnnResults[0].name,
+              confidence: cnnResults[0].confidence
+            };
+          }
+        }
+      } catch (cnnError) {
+        console.error('CNN analysis failed:', cnnError);
+        // Continue with shape recognition results
+      }
+    } else {
+      console.log('Skipping advanced analysis - no canvas available');
+    }
+
+    // Enhanced analysis with OpenAI if requested
+    if (enhancedAnalysis) {
+      try {
+        // Convert SVG to PNG for OpenAI analysis
+        if (!pngDataUrl) {
+          pngDataUrl = await svgToPngDataUrl(svgString, 1024, 1024);
+        }
+
+        // Validate the data URL before sending to OpenAI
+        if (!validateImageDataUrl(pngDataUrl)) {
+          throw new Error('Generated PNG data URL is invalid');
+        }
+
+        // Include shape recognition results in the context for OpenAI
+        const enhancedContext = context + (detectedShapes.length > 0
+          ? `\nDetected shapes: ${detectedShapes.map(s => s.name).join(', ')}. Best match: ${bestMatch?.type} with confidence ${bestMatch?.confidence.toFixed(2)}.`
+          : '');
+
+        // Get enhanced analysis from OpenAI
+        const enhancedResult = await enhanceWithOpenAI(
+          pngDataUrl,
+          {
+            context: enhancedContext,
+            shapes: detectedShapes
+          },
+          fetch
+        );
+
+        // If OpenAI provided better analysis, use it
+        if (enhancedResult && enhancedResult.analysis) {
+          analysis = enhancedResult.analysis;
+          if (enhancedResult.detectedObjects && Array.isArray(enhancedResult.detectedObjects)) {
+            // Merge AI-detected objects with our shape recognition and CNN results
+            const aiObjects = enhancedResult.detectedObjects.filter(obj =>
+              !detectedShapes.some(shape =>
+                shape.name.toLowerCase() === obj.name.toLowerCase() &&
+                Math.abs(shape.confidence - obj.confidence) < 0.2));
+
+            // For objects already detected, use the one with higher confidence
+            // and better bounding box precision (preferring CNN and stroke-based)
+            for (const shape of detectedShapes) {
+              const aiMatch = enhancedResult.detectedObjects.find(obj =>
+                obj.name.toLowerCase() === shape.name.toLowerCase());
+
+              if (aiMatch) {
+                // Prefer our precise bounding boxes if they were enhanced by CNN or strokes
+                if (shape.enhancedByCNN || shape.enhancedByStrokes || shape.enhancedByQuickDraw || shape.enhancedByTensorFlow) {
+                  // Keep our precise bounding box but take OpenAI's confidence if higher
+                  if (aiMatch.confidence > shape.confidence) {
+                    shape.confidence = aiMatch.confidence;
+                  }
+                } else if (aiMatch.confidence > shape.confidence) {
+                  // Otherwise use OpenAI's if it has higher confidence
+                  shape.confidence = aiMatch.confidence;
+                  if (aiMatch.boundingBox) {
+                    shape.boundingBox = completeBoundingBox(aiMatch.boundingBox);
+                  }
+                }
+              }
+            }
+
+            // Add new objects from AI
+            detectedShapes = [...detectedShapes, ...aiObjects];
+          }
+        }
+      } catch (aiError) {
+        // Log the error but don't fail - we'll fall back to basic shape recognition
+        console.error('OpenAI enhancement failed:', aiError);
+
+        // Add debugging information but continue with basic recognition
+        return json({
+          analysis,
+          detectedShapes,
+          debug: {
+            error: `AI enhancement failed: ${aiError instanceof Error ? aiError.message : String(aiError)}`,
+            shapeRecognition: shapeRecognitionResult
+          }
+        });
+      }
+    }
+
+    // Return the analysis result
     return json({
-      analysis: {
-        type: analysisType.type,
-        content: analysisType.content,
-        confidence: analysisType.confidence
-      },
+      analysis,
+      detectedShapes,
       debug: {
-        strokeCount: validStrokes.length,
-        pointCount: validStrokes.reduce((sum, s) => sum + s.points.length, 0),
-        shapeRecognition: shapeAnalysis,
-        enhancedRecognition: enhancedShapeRecognition
-      },
-      detectedShapes: detectedShapes
+        shapeRecognition: {
+          shapes: shapeRecognitionResult.shapes,
+          multiStrokeShapes: shapeRecognitionResult.multiStrokeShapes,
+          bestMatch
+        }
+      }
     });
   } catch (error) {
-    console.error('Error analyzing strokes:', error);
+    console.error('Unexpected error in analyze-strokes API:', error);
     return json({
-      error: error instanceof Error ? error.message : 'Internal server error'
+      error: `Server error: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      debug: { stack: error instanceof Error ? error.stack : undefined }
     }, { status: 500 });
   }
-};
+}
+
+// Helper function to validate stroke data
+function validateStrokes(strokes: any[]): asserts strokes is Stroke[] {
+  if (!Array.isArray(strokes)) {
+    throw new Error('Strokes must be an array');
+  }
+
+  if (strokes.length === 0) {
+    throw new Error('No strokes provided');
+  }
+
+  for (let i = 0; i < strokes.length; i++) {
+    const stroke = strokes[i];
+
+    if (!stroke || typeof stroke !== 'object') {
+      throw new Error(`Stroke at index ${i} is not an object`);
+    }
+
+    if (!Array.isArray(stroke.points) || stroke.points.length === 0) {
+      throw new Error(`Stroke at index ${i} has no valid points`);
+    }
+
+    for (let j = 0; j < stroke.points.length; j++) {
+      const point = stroke.points[j];
+      if (!point || typeof point !== 'object' ||
+          typeof point.x !== 'number' ||
+          typeof point.y !== 'number') {
+        throw new Error(`Invalid point at stroke ${i}, point ${j}`);
+      }
+    }
+  }
+}
 
 // Function to analyze stroke patterns for simple shape detection
 function analyzeStrokePatterns(strokes: Stroke[]) {
@@ -345,4 +584,130 @@ function determineAnalysisType(basicAnalysis, enhancedAnalysis) {
     content: 'unrecognized shape',
     confidence: 0.5
   };
+}
+
+// Helper function to check for house or building patterns in strokes
+function checkForHouseOrBuildingPattern(strokes: Stroke[]) {
+  if (strokes.length < 2) return null;
+
+  // A typical house consists of a rectangular body and a triangular roof
+  // Look for a triangle on top of a rectangle
+
+  // First, find the overall bounding box of all strokes
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  const allStrokeIds: string[] = [];
+
+  for (const stroke of strokes) {
+    if (!stroke.points || stroke.points.length === 0) continue;
+    if (stroke.id) allStrokeIds.push(stroke.id);
+
+    for (const point of stroke.points) {
+      minX = Math.min(minX, point.x);
+      minY = Math.min(minY, point.y);
+      maxX = Math.max(maxX, point.x);
+      maxY = Math.max(maxY, point.y);
+    }
+  }
+
+  // Check if we have a reasonable bounding box
+  if (minX === Infinity || minY === Infinity || maxX === -Infinity || maxY === -Infinity) {
+    return null;
+  }
+
+  // Analyze shape - typical house proportions
+  const width = maxX - minX;
+  const height = maxY - minY;
+  const ratio = width / height;
+
+  // Houses typically have a width to height ratio around 1.0 to 1.5
+  if (ratio >= 0.8 && ratio <= 2.0) {
+    // Check for triangular shape in the top portion
+    let hasTriangularTop = false;
+
+    // Look for triangular shapes or diagonal lines in the top third
+    for (const stroke of strokes) {
+      if (!stroke.points || stroke.points.length < 3) continue;
+
+      // Count points in top third
+      const topThirdPoints = stroke.points.filter(p =>
+        p.y < minY + height / 3 &&
+        p.x > minX &&
+        p.x < maxX
+      );
+
+      if (topThirdPoints.length >= 3) {
+        // Check for diagonal patterns (roof-like)
+        let hasDiagonal = false;
+        for (let i = 1; i < topThirdPoints.length; i++) {
+          const dx = Math.abs(topThirdPoints[i].x - topThirdPoints[i-1].x);
+          const dy = Math.abs(topThirdPoints[i].y - topThirdPoints[i-1].y);
+
+          // If we have a sufficient diagonal component
+          if (dx > 5 && dy > 5) {
+            hasDiagonal = true;
+            break;
+          }
+        }
+
+        if (hasDiagonal) {
+          hasTriangularTop = true;
+          break;
+        }
+      }
+    }
+
+    // Check for rectangular shape in the bottom portion
+    let hasRectangularBottom = false;
+
+    // Count horizontal and vertical lines in bottom two-thirds
+    let horizontalLines = 0;
+    let verticalLines = 0;
+
+    for (const stroke of strokes) {
+      if (!stroke.points || stroke.points.length < 2) continue;
+
+      // Filter points in bottom two-thirds
+      const bottomPoints = stroke.points.filter(p =>
+        p.y >= minY + height / 3 &&
+        p.x >= minX &&
+        p.x <= maxX
+      );
+
+      if (bottomPoints.length >= 2) {
+        // Check for horizontal or vertical lines
+        for (let i = 1; i < bottomPoints.length; i++) {
+          const dx = Math.abs(bottomPoints[i].x - bottomPoints[i-1].x);
+          const dy = Math.abs(bottomPoints[i].y - bottomPoints[i-1].y);
+
+          if (dx > 5 && dy < 3) {
+            horizontalLines++;
+          } else if (dy > 5 && dx < 3) {
+            verticalLines++;
+          }
+        }
+      }
+    }
+
+    // If we have enough horizontal and vertical lines, it's rectangular
+    if (horizontalLines >= 2 && verticalLines >= 2) {
+      hasRectangularBottom = true;
+    }
+
+    // If we have a triangular top and rectangular bottom, it's likely a house
+    if ((hasTriangularTop && hasRectangularBottom) ||
+        (strokes.length >= 3 && ratio >= 0.8 && ratio <= 1.7)) {
+      // Simple house pattern detected
+      return {
+        boundingBox: {
+          x: minX,
+          y: minY,
+          width: width,
+          height: height
+        },
+        strokeIds: allStrokeIds
+      };
+    }
+  }
+
+  return null;
 }

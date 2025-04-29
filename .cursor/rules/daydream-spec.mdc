@@ -1,6 +1,6 @@
 ---
 description: Description of the app we are building in this project
-globs: 
+globs: *.svelte
 alwaysApply: true
 ---
 
@@ -31,19 +31,22 @@ In the actual app, there should be:
 - A title bar floating above the canvas, with breadcrumbs, an editable page title, and an editable page icon/emoji like notion.
 - A toolbar floating above the canvas, with basic tools such as “draw,” “polygon (with options)”, “pan”, “text”, “eraser” and “move / handle”.
 
-There are 2 types of pages — Canvas, and Drawing. We can either create drawings by themselves (which will use perfect-freehand and be very similar to tldraw), or we can also create them within Canvas pages with the “draw” tool, with the following mechanism:
+In the /draw directory, we will build an AI image drawing tool that will be the most structurally-faithful image generator in the world. This means that we will allow the user to draw a hand sketch, and the AI will match EXACTLY the structure and layout of that sketch, down to the location, positioning, scale, and rotation of each element. It should appear as though the generated image could be overlaid directly on top of the hand sketch, and every single element of the image should line up with exactly where their corresponding elements in the hand sketch are located. It should almost be like we are generating a finalized image with AI on "top of" the user-drawn hand sketch.
 
-The “draw” tool will first prompt the user to drag a rectangular area across the canvas, after which they can start drawing with perfect-freehand within the bounds of that rectangle. After they exit the drawing, they can re-enter to edit the drawing again with a button—but otherwise, no edits are allowed in any drawing unless the user is actively clicked into it and in edit mode. While in edit mode, there is a button to exit edit mode and save all changes. Each “drawing” should also automatically create its own separate Drawing page, with all edits in the larger canvas project being reflected in the canvas page. By default, every page is named either “Canvas _” or “Drawing _” with _ being an ascending number depending on how many have been created before.
+We will accomplish this in several steps:
 
-The key feature in this app is AI integration. I will now explain this feature.
+1. The user draws on the canvas with the perfect-freehand library
+2. Every time the user makes an edit, the canvas data is converted to an image and is analyzed by various image recognition services (TensorFlow, GPT-4 Vision, etc.)
+3. The AI analysis layer displays tightly-wrapped bounding boxes and labels on each identified object (right eye, nose, mouth, sun, cloud, window, etc.) with detailed data as well (e.g. "woman's face, facing 3/4 to the right, frustrated, clenched eyebrows")
+4. The AI analysis data is displayed in the app, so users can compare the quality of data provided by different sources
+5. The user clicks "generate" button, and all of this analysis data is fed into the gpt-image-1 model along with the actual canvas image itself
+6. The gpt-image-1 model generates an extremely structurally-faithful image, which can be overlaid on top of the existing image to confirm pinpoint layoout fidelity and accuracy
 
-We will add the feature to ask the OpenAI Responses API in order to ask questions about, and make edits to, our drawings. The API will take as input the SVG data of our perfect-freehand drawings, in order to directly make edits to the SVGs and therefore change the rendered drawings.
-
-For example, if I tell the API to “turn every black stroke red”, it should precisely do that and take the SVG of every stroke in the drawing and turn it red. I should also be able to ask questions about the drawing, such as “describe this drawing” or “how many circles are in this drawing” etc.
-
-The OpenAI API key can be found in the .env file. Let’s handle the OpenAI API handling functions in its own dedicated directory / file, and then only reference them in all the components where the API is called in order to generate responses.
-
-The app should have autosave applied automatically, adjusting for maximal performance. There should be either a “saving…” or “saved” text at all times in small font in the title bar of every canvas page, to ensure users of the status.
+We will use all available and appropriate image recognition tools for object identification and labeling:
+- GPT-4-vision model, by OpenAI
+- Tensorflow.js
+- Quick, Draw, by Google
+- Convolutional Neural Networks (CNNs)
 
 The aesthetic should be extremely minimal and simple, like MUJI. We can also take inspiration from Apple and Tldraw for their extremely beautiful and simple UI, with very smooth animations. The app must be extremely beautifully animated and smooth.
 

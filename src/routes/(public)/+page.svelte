@@ -80,11 +80,13 @@
     <img src="/arachne-icon.png" alt="Arachne Logo" class="logo" />
     <h1 bind:this={mainHeading}>Daydream</h1>
     <p bind:this={subHeading}>
-      A powerful canvas app for your creative ideas
+      An easier way to interact with AI
     </p>
 
     <div class="button-container">
       <!-- Use inline style for immediate visibility -->
+
+      <!--
       <button
         bind:this={loginButton}
         class="login-button"
@@ -99,12 +101,13 @@
         style="opacity: 1; visibility: visible;">
         Sign Up
       </button>
+      -->
       <button
         bind:this={demoButton}
         class="demo-button"
         on:click={handleTryDemo}
         style="opacity: 1; visibility: visible;">
-        Try AI Drawing Demo
+          Start Drawing
       </button>
     </div>
   </div>

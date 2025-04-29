@@ -208,9 +208,9 @@
   .vertical-slider-track {
     position: relative;
     height: 100%;
-    width: 4px;
+    width: 24px;
     background-color: rgba(0, 0, 0, 0.1);
-    border-radius: 2px;
+    border-radius: 4px;
     cursor: pointer;
 
     &.disabled {
@@ -224,18 +224,18 @@
     bottom: 0;
     left: 0;
     width: 100%;
-    border-radius: 2px;
+    border-radius: 4px;
   }
 
   .vertical-slider-thumb {
     position: absolute;
     left: 50%;
     transform: translate(-50%, 50%);
-    width: 16px;
-    height: 16px;
+    width: 24px;
+    height: 12px;
     background-color: white;
     border: 2px solid;
-    border-radius: 50%;
+    border-radius: 20px;
     box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
     transition: transform 0.15s ease;
     z-index: 2;
@@ -254,7 +254,7 @@
     }
 
     &:hover {
-      transform: translate(-50%, 50%) scale(1.15);
+      //transform: translate(-50%, 50%) scale(1.15);
 
       .thumb-highlight {
         opacity: 0.15;
@@ -262,7 +262,7 @@
     }
 
     &.active {
-      transform: translate(-50%, 50%) scale(1.1);
+      //transform: translate(-50%, 50%) scale(1.1);
       box-shadow: 0 3px 8px rgba(0, 0, 0, 0.25);
 
       .thumb-highlight {

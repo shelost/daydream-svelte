@@ -19,11 +19,13 @@ let modelLoading = false;
 export async function initTensorflow() {
   if (modelLoading) {
     // Wait for models to load if already in progress
+    console.log('TensorFlow models already loading, waiting...');
     while (modelLoading) {
       await new Promise(resolve => setTimeout(resolve, 100));
     }
 
     if (cocoModel && faceModel) {
+      console.log('Using cached TensorFlow models');
       return { objectDetector: cocoModel, faceDetector: faceModel };
     }
   }
@@ -34,8 +36,10 @@ export async function initTensorflow() {
 
     // Wait for TF to be ready (especially important in browser environments)
     await tf.ready();
+    console.log('TensorFlow.js runtime ready');
 
     // Load models in parallel
+    console.log('Loading COCO-SSD and BlazeFace models...');
     const [objectDetector, faceDetector] = await Promise.all([
       cocoModel || cocoSsd.load({ base: 'lite_mobilenet_v2' }), // Lighter model for better performance
       faceModel || blazeface.load()
@@ -63,11 +67,17 @@ export async function initTensorflow() {
  */
 export async function detectObjects(imageElement, confidenceThreshold = 0.5) {
   try {
+    console.log('Running object detection with COCO-SSD...');
     const { objectDetector } = await initTensorflow();
     const predictions = await objectDetector.detect(imageElement);
 
+    console.log(`COCO-SSD detected ${predictions.length} objects before filtering`);
+
     // Filter by confidence threshold
-    return predictions.filter(pred => pred.score >= confidenceThreshold);
+    const filteredPredictions = predictions.filter(pred => pred.score >= confidenceThreshold);
+    console.log(`COCO-SSD detected ${filteredPredictions.length} objects after filtering (threshold: ${confidenceThreshold})`);
+
+    return filteredPredictions;
   } catch (error) {
     console.error('Error detecting objects:', error);
     return [];
@@ -80,13 +90,19 @@ export async function detectObjects(imageElement, confidenceThreshold = 0.5) {
  * @param {number} confidenceThreshold - Minimum confidence score (0-1)
  * @returns {Promise<Array<{topLeft: number[], bottomRight: number[], landmarks: number[][], probability: number}>>}
  */
-export async function detectFaces(imageElement, confidenceThreshold = 0.8) {
+export async function detectFaces(imageElement, confidenceThreshold = 0.5) {
   try {
+    console.log('Running face detection with BlazeFace...');
     const { faceDetector } = await initTensorflow();
     const predictions = await faceDetector.estimateFaces(imageElement);
 
+    console.log(`BlazeFace detected ${predictions.length} faces before filtering`);
+
     // Filter by confidence threshold
-    return predictions.filter(pred => pred.probability[0] >= confidenceThreshold);
+    const filteredPredictions = predictions.filter(pred => pred.probability[0] >= confidenceThreshold);
+    console.log(`BlazeFace detected ${filteredPredictions.length} faces after filtering (threshold: ${confidenceThreshold})`);
+
+    return filteredPredictions;
   } catch (error) {
     console.error('Error detecting faces:', error);
     return [];
@@ -153,8 +169,19 @@ export function normalizeDetections(detections, canvasWidth, canvasHeight) {
  */
 export async function analyzeTensorflowBoundingBoxes(canvas) {
   try {
+    console.log('Analyzing image with TensorFlow.js...');
+    console.log(`Canvas dimensions: ${canvas.width}x${canvas.height}`);
+
+    // Check if canvas is empty (all white/transparent)
+    const isCanvasEmpty = isEmptyCanvas(canvas);
+    if (isCanvasEmpty) {
+      console.log('Canvas appears to be empty, skipping TensorFlow analysis');
+      return [];
+    }
+
     // Create a tensor from the canvas
     const imageTensor = tf.browser.fromPixels(canvas);
+    console.log('Created tensor from canvas:', imageTensor.shape);
 
     // Run object detection
     const objectDetections = await detectObjects(canvas);
@@ -170,11 +197,45 @@ export async function analyzeTensorflowBoundingBoxes(canvas) {
       canvas.height
     );
 
+    console.log(`Total normalized detections: ${normalizedObjects.length}`);
+    console.log('Detection results:', normalizedObjects);
+
     return normalizedObjects;
   } catch (error) {
     console.error('Error analyzing image with TensorFlow:', error);
     return [];
   }
+}
+
+/**
+ * Check if a canvas is empty (all white or transparent)
+ * @param {HTMLCanvasElement} canvas - The canvas to check
+ * @returns {boolean} True if canvas is empty
+ */
+function isEmptyCanvas(canvas) {
+  const ctx = canvas.getContext('2d');
+  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const data = imageData.data;
+
+  // Check a sample of pixels - look for non-white, non-transparent pixels
+  const pixelCount = data.length / 4;
+  const sampleSize = Math.min(1000, pixelCount); // Sample at most 1000 pixels
+  const sampleInterval = Math.floor(pixelCount / sampleSize);
+
+  for (let i = 0; i < pixelCount; i += sampleInterval) {
+    const index = i * 4;
+    const r = data[index];
+    const g = data[index + 1];
+    const b = data[index + 2];
+    const a = data[index + 3];
+
+    // If we find a non-white, non-transparent pixel, canvas is not empty
+    if (a > 10 && (r < 240 || g < 240 || b < 240)) {
+      return false;
+    }
+  }
+
+  return true;
 }
 
 /**
