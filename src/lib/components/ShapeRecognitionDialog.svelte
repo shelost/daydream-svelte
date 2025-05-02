@@ -318,11 +318,14 @@
   <div
     class="dialog-container"
     style="right: {position.right}; top: {position.top};"
-    transition:fly={{ y: -20, duration: 200 }}
+    transition:fly={{ y: 20, duration: 200 }}
   >
     <div class="dialog-header">
       <h3>Shape Recognition</h3>
       <div class="header-actions">
+        <button class="refresh-button" on:click={() => dispatch('refreshAnalysis')} title="Refresh analysis">
+          <span class="material-icons">refresh</span>
+        </button>
         <button class="debug-button" on:click={toggleDebug} title="Toggle debug mode">
           {debugMode ? '🐞' : '👁️'}
         </button>
@@ -901,9 +904,14 @@
           <div class="generated-image-display">
             <h4>Generated Image (Standard):</h4>
             {#if $isGenerating}
-              <div class="analyzing-indicator">
-                <div class="spinner"></div>
-                <span>Generating image...</span>
+              <div class="image-loading-container">
+                <div class="analyzing-indicator">
+                  <div class="spinner"></div>
+                  <span>Generating image...</span>
+                </div>
+                <div class="image-loading-animation">
+                  <div class="scanning-beam"></div>
+                </div>
               </div>
             {:else if $generatedImageUrl}
               <div class="image-result">
@@ -920,18 +928,23 @@
           </div>
           {/if}
 
-          {#if generatedMode === 'edited' || generatedMode === 'both'}
           <div class="prompt-display">
-            <h4>Edit Image Prompt:</h4>
+            <h4>Edit Prompt:</h4>
             <pre>{$gptEditPrompt || 'Edit prompt will appear here...'}</pre>
           </div>
 
+          {#if generatedMode === 'edited' || generatedMode === 'both'}
           <div class="generated-image-display">
             <h4>Generated Image (Edited):</h4>
             {#if $isEditing}
-              <div class="analyzing-indicator">
-                <div class="spinner"></div>
-                <span>Editing image...</span>
+              <div class="image-loading-container">
+                <div class="analyzing-indicator">
+                  <div class="spinner"></div>
+                  <span>Editing image...</span>
+                </div>
+                <div class="image-loading-animation">
+                  <div class="scanning-beam"></div>
+                </div>
               </div>
             {:else if $editedImageUrl}
               <div class="image-result">
@@ -979,18 +992,22 @@
   </div>
 {/if}
 
-<style>
+<style lang="scss">
   .dialog-container {
     position: fixed;
-    width: 400px;
+    width: 500px;
     max-height: 600px;
-    background: white;
-    border-radius: 8px;
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+    background: rgba(rgb(19, 18, 24), .75);
+    border-radius: 20px;
+    box-shadow: 0 20px 50px rgba(black, 0.5);
+    border: 1px solid rgba(white, 0.25);
     overflow: hidden;
     z-index: 1000;
     display: flex;
     flex-direction: column;
+    backdrop-filter: blur(50px);
+    color: white;
+    transition: .2s ease;
   }
 
   .dialog-header {
@@ -998,14 +1015,12 @@
     justify-content: space-between;
     align-items: center;
     padding: 12px 16px;
-    background: #f5f5f5;
-    border-bottom: 1px solid #eee;
-  }
 
-  .dialog-header h3 {
-    margin: 0;
-    font-size: 16px;
-    color: #333;
+    h3 {
+      margin: 0;
+      font-size: 16px;
+      color: white;
+    }
   }
 
   .header-actions {
@@ -1013,7 +1028,7 @@
     gap: 8px;
   }
 
-  .close-button, .debug-button {
+  .close-button, .debug-button, .refresh-button {
     background: none;
     border: none;
     font-size: 20px;
@@ -1026,55 +1041,57 @@
     align-items: center;
     justify-content: center;
     border-radius: 50%;
-  }
 
-  .close-button:hover, .debug-button:hover {
-    background: #eaeaea;
-    color: #333;
+    &:hover {
+      background: #eaeaea;
+      color: #333;
+    }
   }
 
   .tab-navigation {
     display: flex;
-    border-bottom: 1px solid #eee;
     overflow-x: auto;
+    padding: 12px 12px;
   }
 
   .tab-button {
-    flex: 1;
-    padding: 10px;
+    padding: 6px 10px;
     background: none;
     border: none;
-    border-radius: 0;
-    border-bottom: 2px solid transparent;
+    border-radius: 6px;
     font-size: 14px;
     font-weight: 500;
-    color: #777;
+    color: rgba(white, .5);
     cursor: pointer;
     transition: all 0.2s ease;
     position: relative;
-    min-width: 60px;
     text-align: center;
     white-space: nowrap;
-  }
 
-  .tab-button:hover {
-    background: #f5f5f5;
-  }
+    &:hover {
+      color: white;
+    }
 
-  .tab-button.active {
-    color: #9C27B0;
-    border-bottom-color: #9C27B0;
-  }
+    &.active {
+      background: #ffce00;
+      color: black;
+    }
 
-  .tab-button.has-data::after {
-    content: '';
-    position: absolute;
-    top: 10px;
-    right: 10px;
-    width: 6px;
-    height: 6px;
-    background-color: #4CAF50;
-    border-radius: 50%;
+    &.has-data::after {
+      content: '';
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      width: 6px;
+      height: 6px;
+      background-color: #4CAF50;
+      border-radius: 50%;
+    }
+
+    &.disabled {
+      opacity: 0.5;
+      text-decoration: line-through;
+    }
   }
 
   .dialog-content {
@@ -1147,12 +1164,12 @@
     border: 1px solid #eee;
     border-radius: 4px;
     overflow: hidden;
-  }
 
-  .object-snapshot img {
-    width: 100%;
-    height: auto;
-    display: block;
+    img {
+      width: 100%;
+      height: auto;
+      display: block;
+    }
   }
 
   .object-bbox-visualization, .shape-bbox-visualization {
@@ -1243,12 +1260,12 @@
     justify-content: space-between;
     align-items: center;
     margin-bottom: 8px;
-  }
 
-  .analysis-header h4 {
-    margin: 0;
-    font-size: 14px;
-    color: #333;
+    h4 {
+      margin: 0;
+      font-size: 14px;
+      color: #333;
+    }
   }
 
   .model-badge {
@@ -1271,12 +1288,12 @@
     margin-top: 16px;
     padding-top: 16px;
     border-top: 1px dashed #ddd;
-  }
 
-  .debug-section h4 {
-    margin: 0 0 8px 0;
-    font-size: 14px;
-    color: #666;
+    h4 {
+      margin: 0 0 8px 0;
+      font-size: 14px;
+      color: #666;
+    }
   }
 
   .debug-item {
@@ -1308,12 +1325,12 @@
     border-radius: 6px;
     overflow: hidden;
     background: #f5f5f5;
-  }
 
-  .canvas-snapshot img {
-    width: 100%;
-    height: auto;
-    display: block;
+    img {
+      width: 100%;
+      height: auto;
+      display: block;
+    }
   }
 
   .snapshot-info {
@@ -1334,18 +1351,18 @@
     background: #f5f5f5;
     border-radius: 6px;
     padding: 12px;
-  }
 
-  .analysis-summary h4 {
-    margin: 0 0 8px 0;
-    font-size: 14px;
-    color: #333;
-  }
+    h4 {
+      margin: 0 0 8px 0;
+      font-size: 14px;
+      color: #333;
+    }
 
-  .analysis-summary p {
-    margin: 0;
-    font-size: 13px;
-    color: #444;
+    p {
+      margin: 0;
+      font-size: 13px;
+      color: #444;
+    }
   }
 
   .shapes-grid,
@@ -1357,10 +1374,11 @@
 
   .shape-card,
   .object-card {
-    border: 1px solid #eee;
+    border: none;
     border-radius: 6px;
     padding: 10px;
-    background: #fafafa;
+    background: rgba(white, .1);
+    color: white;
   }
 
   .shape-header,
@@ -1387,7 +1405,7 @@
   .shape-source,
   .object-source {
     font-size: 11px;
-    color: #888;
+    color: white;
     margin-top: 8px;
     display: flex;
     justify-content: space-between;
@@ -1433,15 +1451,14 @@
     align-items: center;
     max-height: 150px;
     box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
-  }
 
-  .object-cropped-image img,
-  .object-image-container img {
-    max-width: 100%;
-    max-height: 150px;
-    object-fit: contain;
-    display: block;
-    padding: 5px;
+    img {
+      max-width: 100%;
+      max-height: 150px;
+      object-fit: contain;
+      display: block;
+      padding: 5px;
+    }
   }
 
   /* New styles for tech badges and status indicators */
@@ -1459,10 +1476,9 @@
     gap: 4px;
     font-size: 12px;
     font-weight: 500;
-    background-color: #f5f5f5;
+    background-color: rgba(white, .1);
     padding: 4px 8px;
-    border-radius: 4px;
-    border: 1px solid #e0e0e0;
+    border-radius: 8px;
   }
 
   .tech-icon {
@@ -1479,28 +1495,28 @@
     font-size: 12px;
     font-weight: 500;
     margin-left: auto;
-  }
 
-  .status-indicator.complete {
-    background-color: #4CAF50;
-    color: white;
-  }
+    &.complete {
+      background-color: #4CAF50;
+      color: white;
+    }
 
-  .status-indicator.running {
-    background-color: #FFC107;
-    color: #333;
-  }
+    &.running {
+      background-color: #FFC107;
+      color: #333;
+    }
 
-  .status-indicator.waiting {
-    background-color: #F44336;
-    color: white;
+    &.waiting {
+      background-color: #F44336;
+      color: white;
+    }
   }
 
   .tab-description {
     margin-bottom: 16px;
     font-size: 12px;
-    color: #666;
-    background-color: #f8f8f8;
+    color: white;
+    background-color: rgba(white, .05);
     padding: 10px;
     border-radius: 4px;
     border-left: 3px solid #9C27B0;
@@ -1513,54 +1529,59 @@
     gap: 16px;
   }
 
-  .prompt-display h4,
-  .generated-image-display h4 {
-    margin: 0 0 8px 0;
-    font-size: 14px;
-    color: #333;
+  .prompt-display,
+  .generated-image-display {
+    h4 {
+      margin: 0 0 8px 0;
+      font-size: 14px;
+      color: white;
+    }
   }
 
-  .prompt-display pre {
-    background-color: #f5f5f5;
-    padding: 12px;
-    border-radius: 4px;
-    border: 1px solid #e0e0e0;
-    font-family: monospace;
-    font-size: 11px;
-    line-height: 1.4;
-    white-space: pre-wrap;
-    word-break: break-word;
-    max-height: 200px;
-    overflow-y: auto;
+  .prompt-display {
+    pre {
+      background-color: rgba(white, .1);
+      padding: 12px;
+      border-radius: 4px;
+      font-family: monospace;
+      font-size: 11px;
+      line-height: 1.4;
+      white-space: pre-wrap;
+      word-break: break-word;
+      max-height: 200px;
+      overflow-y: auto;
+    }
   }
 
-  .generated-image-display .image-result {
-    position: relative;
-    border: 1px solid #eee;
-    border-radius: 6px;
-    overflow: hidden;
-    background: #f5f5f5;
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    min-height: 150px;
-  }
+  .generated-image-display {
+    .image-result {
+      position: relative;
+      border: 1px solid #eee;
+      border-radius: 6px;
+      overflow: hidden;
+      background: #f5f5f5;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 150px;
 
-  .generated-image-display .image-result img {
-    max-width: 100%;
-    max-height: 300px;
-    display: block;
-  }
+      img {
+        max-width: 100%;
+        max-height: 300px;
+        display: block;
+      }
 
-  .generated-image-display .image-result .model-badge {
-    position: absolute;
-    bottom: 8px;
-    right: 8px;
-    background: rgba(0, 0, 0, 0.6);
-    color: white;
-    padding: 3px 6px;
-    border-radius: 4px;
-    font-size: 10px;
+      .model-badge {
+        position: absolute;
+        bottom: 8px;
+        right: 8px;
+        background: rgba(0, 0, 0, 0.6);
+        color: white;
+        padding: 3px 6px;
+        border-radius: 4px;
+        font-size: 10px;
+      }
+    }
   }
 
   /* New Toggle Switch Style */
@@ -1577,12 +1598,12 @@
     width: 40px;
     height: 22px;
     margin-left: 10px;
-  }
 
-  .toggle-switch input {
-    opacity: 0;
-    width: 0;
-    height: 0;
+    input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
   }
 
   .switch-slider {
@@ -1595,31 +1616,26 @@
     background-color: #ccc;
     transition: .4s;
     border-radius: 34px;
-  }
 
-  .switch-slider:before {
-    position: absolute;
-    content: "";
-    height: 18px;
-    width: 18px;
-    left: 2px;
-    bottom: 2px;
-    background-color: white;
-    transition: .4s;
-    border-radius: 50%;
+    &:before {
+      position: absolute;
+      content: "";
+      height: 18px;
+      width: 18px;
+      left: 2px;
+      bottom: 2px;
+      background-color: white;
+      transition: .4s;
+      border-radius: 50%;
+    }
   }
 
   input:checked + .switch-slider {
     background-color: #9C27B0;
-  }
 
-  input:checked + .switch-slider:before {
-    transform: translateX(18px);
-  }
-
-  .tab-button.disabled {
-    opacity: 0.5;
-    text-decoration: line-through;
+    &:before {
+      transform: translateX(18px);
+    }
   }
 
   /* New styles for the generated image display modes */
@@ -1637,12 +1653,12 @@
     border-radius: 4px;
     cursor: pointer;
     transition: all 0.2s ease;
-  }
 
-  .mode-button.active {
-    background: #9C27B0;
-    color: white;
-    border-color: #9C27B0;
+    &.active {
+      background: #9C27B0;
+      color: white;
+      border-color: #9C27B0;
+    }
   }
 
   .comparison-section {
@@ -1680,11 +1696,84 @@
     justify-content: center;
     padding: 4px;
     background: white;
+
+    img {
+      max-width: 100%;
+      max-height: 100%;
+      object-fit: contain;
+    }
   }
 
-  .comparison-image img {
-    max-width: 100%;
-    max-height: 100%;
-    object-fit: contain;
+  .ai-scanning-animation {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 200px;
+    background-color: rgba(0, 0, 0, 0.1);
+    overflow: hidden;
+    border-radius: 6px;
+  }
+
+  .scanning-beam {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(
+      to bottom,
+      rgba(157, 39, 176, 0) 0%,
+      rgba(157, 39, 176, 0.3) 50%,
+      rgba(157, 39, 176, 0) 100%
+    );
+    animation: scanning-animation 1.5s ease-in-out infinite;
+  }
+
+  @keyframes scanning-animation {
+    0% { transform: translateY(-100%); }
+    100% { transform: translateY(200%); }
+  }
+
+  /* Add these styles at the appropriate place in the style section */
+  .image-loading-container {
+    min-height: 200px;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background-color: rgba(0, 0, 0, 0.1);
+    border-radius: 6px;
+    overflow: hidden;
+    margin-bottom: 16px;
+  }
+
+  .image-loading-animation {
+    position: absolute;
+    width: 100%;
+    height: 100%;
+    top: 0;
+    left: 0;
+    z-index: 0;
+
+    .scanning-beam {
+      position: absolute;
+      width: 100%;
+      height: 50px;
+      background: linear-gradient(
+        to bottom,
+        rgba(157, 39, 176, 0) 0%,
+        rgba(157, 39, 176, 0.2) 50%,
+        rgba(157, 39, 176, 0) 100%
+      );
+      animation: scanning-animation 1.5s ease-in-out infinite;
+    }
+  }
+
+  @keyframes scanning-animation {
+    0% { transform: translateY(-100%); }
+    50% { transform: translateY(100%); }
+    100% { transform: translateY(300%); }
   }
 </style>

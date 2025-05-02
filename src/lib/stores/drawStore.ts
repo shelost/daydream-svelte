@@ -3,7 +3,7 @@ import { writable } from 'svelte/store';
 // Store for the dynamically generated prompt for GPT-Image-1
 export const gptImagePrompt = writable<string>('');
 
-// Store for the edit image prompt
+// Store for the dynamically generated prompt for GPT-Image-1 Edit (edit-image endpoint)
 export const gptEditPrompt = writable<string>('');
 
 // Store for the URL of the generated image

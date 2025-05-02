@@ -45,7 +45,7 @@
 		"@tensorflow/tfjs-converter": "^4.22.0",
 		"@xyflow/svelte": "^0.1.37",
 		"fabric": "^5.5.2",
-		"gsap": "^3.12.7",
+		"gsap": "^3.13.0",
 		"openai": "^4.96.0",
 		"perfect-freehand": "^1.2.2",
 		"sass": "^1.86.3"

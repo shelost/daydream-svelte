@@ -12,14 +12,14 @@
   import ShapeRecognitionDialog from '$lib/components/ShapeRecognitionDialog.svelte';
   import {
     gptImagePrompt,
+    gptEditPrompt,
     generatedImageUrl,
     generatedByModel,
     isGenerating,
     editedImageUrl,
     editedByModel,
     isEditing,
-    analysisOptions,
-    gptEditPrompt
+    analysisOptions
   } from '$lib/stores/drawStore';
 
   // Interface extension for Stroke type with hasPressure property
@@ -197,58 +197,10 @@
     return prompt.length > 4000 ? prompt.substring(0, 3997) + '...' : prompt;
   }
 
-  // Function to build the prompt for GPT-Image-1 Edit mode
-  function buildGptEditPrompt() {
-    let prompt = `EDIT MODE: You are COMPLETING an existing sketch - enhance and complete the drawing while preserving its exact structure. `;
-
-    prompt += `EDIT OBJECTIVES:
-1. PRESERVE EXACT STRUCTURE: Keep all elements in their precise positions
-2. COMPLETE THE DRAWING: Add color, details, and texture to the existing sketch
-3. MAINTAIN ARTISTIC INTENT: Respect the style and content of the original drawing
-4. FOCUS ON COMPLETION: This is NOT creating a new image - it's enhancing what already exists
-`;
-
-    // Include the content description from our analysis
-    const contentGuide = sketchAnalysis !== "Draw something to see AI's interpretation" ? sketchAnalysis : "A user's drawing that needs completion.";
-    prompt += `CONTENT DESCRIPTION: ${contentGuide}\n\n`;
-
-    // Add user's additional context if provided (preserve this as high priority)
-    if (additionalContext) {
-      prompt += `USER'S CONTEXT: "${additionalContext}"\n\n`;
-    }
-
-    // Include the detailed structural information if available
-    if (analysisElements.length > 0) {
-      const structuralGuide = `The sketch contains ${analysisElements.length} main elements that should remain in their exact positions.`;
-      prompt += `STRUCTURAL GUIDE: ${structuralGuide}\n\n`;
-    }
-
-    // Include the compositional analysis
-    const compositionGuide = `Complete the composition within the ${selectedAspectRatio} frame, maintaining the front-facing view.`;
-    prompt += `COMPOSITION GUIDE: ${compositionGuide}\n\n`;
-
-    // Add stroke-based recognition if available
-    if (strokeRecognition && strokeRecognition !== "Draw something to see shapes recognized") {
-      prompt += `RECOGNIZED SHAPES: ${strokeRecognition}\n\n`;
-    }
-
-    // Final instructions for perfect structural fidelity with emphasis on completion
-    prompt += `FINAL INSTRUCTIONS: COMPLETE THE SKETCH by adding color, texture, and details while keeping the exact same layout and proportions. This is an EDIT task - enhance what's already there rather than creating something new.`;
-
-    // Trim the prompt to ensure it stays within API limits
-    return prompt.length > 4000 ? prompt.substring(0, 3997) + '...' : prompt;
-  }
-
   // Reactive update for the GPT image prompt store
   $: {
     const newPrompt = buildGptImagePrompt();
     gptImagePrompt.set(newPrompt);
-  }
-
-  // Reactive update for the GPT edit prompt store
-  $: {
-    const newEditPrompt = buildGptEditPrompt();
-    gptEditPrompt.set(newEditPrompt);
   }
 
   // Function to determine if an event is a real user edit vs. a programmatic change
@@ -1306,19 +1258,17 @@
       editedImageUrl.set(null);
 
       // Store the current aspect ratio to use for the generated image
-      // This ensures the generated image matches the drawing canvas
       generatedImageAspectRatio = selectedAspectRatio;
       console.log(`Using aspect ratio ${selectedAspectRatio} (${aspectRatios[selectedAspectRatio]}) for generated image`);
 
       // Create a deep copy of the drawing content to avoid any reactivity issues
       const drawingContentCopy = JSON.parse(JSON.stringify(drawingContent));
 
-      // Get the prompts from the stores
-      const imagePrompt = $gptImagePrompt;
-      const editPrompt = $gptEditPrompt;
-
-      console.log('Using image prompt from store:', imagePrompt ? 'yes (length: ' + imagePrompt.length + ')' : 'no');
-      console.log('Using edit prompt from store:', editPrompt ? 'yes (length: ' + editPrompt.length + ')' : 'no');
+      // Get the current prompts from the stores
+      const currentPrompt = $gptImagePrompt;
+      const currentEditPrompt = $gptEditPrompt;
+      console.log('Using prompt from store:', currentPrompt ? 'yes (length: ' + currentPrompt.length + ')' : 'no');
+      console.log('Using edit prompt from store:', currentEditPrompt ? 'yes (length: ' + currentEditPrompt.length + ')' : 'no');
 
       // Add structure preservation metadata
       const structureData = {
@@ -1342,25 +1292,22 @@
         confidence: obj.confidence || 1.0
       }));
 
-      // Prepare request payloads - one for each endpoint
-      const standardRequestPayload = {
+      // Prepare request payloads for both endpoints
+      const requestPayload = {
         drawingContent: drawingContentCopy,
         imageData,
         additionalContext,
         aspectRatio: selectedAspectRatio,
-        prompt: imagePrompt, // Use the image generation prompt
+        sketchAnalysis,
+        strokeRecognition,
+        prompt: currentPrompt,
         structureData,
         detectedObjects: enhancedObjects
       };
 
       const editRequestPayload = {
-        drawingContent: drawingContentCopy,
-        imageData,
-        additionalContext,
-        aspectRatio: selectedAspectRatio,
-        prompt: editPrompt, // Use the edit prompt
-        structureData,
-        detectedObjects: enhancedObjects
+        ...requestPayload,
+        prompt: currentEditPrompt
       };
 
       // Call both API endpoints in parallel
@@ -1371,7 +1318,7 @@
           headers: {
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify(standardRequestPayload)
+          body: JSON.stringify(requestPayload)
         }),
 
         // Edited image generation
@@ -2142,6 +2089,47 @@
   }
 
   // Update the analyze-strokes endpoint call in other places as needed
+
+  // Function to build the prompt for GPT-Image-1 Edit (edit-image endpoint)
+  function buildGptEditPrompt() {
+    let prompt = `Edit this drawing by completing or enhancing it. Do not create a new image or change the existing structure; simply add to or finish the current drawing as it is. The goal is to complete the user's intent while preserving all original elements and their positions.`;
+
+    // Content description from analysis
+    const contentGuide = sketchAnalysis !== "Draw something to see AI's interpretation" ? sketchAnalysis : "A user's drawing.";
+    prompt += `\n\nCONTENT DESCRIPTION: ${contentGuide}`;
+
+    // User's additional context
+    if (additionalContext) {
+      prompt += `\n\nUSER'S CONTEXT: \"${additionalContext}\"`;
+    }
+
+    // Structural information if available
+    if (analysisElements.length > 0) {
+      const structuralGuide = `Based on analysis, the drawing contains ${analysisElements.length} main elements. Element positions and basic relationships are implied by the sketch.`;
+      prompt += `\n\nSTRUCTURAL GUIDE: ${structuralGuide}`;
+    }
+
+    // Compositional analysis
+    const compositionGuide = `Focus on the arrangement within the ${selectedAspectRatio} frame.`;
+    prompt += `\n\nCOMPOSITION GUIDE: ${compositionGuide}`;
+
+    // Stroke-based recognition if available
+    if (strokeRecognition && strokeRecognition !== "Draw something to see shapes recognized") {
+      prompt += `\n\nRECOGNIZED SHAPES: ${strokeRecognition}`;
+    }
+
+    // Final instructions for perfect structural fidelity
+    prompt += `\n\nFINAL INSTRUCTIONS: Complete or enhance the image while maintaining the exact structure, positions, and proportions of all elements. Do not reposition, resize, or remove any part of the original sketch. Only add to or finish what is already present.`;
+
+    // Trim to 4000 chars
+    return prompt.length > 4000 ? prompt.substring(0, 3997) + '...' : prompt;
+  }
+
+  // Reactive update for the GPT edit prompt store
+  $: {
+    const newEditPrompt = buildGptEditPrompt();
+    gptEditPrompt.set(newEditPrompt);
+  }
 </script>
 
 <svelte:head>
@@ -2150,6 +2138,7 @@
   <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
 </svelte:head>
 
+<div id = 'app'>
 <div class="draw-demo-container">
   <header class="demo-header">
     <div class="context-input-container">
@@ -2157,7 +2146,7 @@
         id="context-input"
         type="text"
         bind:value={additionalContext}
-        placeholder="Describe what you're drawing (e.g., 'A castle on a mountain at sunset')"
+        placeholder="What are you drawing?"
         class="context-input"
       />
     </div>
@@ -2305,33 +2294,28 @@
 
     <div class="canvas-wrapper output-canvas" class:ratio-1-1={generatedImageAspectRatio === '1:1'} class:ratio-portrait={generatedImageAspectRatio === 'portrait'} class:ratio-landscape={generatedImageAspectRatio === 'landscape'}>
       <div class="output-display" class:ratio-1-1={generatedImageAspectRatio === '1:1'} class:ratio-portrait={generatedImageAspectRatio === 'portrait'} class:ratio-landscape={generatedImageAspectRatio === 'landscape'}>
-        {#if $generatedImageUrl}
-          <img src={$generatedImageUrl} alt="AI generated image" />
+        {#if $editedImageUrl}
+          <img src={$editedImageUrl} alt="AI generated image" />
           {#if $generatedByModel}
             <div class="model-badge">
               Generated by {$generatedByModel === 'gpt-image-1' ? 'GPT-image-1' : $generatedByModel}
             </div>
           {/if}
-        {:else if $isGenerating}
-          <div class="ai-scanning-animation">
-            <!-- Show translucent version of the sketch being analyzed -->
-            <div class="sketch-preview">
-              <img src={imageData} alt="Sketch preview" class="sketch-preview-image" />
-              <div class="scanning-line"></div>
-              <div class="scanning-grid"></div>
-              <div class="scan-highlight"></div>
-            </div>
-            <div class="scanning-status">
-              <span>Analyzing structure</span>
-              <div class="status-text">Preserving exact positions and proportions</div>
-            </div>
-          </div>
         {:else}
           <!-- Show translucent preview of drawing canvas when no generated image -->
           <div class="drawing-preview" style="aspect-ratio: {inputCanvas?.width}/{inputCanvas?.height}">
             {#if imageData}
               <img src={imageData} alt="Drawing preview" class="drawing-preview-image" style="width: 100%; height: 100%; object-fit: contain;" />
-            {:else}
+
+              {#if $isGenerating}
+                <div class="ai-scanning-animation">
+                  <div class="scanning-status">
+                    <span>Analyzing structure</span>
+                    <div class="status-text">Preserving exact positions and proportions</div>
+                  </div>
+                </div>
+              {/if}
+              {:else}
               <p>Your AI-generated image will appear here</p>
             {/if}
           </div>
@@ -2381,7 +2365,7 @@
       disabled={$isGenerating || strokeCount === 0}
     >
       <span class="material-icons">image</span>
-      {$isGenerating ? 'Generating...' : 'Generate Structure-Perfect Image'}
+      {$isGenerating ? 'Generating...' : 'Generate Image'}
     </button>
 
     {#if errorMessage}
@@ -2391,204 +2375,7 @@
       </div>
     {/if}
 
-    <!-- Debug info -->
-    <div class="debug-info">
-      <p>Button state: {isGenerating ? 'Generating in progress' : (strokeCount === 0 ? 'No strokes drawn' : 'Ready to generate')}</p>
-      <p>Stroke count: {strokeCount}</p>
 
-      <!-- Sketch Analysis Section -->
-      <div class="sketch-analysis">
-        <h4>AI Sketch Interpretation (GPT-4 Vision):</h4>
-        <div class="analysis-text">
-          {#if isAnalyzing}
-            <div class="analysis-status-tag analyzing">
-            <div class="mini-spinner"></div>
-              <span>Analyzing with GPT-4 Vision...</span>
-            </div>
-            <p>{previousSketchAnalysis}</p>
-          {:else}
-            <div class="analysis-status-tag updated">
-              <span class="material-icons">check_circle</span>
-              <span>Up to date</span>
-            </div>
-            <p>{sketchAnalysis}</p>
-          {/if}
-        </div>
-        <button
-          class="analyze-button"
-          on:click={() => {
-            forceAnalysisFlag = true;
-            analyzeSketch();
-          }}
-          disabled={isAnalyzing || strokeCount === 0}
-        >
-          <span class="material-icons">psychology</span>
-          {isAnalyzing ? 'Analyzing...' : 'Analyze Sketch Now'}
-        </button>
-      </div>
-
-      <!-- Stroke Recognition Section -->
-      <div class="stroke-recognition">
-        <h4>Shape Recognition (TensorFlow, CNN, Stroke Analysis):</h4>
-        <div class="analysis-text">
-          {#if isRecognizingStrokes}
-            <div class="analysis-status-tag analyzing">
-              <div class="mini-spinner"></div>
-              <span>Analyzing with multiple AI technologies...</span>
-            </div>
-            <p style="white-space: pre-line">{previousStrokeRecognition}</p>
-          {:else if recognitionResult && recognitionResult.detectedShapes && recognitionResult.detectedShapes.length > 0}
-            <div class="analysis-status-tag updated">
-              <span class="material-icons">check_circle</span>
-              <span>Up to date</span>
-            </div>
-            <p style="white-space: pre-line">{strokeRecognition}</p>
-
-            <!-- Enhanced TensorFlow debugging section -->
-            <div class="tf-detected-objects">
-              <h5>TensorFlow detected objects:</h5>
-              <div class="object-list">
-                {#if recognitionResult.detectedShapes.filter(obj => obj.detectionSource === 'tensorflow' || obj.enhancedByCNN === true).length > 0}
-                  {#each recognitionResult.detectedShapes.filter(obj => obj.detectionSource === 'tensorflow' || obj.enhancedByCNN === true) as obj, i}
-                    <div class="detected-object">
-                      <div class="object-header">
-                        <span class="object-name">{obj.name}</span>
-                        <span class="object-confidence">{Math.round(obj.confidence * 100)}%</span>
-                      </div>
-                      {#if obj.boundingBox}
-                        <div class="object-position">
-                          Position: x:{Math.round(obj.boundingBox.centerX * 100)}%,
-                          y:{Math.round(obj.boundingBox.centerY * 100)}%
-                        </div>
-                        <div class="object-size">
-                          Size: {Math.round(obj.boundingBox.width * 100)}% ×
-                          {Math.round(obj.boundingBox.height * 100)}%
-                        </div>
-                        <div class="object-bbox-visualization"
-                             style="background-color: {obj.color || '#9C27B0'}22;
-                                    border: 2px solid {obj.color || '#9C27B0'};
-                                    position: relative;
-                                    width: 100%;
-                                    height: 60px;">
-                          <!-- Visual representation of the object's position -->
-                          <div class="object-indicator"
-                               style="position: absolute;
-                                      left: {obj.boundingBox.centerX * 100}%;
-                                      top: {obj.boundingBox.centerY * 100}%;
-                                      width: 10px;
-                                      height: 10px;
-                                      border-radius: 50%;
-                                      background-color: {obj.color || '#9C27B0'};
-                                      transform: translate(-50%, -50%);">
-                          </div>
-                          <!-- Visual representation of the bounding box -->
-                          <div class="object-bbox"
-                               style="position: absolute;
-                                      left: {obj.boundingBox.minX * 100}%;
-                                      top: {obj.boundingBox.minY * 100}%;
-                                      width: {obj.boundingBox.width * 100}%;
-                                      height: {obj.boundingBox.height * 100}%;
-                                      border: 1px dashed {obj.color || '#9C27B0'};">
-                          </div>
-                          <div class="object-label"
-                               style="position: absolute;
-                                      left: {Math.min(Math.max(obj.boundingBox.minX * 100, 5), 95)}%;
-                                      top: {Math.min(Math.max(obj.boundingBox.minY * 100 - 15, 5), 80)}%;
-                                      font-size: 10px;
-                                      color: {obj.color || '#9C27B0'};
-                                      white-space: nowrap;">
-                            {obj.name}
-                          </div>
-                        </div>
-                      {/if}
-                      <div class="object-source">
-                        Source: {obj.enhancedByCNN ? 'CNN' : obj.detectionSource || obj.source || 'Unknown'}
-                      </div>
-                    </div>
-                  {/each}
-                {:else}
-                  <p>No TensorFlow objects detected. Try adding more details to your drawing.</p>
-                {/if}
-              </div>
-            </div>
-
-            <!-- Original shape recognition results -->
-            <div class="shape-recognition-results">
-              <h5>Shape recognition results:</h5>
-              {#if recognitionResult.debug?.shapeRecognition?.shapes}
-                <div class="shapes-list">
-                  {#each recognitionResult.debug.shapeRecognition.shapes.slice(0, 3) as shape}
-                    <div class="shape-item">
-                      <span class="shape-name">{shape.type}</span>
-                      <span class="shape-confidence">{Math.round(shape.confidence * 100)}%</span>
-                    </div>
-                  {/each}
-                </div>
-              {/if}
-            </div>
-          {:else}
-            <div class="analysis-status-tag updated">
-              <span class="material-icons">check_circle</span>
-              <span>Up to date</span>
-            </div>
-            <p style="white-space: pre-line">{strokeRecognition}</p>
-          {/if}
-        </div>
-        <button
-          class="analyze-button"
-          on:click={() => {
-            forceAnalysisFlag = true;
-            recognizeStrokes();
-          }}
-          disabled={isRecognizingStrokes || strokeCount === 0}
-        >
-          <span class="material-icons">category</span>
-          {isRecognizingStrokes ? 'Recognizing...' : 'Recognize Shapes Now'}
-        </button>
-      </div>
-
-      <div class="debug-buttons">
-        <!-- Test button to manually add a stroke -->
-        <button
-          on:click={() => {
-            const testStroke = {
-              tool: 'pen' as const,
-              points: [
-                { x: 100, y: 100, pressure: 0.5 },
-                { x: 200, y: 200, pressure: 0.5 }
-              ],
-              color: '#000000',
-              size: 3,
-              opacity: 1
-            };
-            drawingContent.strokes.push(testStroke);
-            // Trigger Svelte reactivity
-            drawingContent = drawingContent;
-            renderStrokes();
-            console.log('Test stroke added, new count:', drawingContent.strokes.length);
-          }}
-          class="test-button"
-        >
-          Add Test Stroke
-        </button>
-
-        <!-- Refresh button to force reactivity updates -->
-        <button
-          class="test-button"
-          on:click={() => {
-            // Force refresh drawingContent to update UI
-            drawingContent = {...drawingContent, strokes: [...drawingContent.strokes]};
-            console.log('Forced refresh. Current stroke count:', drawingContent.strokes.length);
-          }}
-        >
-          Refresh Count
-        </button>
-
-        <button class="test-button" on:click={() => showDebugPressure = !showDebugPressure}>
-          {showDebugPressure ? 'Hide Pressure Debug' : 'Show Pressure Debug'}
-        </button>
-      </div>
-    </div>
 
     <!-- Shape Recognition Dialog and Button -->
     <ShapeRecognitionButton
@@ -2618,6 +2405,10 @@
       sketchAnalysisOutput={sketchAnalysisOutput}
       strokesAnalysisOutput={strokesAnalysisOutput}
       on:optionsChanged={handleAnalysisOptionsChanged}
+      on:refreshAnalysis={() => {
+        forceAnalysisFlag = true;
+        analyzeDrawing();
+      }}
     />
 
     {#if showDebugPressure && drawingContent.strokes.length > 0}
@@ -2645,15 +2436,25 @@
 
   </div>
 </div>
+</div>
 
 <style lang="scss">
+
+  #app{
+    height: 100vh;
+    width: 100%;
+    overflow: hidden;
+  }
+
   .draw-demo-container {
     display: flex;
     flex-direction: column;
     align-items: center;
+    justify-content: flex-start;
+    box-sizing: border-box;
     height: 100vh;
     width: 100%;
-    padding: 1rem;
+    padding: 12px;
   }
 
   .demo-header {
@@ -2686,16 +2487,25 @@
       }
 
       .context-input {
-        width: 90%;
+        font-family: 'Newsreader', 'DM Sans', serif;
+        font-size: 20px;
+        font-weight: 600;
+
+        width: 100%;
         max-width: 600px;
-        padding: 12px 16px;
-        border: 1px solid #ddd;
+        padding: 16px 16px 12px 16px;
+        border: 1px solid rgba(white, 0.05);
+        background: rgba(white, .0);
         border-radius: 32px;
-        font-size: 16px;
-        font-weight: 500;
         letter-spacing: -.5px;
           text-align: center;
-        box-shadow: 0 8px 12px rgba(black, 0.1);
+          color: white;
+        box-shadow: -4px 16px 24px rgba(black, 0.2);
+        text-shadow: 0 4px 12px rgba(black, .1);
+
+        &::placeholder {
+          color: rgba(white, .3);
+        }
 
         &:focus {
           outline: none;
@@ -2710,10 +2520,10 @@
     display: flex;
     justify-content: center;
     flex: 1;
-    gap: 1rem;
-    margin-bottom: 1rem;
+    gap: 24px;
+    margin: 12px 0;
     min-width: 400px;
-    width: 95vw;
+    width: 90vw;
     max-height: 85vh;
     position: relative;
 
@@ -2806,7 +2616,7 @@
    // border-radius: 8px;
     overflow: visible;
     transition: all 0.3s ease;
-    border-radius: 4px;
+    border-radius: 0;
 
     //box-shadow: 0 8px 16px rgba(black, 0.5);
 
@@ -2814,6 +2624,7 @@
     &.input-canvas {
       min-width: 300px;
       max-width: 800px;
+
 
       // Adjust dimensions based on aspect ratio
       &.ratio-4-5 {
@@ -2837,7 +2648,7 @@
 
       /* Update to ensure proper canvas containment */
       .drawing-canvas {
-        border-radius: 4px;
+        border-radius: 8px;
         margin: 0;
         display: block;
         max-width: 100%;
@@ -2847,7 +2658,7 @@
         cursor: crosshair;
         object-fit: contain;
 
-        box-shadow: 0 8px 16px rgba(black, 0.5);
+        box-shadow: -12px 32px 32px rgba(black, 0.4);
       }
     }
 
@@ -3222,17 +3033,16 @@
       align-items: center;
       justify-content: center;
       gap: 10px;
-      background: linear-gradient(45deg, #7b1fa2, #9c27b0);
+      background: #635FFF;
       color: white;
       border: none;
-      border-radius: 30px;
-      padding: 10px 24px;
+      border-radius: 8px;
+      padding: 10px 16px 12px 16px;
       font-size: 15px;
       font-weight: 500;
       cursor: pointer;
       transition: all 0.3s ease;
-      box-shadow: 0 4px 10px rgba(156, 39, 176, 0.3);
-      min-width: 230px;
+      box-shadow: -4px 12px 16px rgba(black, .2);
       position: relative;
       overflow: hidden;
 
@@ -4084,6 +3894,17 @@
     opacity: 0.1; /* Translucent as specified */
   }
 
+
+  .ai-scanning-animation{
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+  }
 
 
 

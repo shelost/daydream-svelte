@@ -613,7 +613,100 @@
 
       // render objects using filteredObjects instead of detectedObjects
       filteredObjects.forEach(obj => {
-        // ... existing rendering code that uses obj ...
+        // Skip objects without proper bounding box
+        if (!obj.boundingBox) return;
+
+        // Get color based on category or type
+        const color = obj.color || getColorForObject(obj);
+
+        // Get the bounding box
+        const bb = obj.boundingBox;
+        const minX = bb.minX !== undefined ? bb.minX : bb.x || 0;
+        const minY = bb.minY !== undefined ? bb.minY : bb.y || 0;
+        const maxX = minX + (bb.width || 0);
+        const maxY = minY + (bb.height || 0);
+
+        // Convert normalized coordinates to pixel values
+        const left = minX * width;
+        const top = minY * height;
+        const boxWidth = (maxX - minX) * width;
+        const boxHeight = (maxY - minY) * height;
+
+        // Create bounding box with improved visibility
+        const rect = new fabric.Rect({
+          left: left,
+          top: top,
+          width: boxWidth,
+          height: boxHeight,
+          stroke: color,
+          strokeWidth: 2,
+          fill: `${color}22`, // Add slight transparency to fill color
+          strokeDashArray: [5, 5], // Dashed border for better visibility
+          selectable: false,
+          objectId: obj.id,
+          objectType: 'bbox',
+          rx: 2, // Rounded corners
+          ry: 2
+        });
+
+        // Create center point indicator for the object
+        const centerX = (minX + (bb.width || 0) / 2) * width;
+        const centerY = (minY + (bb.height || 0) / 2) * height;
+
+        const centerPoint = new fabric.Circle({
+          left: centerX - 5,
+          top: centerY - 5,
+          radius: 5,
+          fill: color,
+          stroke: 'white',
+          strokeWidth: 1,
+          selectable: false,
+          objectType: 'center',
+          objectId: obj.id
+        });
+
+        // Create label with improved visibility
+        let labelText = obj.name || (obj.confidence ? `Object (${Math.round(obj.confidence * 100)}%)` : 'Unknown');
+
+        // Add confidence percentage if available
+        if (obj.confidence && !labelText.includes('%')) {
+          labelText += ` (${Math.round(obj.confidence * 100)}%)`;
+        }
+
+        // Create background for label to improve readability
+        const labelBg = new fabric.Rect({
+          left: left,
+          top: Math.max(0, top - 22), // Position above bounding box with slight offset
+          width: Math.min(labelText.length * 8 + 10, 200), // Scale width to text length
+          height: 22,
+          fill: color,
+          rx: 3,
+          ry: 3,
+          selectable: false,
+          objectId: obj.id,
+          objectType: 'labelBg'
+        });
+
+        const label = new fabric.Text(labelText, {
+          left: left + 5,
+          top: Math.max(0, top - 20), // Align with background
+          fontSize: 14,
+          fontFamily: 'Arial, sans-serif',
+          fontWeight: 'bold',
+          fill: 'white', // White text for better contrast
+          selectable: false,
+          objectId: obj.id,
+          objectType: 'label'
+        });
+
+        // Add all elements to canvas
+        fabricCanvas.add(rect);
+        fabricCanvas.add(centerPoint);
+        fabricCanvas.add(labelBg);
+        fabricCanvas.add(label);
+
+        // Track this object for potential debugging visualization
+        objectsToRender.push(obj);
       });
 
       // If we have objects detected, show status tag with count
