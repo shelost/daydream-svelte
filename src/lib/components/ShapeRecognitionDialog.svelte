@@ -1,6 +1,17 @@
 <script>
   import { fade, fly } from 'svelte/transition';
-  import { createEventDispatcher } from 'svelte';
+  import { createEventDispatcher, onMount } from 'svelte';
+  import {
+    gptImagePrompt,
+    gptEditPrompt,
+    generatedImageUrl,
+    generatedByModel,
+    isGenerating,
+    editedImageUrl,
+    editedByModel,
+    isEditing,
+    analysisOptions
+  } from '$lib/stores/drawStore';
 
   // Props declaration
   export let show = false;
@@ -19,6 +30,10 @@
   export let strokesAnalysisOutput = null; // Output from analyze-strokes endpoint
   export let sketchAnalysisOutput = null; // Output from analyze-sketch endpoint
   export let objectSnapshots = []; // Array of snapshots for each detected object
+
+  // State for object image cropping
+  let objectImages = {};
+  let canvasImg = null;
 
   // Computed properties to check if we have valid analysis text
   $: hasSketchAnalysis = sketchAnalysis &&
@@ -42,9 +57,144 @@
                              (sketchAnalysisOutput.detectedObjects && sketchAnalysisOutput.detectedObjects.length > 0));
 
   // State for tab management
-  let activeTab = 'objects'; // Initial tab: 'objects', 'image', 'text', 'strokes', 'sketch'
+  let activeTab = 'image'; // Initial tab: 'image', 'strokes', 'sketch', 'text', 'objects', 'generated'
+  let generatedMode = 'both'; // Options: 'standard', 'edited', 'both'
 
   const dispatch = createEventDispatcher();
+
+  // When canvas snapshot changes, generate cropped images for objects
+  $: if (canvasSnapshot && detectedObjects.length > 0) {
+    generateObjectImages();
+  }
+
+  // When component mounts, ensure we're ready to process images
+  onMount(() => {
+    if (canvasSnapshot && detectedObjects.length > 0) {
+      generateObjectImages();
+    }
+  });
+
+  // Function to generate cropped images for each object
+  async function generateObjectImages() {
+    if (!canvasSnapshot || !canvasSnapshot.startsWith('data:')) return;
+
+    // Create an image from the snapshot
+    if (!canvasImg) {
+      canvasImg = new Image();
+      canvasImg.src = canvasSnapshot;
+
+      // Wait for image to load if it's not already
+      if (!canvasImg.complete) {
+        await new Promise(resolve => {
+          canvasImg.onload = resolve;
+        });
+      }
+    }
+
+    // Create a temporary canvas for cropping
+    const tempCanvas = document.createElement('canvas');
+    const ctx = tempCanvas.getContext('2d');
+
+    // Process each object with a bounding box
+    for (const obj of detectedObjects) {
+      if (!obj.boundingBox) continue;
+
+      try {
+        // Extract bounding box coordinates - handle different possible formats
+        const bb = obj.boundingBox;
+
+        // Handle normalized bounding box format (values between 0-1)
+        let x, y, width, height;
+
+        // Handle different bounding box formats that might come from different sources
+        if (bb.minX !== undefined && bb.width !== undefined) {
+          // Format with minX, minY, width, height
+          x = bb.minX;
+          y = bb.minY;
+          width = bb.width;
+          height = bb.height;
+        } else if (bb.x !== undefined && bb.width !== undefined) {
+          // Format with x, y, width, height
+          x = bb.x;
+          y = bb.y;
+          width = bb.width;
+          height = bb.height;
+        } else if (bb.x1 !== undefined && bb.x2 !== undefined) {
+          // Format with x1, y1, x2, y2
+          x = bb.x1;
+          y = bb.y1;
+          width = bb.x2 - bb.x1;
+          height = bb.y2 - bb.y1;
+        } else {
+          // Unknown format, skip this object
+          continue;
+        }
+
+        // Add padding to make the objects more visible (15% on each side)
+        const padding = 0.15;
+        const paddedX = Math.max(0, x - (width * padding));
+        const paddedY = Math.max(0, y - (height * padding));
+        const paddedWidth = Math.min(1 - paddedX, width * (1 + padding * 2));
+        const paddedHeight = Math.min(1 - paddedY, height * (1 + padding * 2));
+
+        // Ensure values are within normalized range
+        x = paddedX;
+        y = paddedY;
+        width = paddedWidth;
+        height = paddedHeight;
+
+        // Skip if invalid dimensions
+        if (width <= 0 || height <= 0) continue;
+
+        // Apply to image dimensions
+        const imgWidth = canvasImg.width;
+        const imgHeight = canvasImg.height;
+
+        // Calculate pixel values with proper rounding to avoid subpixel issues
+        const scaledX = Math.floor(x * imgWidth);
+        const scaledY = Math.floor(y * imgHeight);
+        const scaledWidth = Math.ceil(width * imgWidth);
+        const scaledHeight = Math.ceil(height * imgHeight);
+
+        // Ensure we don't exceed image boundaries
+        const cropWidth = Math.min(scaledWidth, imgWidth - scaledX);
+        const cropHeight = Math.min(scaledHeight, imgHeight - scaledY);
+
+        // Skip if resulting dimensions are too small
+        if (cropWidth < 5 || cropHeight < 5) continue;
+
+        // Resize temp canvas to the object dimensions
+        tempCanvas.width = cropWidth;
+        tempCanvas.height = cropHeight;
+
+        // Clear canvas and draw the cropped portion
+        ctx.clearRect(0, 0, cropWidth, cropHeight);
+        ctx.drawImage(
+          canvasImg,
+          scaledX, scaledY, cropWidth, cropHeight,
+          0, 0, cropWidth, cropHeight
+        );
+
+        // Convert to data URL and store - use object ID if available for unique key
+        const objId = obj.id || `${obj.name}-${obj.confidence || 0}`;
+        const objDataUrl = tempCanvas.toDataURL('image/png');
+        objectImages[objId] = objDataUrl;
+      } catch (err) {
+        console.error('Error generating cropped image:', err);
+      }
+    }
+  }
+
+  // Function to get the cropped image for an object
+  function getObjectImage(obj) {
+    // Try to find the image using ID first, then name+confidence as fallback
+    const idKey = obj.id;
+    const nameConfidenceKey = obj.name + '-' + (obj.confidence || 0);
+
+    return idKey && objectImages[idKey]
+           ? objectImages[idKey]
+           : objectImages[nameConfidenceKey] || null;
+  }
 
   // Close the dialog
   function close() {
@@ -60,6 +210,22 @@
   // Change active tab
   function setActiveTab(tab) {
     activeTab = tab;
+  }
+
+  // Function to toggle an analysis option
+  function toggleAnalysisOption(option) {
+    analysisOptions.update(options => {
+      options[option] = !options[option];
+      return options;
+    });
+
+    // Notify parent component to re-run analysis
+    dispatch('optionsChanged', { options: $analysisOptions });
+  }
+
+  // Set generated image display mode
+  function setGeneratedMode(mode) {
+    generatedMode = mode;
   }
 
   // Determine the source of enhancement for display
@@ -111,7 +277,7 @@
     if (match) {
       return {
         model: match[0],
-        text: text
+        text
       };
     }
 
@@ -144,6 +310,10 @@
   }
 </script>
 
+<svelte:head>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" integrity="sha512-iecdLmaskl7CVkqkXNQ/ZH/XLlvWZOJyj7Yy7tcenmpD1ypASozpmT/E0iPtmFIB46ZmdtAc9eNBvH0H/ZpiBw==" crossorigin="anonymous" referrerpolicy="no-referrer" />
+</svelte:head>
+
 {#if show}
   <div
     class="dialog-container"
@@ -169,16 +339,10 @@
         Image
       </button>
       <button
-        class="tab-button {activeTab === 'text' ? 'active' : ''}"
-        on:click={() => setActiveTab('text')}
-        class:has-data={hasAnyTextAnalysis}
-      >
-        Text
-      </button>
-      <button
         class="tab-button {activeTab === 'strokes' ? 'active' : ''}"
         on:click={() => setActiveTab('strokes')}
         class:has-data={hasStrokesAnalysis}
+        class:disabled={!$analysisOptions.useStrokeAnalysis && !$analysisOptions.useCNN}
       >
         Strokes
       </button>
@@ -186,8 +350,16 @@
         class="tab-button {activeTab === 'sketch' ? 'active' : ''}"
         on:click={() => setActiveTab('sketch')}
         class:has-data={hasSketchAnalysisOutput}
+        class:disabled={!$analysisOptions.useGPTVision}
       >
         Sketch
+      </button>
+      <button
+        class="tab-button {activeTab === 'text' ? 'active' : ''}"
+        on:click={() => setActiveTab('text')}
+        class:has-data={hasAnyTextAnalysis}
+      >
+        Text
       </button>
       <button
         class="tab-button {activeTab === 'objects' ? 'active' : ''}"
@@ -196,12 +368,33 @@
       >
         Objects
       </button>
+      <button
+        class="tab-button {activeTab === 'generated' ? 'active' : ''}"
+        on:click={() => setActiveTab('generated')}
+        class:has-data={$generatedImageUrl || $editedImageUrl || $isGenerating || $isEditing}
+      >
+        Generated
+      </button>
     </div>
 
     <div class="dialog-content">
       {#if activeTab === 'image'}
         <!-- Image Tab Content -->
         <div class="image-tab-content">
+          <div class="tech-badge-container">
+            <div class="tech-badge">
+              <span class="tech-icon">🖼️</span>
+              <span class="tech-label">Canvas Snapshot</span>
+            </div>
+            <div class="status-indicator {hasCanvasSnapshot ? 'complete' : 'waiting'}">
+              {hasCanvasSnapshot ? 'Complete' : 'Waiting for drawing'}
+            </div>
+          </div>
+
+          <div class="tab-description">
+            <p>This is the first step in the analysis process. Your drawing is captured as an image and sent to various AI services for analysis.</p>
+          </div>
+
           {#if hasCanvasSnapshot}
             <div class="canvas-snapshot">
               <img src={canvasSnapshot} alt="Drawing canvas" />
@@ -216,67 +409,57 @@
           {/if}
         </div>
 
-      {:else if activeTab === 'text'}
-        <!-- Text Analysis Tab Content -->
-        {#if isAnalyzingText && !hasAnyTextAnalysis}
-          <div class="analyzing-indicator">
-            <div class="spinner"></div>
-            <span>Analyzing drawing...</span>
-          </div>
-        {:else if !hasAnyTextAnalysis}
-          <div class="empty-state">
-            <p>No text analysis available. Draw something to analyze.</p>
-          </div>
-        {:else}
-          <div class="text-analysis-container">
-            {#if hasSketchAnalysis}
-              <div class="analysis-card">
-                <div class="analysis-header">
-                  <h4>AI Sketch Interpretation</h4>
-                  <div class="model-badge">GPT-4 Vision</div>
-                </div>
-                <div class="analysis-content">
-                  <p>{sketchAnalysis}</p>
-                </div>
-              </div>
-            {/if}
-
-            {#if hasStrokeRecognition}
-              <div class="analysis-card">
-                <div class="analysis-header">
-                  <h4>Shape Recognition</h4>
-                  <div class="model-badge">TensorFlow + CNN + Stroke Analysis</div>
-                </div>
-                <div class="analysis-content">
-                  <p>{strokeRecognition}</p>
-                </div>
-              </div>
-            {/if}
-
-            {#if debugMode}
-              <div class="debug-section">
-                <h4>Debug Information</h4>
-                <div class="debug-item">
-                  <div class="debug-label">Total Detected Objects:</div>
-                  <div class="debug-value">{detectedObjects.length}</div>
-                </div>
-                <div class="debug-item">
-                  <div class="debug-label">Object Sources:</div>
-                  <div class="debug-value">
-                    {Object.entries(detectedObjects.reduce((acc, obj) => {
-                      const source = obj.source || obj.detectionSource || 'unknown';
-                      acc[source] = (acc[source] || 0) + 1;
-                      return acc;
-                    }, {})).map(([source, count]) => `${source}: ${count}`).join(', ')}
-                  </div>
-                </div>
-              </div>
-            {/if}
-          </div>
-        {/if}
-
       {:else if activeTab === 'strokes'}
         <!-- Strokes Analysis Tab Content -->
+        <div class="tech-badge-container">
+          <div class="tech-option">
+            <div class="tech-badge">
+              <span class="tech-icon"><i class="fab fa-js"></i></span>
+              <span class="tech-label">TensorFlow.js</span>
+            </div>
+            <label class="toggle-switch">
+              <input type="checkbox"
+                checked={$analysisOptions.useTensorFlow}
+                on:change={() => toggleAnalysisOption('useTensorFlow')} />
+              <span class="switch-slider"></span>
+            </label>
+          </div>
+
+          <div class="tech-option">
+            <div class="tech-badge">
+              <span class="tech-icon">🧠</span>
+              <span class="tech-label">CNN</span>
+            </div>
+            <label class="toggle-switch">
+              <input type="checkbox"
+                checked={$analysisOptions.useCNN}
+                on:change={() => toggleAnalysisOption('useCNN')} />
+              <span class="switch-slider"></span>
+            </label>
+          </div>
+
+          <div class="tech-option">
+            <div class="tech-badge">
+              <span class="tech-icon">📏</span>
+              <span class="tech-label">Shape Recognition</span>
+            </div>
+            <label class="toggle-switch">
+              <input type="checkbox"
+                checked={$analysisOptions.useShapeRecognition}
+                on:change={() => toggleAnalysisOption('useShapeRecognition')} />
+              <span class="switch-slider"></span>
+            </label>
+          </div>
+
+          <div class="status-indicator {isAnalyzing ? 'running' : (hasStrokesAnalysis ? 'complete' : 'waiting')}">
+            {isAnalyzing ? 'Running' : (hasStrokesAnalysis ? 'Complete' : 'Waiting for drawing')}
+          </div>
+        </div>
+
+        <div class="tab-description">
+          <p>This is the second step. Your drawing strokes are analyzed using machine learning models and geometric algorithms to detect shapes and objects. Toggle options to control which technologies are used in analysis.</p>
+        </div>
+
         {#if isAnalyzing && !strokesAnalysisOutput}
           <div class="analyzing-indicator">
             <div class="spinner"></div>
@@ -287,7 +470,6 @@
             <p>No stroke analysis data available. Draw something to analyze.</p>
           </div>
         {:else}
-        {strokesAnalysisOutput}
           <div class="strokes-analysis-container">
             <div class="analysis-summary">
               <h4>Stroke Analysis Output</h4>
@@ -309,6 +491,14 @@
                           {formatConfidence(shape.confidence)}
                         </span>
                       </div>
+
+                      <!-- Show cropped object image if available -->
+                      {#if getObjectImage(shape)}
+                        <div class="object-image-container">
+                          <img src={getObjectImage(shape)} alt="{shape.name}" class="object-image" />
+                        </div>
+                      {/if}
+
                       {#if shape.boundingBox}
                       <div class="shape-bbox-visualization">
                         <div class="shape-indicator"
@@ -350,6 +540,29 @@
 
       {:else if activeTab === 'sketch'}
         <!-- Sketch Analysis Tab Content -->
+        <div class="tech-badge-container">
+          <div class="tech-option">
+            <div class="tech-badge">
+              <span class="tech-icon"><i class="fas fa-brain"></i></span>
+              <span class="tech-label">GPT-4 Vision</span>
+            </div>
+            <label class="toggle-switch">
+              <input type="checkbox"
+                checked={$analysisOptions.useGPTVision}
+                on:change={() => toggleAnalysisOption('useGPTVision')} />
+              <span class="switch-slider"></span>
+            </label>
+          </div>
+
+          <div class="status-indicator {isAnalyzing ? 'running' : (hasSketchAnalysisOutput ? 'complete' : 'waiting')}">
+            {isAnalyzing ? 'Running' : (hasSketchAnalysisOutput ? 'Complete' : 'Waiting for drawing')}
+          </div>
+        </div>
+
+        <div class="tab-description">
+          <p>This is the third step. Your drawing image is analyzed by GPT-4 Vision to identify objects, context, and composition with more nuanced understanding. Toggle the option to enable/disable this technology.</p>
+        </div>
+
         {#if isAnalyzing && !sketchAnalysisOutput}
           <div class="analyzing-indicator">
             <div class="spinner"></div>
@@ -381,6 +594,14 @@
                           {formatConfidence(object.confidence)}
                         </span>
                       </div>
+
+                      <!-- Show cropped object image if available -->
+                      {#if getObjectImage(object)}
+                        <div class="object-image-container">
+                          <img src={getObjectImage(object)} alt="{object.name}" class="object-image" />
+                        </div>
+                      {/if}
+
                       {#if object.boundingBox}
                       <div class="object-bbox-visualization">
                         <div class="object-indicator"
@@ -448,8 +669,103 @@
           </div>
         {/if}
 
+      {:else if activeTab === 'text'}
+        <!-- Text Analysis Tab Content -->
+        <div class="tech-badge-container">
+          <div class="tech-badge">
+            <span class="tech-icon">📝</span>
+            <span class="tech-label">GPT-4 Vision Text Analysis</span>
+          </div>
+          <div class="tech-badge">
+            <span class="tech-icon">🔤</span>
+            <span class="tech-label">Multi-Model Analysis</span>
+          </div>
+          <div class="status-indicator {isAnalyzingText ? 'running' : (hasAnyTextAnalysis ? 'complete' : 'waiting')}">
+            {isAnalyzingText ? 'Running' : (hasAnyTextAnalysis ? 'Complete' : 'Waiting for drawing')}
+          </div>
+        </div>
+
+        <div class="tab-description">
+          <p>This is the fourth step. Text summaries from both the stroke analysis and vision models are combined to provide comprehensive insights into your drawing.</p>
+        </div>
+
+        {#if isAnalyzingText && !hasAnyTextAnalysis}
+          <div class="analyzing-indicator">
+            <div class="spinner"></div>
+            <span>Analyzing drawing...</span>
+          </div>
+        {:else if !hasAnyTextAnalysis}
+          <div class="empty-state">
+            <p>No text analysis available. Draw something to analyze.</p>
+          </div>
+        {:else}
+          <div class="text-analysis-container">
+            {#if hasSketchAnalysis}
+              <div class="analysis-card">
+                <div class="analysis-header">
+                  <h4>AI Sketch Interpretation</h4>
+                  <div class="model-badge">GPT-4 Vision</div>
+                </div>
+                <div class="analysis-content">
+                  <p>{sketchAnalysis}</p>
+                </div>
+              </div>
+            {/if}
+
+            {#if hasStrokeRecognition}
+              <div class="analysis-card">
+                <div class="analysis-header">
+                  <h4>Shape Recognition</h4>
+                  <div class="model-badge">TensorFlow + CNN + Stroke Analysis</div>
+                </div>
+                <div class="analysis-content">
+                  <p>{strokeRecognition}</p>
+                </div>
+              </div>
+            {/if}
+
+            {#if debugMode}
+              <div class="debug-section">
+                <h4>Debug Information</h4>
+                <div class="debug-item">
+                  <div class="debug-label">Total Detected Objects:</div>
+                  <div class="debug-value">{detectedObjects.length}</div>
+                </div>
+                <div class="debug-item">
+                  <div class="debug-label">Object Sources:</div>
+                  <div class="debug-value">
+                    {Object.entries(detectedObjects.reduce((acc, obj) => {
+                      const source = obj.source || obj.detectionSource || 'unknown';
+                      acc[source] = (acc[source] || 0) + 1;
+                      return acc;
+                    }, {})).map(([source, count]) => `${source}: ${count}`).join(', ')}
+                  </div>
+                </div>
+              </div>
+            {/if}
+          </div>
+        {/if}
+
       {:else if activeTab === 'objects'}
         <!-- Objects Tab Content -->
+        <div class="tech-badge-container">
+          <div class="tech-badge">
+            <span class="tech-icon">🧩</span>
+            <span class="tech-label">Multi-Model Fusion</span>
+          </div>
+          <div class="tech-badge">
+            <span class="tech-icon">🔍</span>
+            <span class="tech-label">Object Detection</span>
+          </div>
+          <div class="status-indicator {isAnalyzing ? 'running' : (detectedObjects.length > 0 ? 'complete' : 'waiting')}">
+            {isAnalyzing ? 'Running' : (detectedObjects.length > 0 ? 'Complete' : 'Waiting for drawing')}
+          </div>
+        </div>
+
+        <div class="tab-description">
+          <p>This is the final step. Objects detected from all analysis methods are combined into a unified view with confidence scores and precise positioning.</p>
+        </div>
+
         {#if isAnalyzing && !detectedObjects.length}
           <div class="analyzing-indicator">
             <div class="spinner"></div>
@@ -473,8 +789,13 @@
                   </div>
                 </div>
 
-                <!-- Object snapshot - from canvas area -->
-                {#if getObjectSnapshot(obj) || (obj.snapshot && debugMode)}
+                <!-- Object image from cropping (prioritize this) -->
+                {#if getObjectImage(obj)}
+                  <div class="object-cropped-image">
+                    <img src={getObjectImage(obj)} alt="{obj.name}" />
+                  </div>
+                <!-- Fallback to existing snapshot logic if available -->
+                {:else if getObjectSnapshot(obj) || (obj.snapshot && debugMode)}
                   <div class="object-snapshot">
                     <img src={getObjectSnapshot(obj) || obj.snapshot} alt="{obj.name} snapshot" />
                   </div>
@@ -533,6 +854,126 @@
             {/each}
           </div>
         {/if}
+
+      {:else if activeTab === 'generated'}
+        <!-- Generated Tab Content -->
+        <div class="generated-tab-content">
+          <div class="tech-badge-container">
+            <div class="tech-badge">
+              <span class="tech-icon">🚀</span>
+              <span class="tech-label">GPT-Image-1</span>
+            </div>
+            <div class="mode-selector">
+              <button
+                class="mode-button {generatedMode === 'standard' ? 'active' : ''}"
+                on:click={() => setGeneratedMode('standard')}
+              >
+                Standard
+              </button>
+              <button
+                class="mode-button {generatedMode === 'edited' ? 'active' : ''}"
+                on:click={() => setGeneratedMode('edited')}
+              >
+                Edited
+              </button>
+              <button
+                class="mode-button {generatedMode === 'both' ? 'active' : ''}"
+                on:click={() => setGeneratedMode('both')}
+              >
+                Both
+              </button>
+            </div>
+            <div class="status-indicator {$isGenerating || $isEditing ? 'running' : ($generatedImageUrl || $editedImageUrl ? 'complete' : 'waiting')}">
+              {$isGenerating || $isEditing ? 'Generating...' : ($generatedImageUrl || $editedImageUrl ? 'Complete' : 'Ready')}
+            </div>
+          </div>
+
+          <div class="tab-description">
+            <p>This tab shows the final prompts and images generated by the AI image generator. Standard generation creates a new image from scratch, while edit modifies the existing drawing.</p>
+          </div>
+
+          <div class="prompt-display">
+            <h4>Generation Prompt:</h4>
+            <pre>{$gptImagePrompt || 'Prompt will appear here...'}</pre>
+          </div>
+
+          {#if generatedMode === 'standard' || generatedMode === 'both'}
+          <div class="generated-image-display">
+            <h4>Generated Image (Standard):</h4>
+            {#if $isGenerating}
+              <div class="analyzing-indicator">
+                <div class="spinner"></div>
+                <span>Generating image...</span>
+              </div>
+            {:else if $generatedImageUrl}
+              <div class="image-result">
+                <img src={$generatedImageUrl} alt="AI Generated Result" />
+                {#if $generatedByModel}
+                  <div class="model-badge">{$generatedByModel}</div>
+                {/if}
+              </div>
+            {:else}
+              <div class="empty-state">
+                <p>Click "Generate Structure-Perfect Image" to create an image.</p>
+              </div>
+            {/if}
+          </div>
+          {/if}
+
+          {#if generatedMode === 'edited' || generatedMode === 'both'}
+          <div class="prompt-display">
+            <h4>Edit Image Prompt:</h4>
+            <pre>{$gptEditPrompt || 'Edit prompt will appear here...'}</pre>
+          </div>
+
+          <div class="generated-image-display">
+            <h4>Generated Image (Edited):</h4>
+            {#if $isEditing}
+              <div class="analyzing-indicator">
+                <div class="spinner"></div>
+                <span>Editing image...</span>
+              </div>
+            {:else if $editedImageUrl}
+              <div class="image-result">
+                <img src={$editedImageUrl} alt="AI Edited Result" />
+                {#if $editedByModel}
+                  <div class="model-badge">{$editedByModel}</div>
+                {/if}
+              </div>
+            {:else}
+              <div class="empty-state">
+                <p>Click "Generate Structure-Perfect Image" to create an edited image.</p>
+              </div>
+            {/if}
+          </div>
+          {/if}
+
+          {#if generatedMode === 'both' && $generatedImageUrl && $editedImageUrl}
+          <div class="comparison-section">
+            <h4>Comparison:</h4>
+            <div class="comparison-grid">
+              <div class="comparison-item">
+                <div class="comparison-label">Original Drawing</div>
+                <div class="comparison-image">
+                  <img src={canvasSnapshot} alt="Original Drawing" />
+                </div>
+              </div>
+              <div class="comparison-item">
+                <div class="comparison-label">Standard Generation</div>
+                <div class="comparison-image">
+                  <img src={$generatedImageUrl} alt="Standard Generation" />
+                </div>
+              </div>
+              <div class="comparison-item">
+                <div class="comparison-label">Edit Generation</div>
+                <div class="comparison-image">
+                  <img src={$editedImageUrl} alt="Edit Generation" />
+                </div>
+              </div>
+            </div>
+          </div>
+          {/if}
+        </div>
       {/if}
     </div>
   </div>
@@ -541,7 +982,7 @@
 <style>
   .dialog-container {
     position: fixed;
-    width: 350px;
+    width: 400px;
     max-height: 600px;
     background: white;
     border-radius: 8px;
@@ -603,6 +1044,7 @@
     padding: 10px;
     background: none;
     border: none;
+    border-radius: 0;
     border-bottom: 2px solid transparent;
     font-size: 14px;
     font-weight: 500;
@@ -671,7 +1113,7 @@
   .objects-list {
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: 16px;
   }
 
   .object-card {
@@ -976,5 +1418,273 @@
     overflow-x: auto;
     white-space: pre-wrap;
     color: #444;
+  }
+
+  /* Add new styles for object images */
+  .object-cropped-image,
+  .object-image-container {
+    margin: 10px 0;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    overflow: hidden;
+    background-color: #ffffff;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    max-height: 150px;
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+  }
+
+  .object-cropped-image img,
+  .object-image-container img {
+    max-width: 100%;
+    max-height: 150px;
+    object-fit: contain;
+    display: block;
+    padding: 5px;
+  }
+
+  /* New styles for tech badges and status indicators */
+  .tech-badge-container {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 16px;
+    align-items: center;
+  }
+
+  .tech-badge {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 12px;
+    font-weight: 500;
+    background-color: #f5f5f5;
+    padding: 4px 8px;
+    border-radius: 4px;
+    border: 1px solid #e0e0e0;
+  }
+
+  .tech-icon {
+    font-size: 16px;
+  }
+
+  .tech-label {
+    white-space: nowrap;
+  }
+
+  .status-indicator {
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 500;
+    margin-left: auto;
+  }
+
+  .status-indicator.complete {
+    background-color: #4CAF50;
+    color: white;
+  }
+
+  .status-indicator.running {
+    background-color: #FFC107;
+    color: #333;
+  }
+
+  .status-indicator.waiting {
+    background-color: #F44336;
+    color: white;
+  }
+
+  .tab-description {
+    margin-bottom: 16px;
+    font-size: 12px;
+    color: #666;
+    background-color: #f8f8f8;
+    padding: 10px;
+    border-radius: 4px;
+    border-left: 3px solid #9C27B0;
+  }
+
+  /* Styles for the Generated Tab */
+  .generated-tab-content {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .prompt-display h4,
+  .generated-image-display h4 {
+    margin: 0 0 8px 0;
+    font-size: 14px;
+    color: #333;
+  }
+
+  .prompt-display pre {
+    background-color: #f5f5f5;
+    padding: 12px;
+    border-radius: 4px;
+    border: 1px solid #e0e0e0;
+    font-family: monospace;
+    font-size: 11px;
+    line-height: 1.4;
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 200px;
+    overflow-y: auto;
+  }
+
+  .generated-image-display .image-result {
+    position: relative;
+    border: 1px solid #eee;
+    border-radius: 6px;
+    overflow: hidden;
+    background: #f5f5f5;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 150px;
+  }
+
+  .generated-image-display .image-result img {
+    max-width: 100%;
+    max-height: 300px;
+    display: block;
+  }
+
+  .generated-image-display .image-result .model-badge {
+    position: absolute;
+    bottom: 8px;
+    right: 8px;
+    background: rgba(0, 0, 0, 0.6);
+    color: white;
+    padding: 3px 6px;
+    border-radius: 4px;
+    font-size: 10px;
+  }
+
+  /* New Toggle Switch Style */
+  .tech-option {
+    display: flex;
+    align-items: center;
+    margin-bottom: 8px;
+    justify-content: space-between;
+  }
+
+  .toggle-switch {
+    position: relative;
+    display: inline-block;
+    width: 40px;
+    height: 22px;
+    margin-left: 10px;
+  }
+
+  .toggle-switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+  }
+
+  .switch-slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: #ccc;
+    transition: .4s;
+    border-radius: 34px;
+  }
+
+  .switch-slider:before {
+    position: absolute;
+    content: "";
+    height: 18px;
+    width: 18px;
+    left: 2px;
+    bottom: 2px;
+    background-color: white;
+    transition: .4s;
+    border-radius: 50%;
+  }
+
+  input:checked + .switch-slider {
+    background-color: #9C27B0;
+  }
+
+  input:checked + .switch-slider:before {
+    transform: translateX(18px);
+  }
+
+  .tab-button.disabled {
+    opacity: 0.5;
+    text-decoration: line-through;
+  }
+
+  /* New styles for the generated image display modes */
+  .mode-selector {
+    display: flex;
+    gap: 4px;
+    margin: 0 auto;
+  }
+
+  .mode-button {
+    padding: 4px 8px;
+    font-size: 12px;
+    border: 1px solid #ddd;
+    background: #f5f5f5;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+
+  .mode-button.active {
+    background: #9C27B0;
+    color: white;
+    border-color: #9C27B0;
+  }
+
+  .comparison-section {
+    margin-top: 20px;
+    border-top: 1px solid #eee;
+    padding-top: 16px;
+  }
+
+  .comparison-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+    margin-top: 10px;
+  }
+
+  .comparison-item {
+    border: 1px solid #eee;
+    border-radius: 4px;
+    overflow: hidden;
+  }
+
+  .comparison-label {
+    font-size: 12px;
+    font-weight: 500;
+    padding: 4px 8px;
+    background: #f5f5f5;
+    text-align: center;
+    border-bottom: 1px solid #eee;
+  }
+
+  .comparison-image {
+    height: 120px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 4px;
+    background: white;
+  }
+
+  .comparison-image img {
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
   }
 </style>

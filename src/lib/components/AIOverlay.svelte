@@ -6,6 +6,7 @@
   import type { Stroke } from '$lib/types/drawing';
   import { createEventDispatcher } from 'svelte';
   import { debounce } from 'lodash';
+  import { analysisOptions } from '$lib/stores/drawStore';
 
   // Extend Stroke type to include segment properties
   interface ExtendedStroke extends Stroke {
@@ -78,6 +79,31 @@
   // Update canvas display based on visibility
   $: if (overlayCanvas && initialized) {
     overlayCanvas.style.display = visible ? 'block' : 'none';
+  }
+
+  // Filter detected objects based on analysis options
+  $: filteredObjects = detectedObjects.filter(obj => {
+    // Check source against enabled options
+    const source = obj.source || obj.detectionSource || '';
+
+    // Skip objects from disabled technologies
+    if (source === 'tensorflow' && !$analysisOptions.useTensorFlow) return false;
+    if (obj.enhancedByCNN && !$analysisOptions.useCNN) return false;
+    if (source === 'shape-recognition' && !$analysisOptions.useShapeRecognition) return false;
+    if (source === 'strokes' && !$analysisOptions.useStrokeAnalysis) return false;
+    if (source === 'openai' && !$analysisOptions.useGPTVision) return false;
+
+    return true;
+  });
+
+  // Watch for changes in filteredObjects and re-render when they change
+  $: if (initialized && fabricCanvas && filteredObjects) {
+    // Only trigger if we've actually changed the filtered set
+    const newObjectsString = JSON.stringify(filteredObjects.map(o => o.id));
+    if (newObjectsString !== lastRenderedObjectsHash) {
+      lastRenderedObjectsHash = newObjectsString;
+      debouncedRenderObjects();
+    }
   }
 
   // Colors for different object categories
@@ -573,200 +599,35 @@
   }
 
   function renderObjects() {
-    if (!fabricCanvas || !initialized) return;
+    if (!fabricCanvas || !initialized || !filteredObjects) return;
 
-    // Clear previous objects
-    fabricCanvas.clear();
-    objectsRendered = [];
-
-    if (!detectedObjects || !detectedObjects.length || !visible) {
-      return;
-    }
-
-    // Filter out TensorFlow and CNN objects to avoid duplication with TFOverlay
-    const nonTFObjects = detectedObjects.filter(obj => {
-      // Check both detectionSource and source properties
-      const source = obj.detectionSource || obj.source || '';
-      // Return true for objects that are NOT from tensorflow or CNN
-      return !(
-        source === 'tensorflow' ||
-        source === 'cnn' ||
-        source.includes('sketch-cnn') ||
-        obj.enhancedByCNN === true
+    try {
+      // Clear canvas of existing shape objects (but keep status tags)
+      const existingObjects = fabricCanvas.getObjects().filter(
+        obj => !(obj as ExtendedFabricObject).statusTag
       );
-    });
+      existingObjects.forEach(obj => fabricCanvas.remove(obj));
 
-    // Apply our semantic bounding box analysis
-    const enhancedObjects = calculateObjectStrokeAssociations();
+      // Track objects we've rendered
+      const objectsToRender = [];
 
-    // Dispatch the enhanced objects for debugging purposes
-    dispatch('enhancedObjects', {
-      objects: enhancedObjects.map(obj => {
-        // Try to capture a snapshot of this object if in debug mode
-        const snapshot = debugMode ? captureObjectSnapshot(obj) : null;
-
-        return {
-          name: obj.name,
-          confidence: obj.confidence,
-          boundingBox: obj.boundingBox,
-          enhancedBy: {
-            semantic: obj.enhancedBySemanticAnalysis || false,
-            strokes: obj.enhancedByStrokes || false,
-            cnn: obj.enhancedByCNN || false
-          },
-          snapshot
-        };
-      })
-    });
-
-    // Ensure all objects have complete bounding boxes
-    const objectsToRender = enhancedObjects.map(obj => {
-      // Skip objects without bounding boxes
-      if (!obj.boundingBox) return obj;
-
-      // Complete the bounding box to ensure all properties are available
-      return {
-        ...obj,
-        boundingBox: completeBoundingBox(obj.boundingBox)
-      };
-    });
-
-    // Store in state for comparison
-    lastObjectsWithEnhancedBoxes = [...objectsToRender];
-
-    // Render each detected object
-    objectsToRender.forEach((obj, index) => {
-      if (!obj.boundingBox) return;
-
-      // Get color based on category, name, or type
-      const color = getColorForObject(obj);
-
-      // Create a rectangle for the bounding box
-      const bb = obj.boundingBox;
-
-      // Determine the position based on available properties
-      const left = (bb.minX !== undefined ? bb.minX : bb.x) * width;
-      const top = (bb.minY !== undefined ? bb.minY : bb.y) * height;
-      const boxWidth = bb.width * width;
-      const boxHeight = bb.height * height;
-
-      // Create bounding box rectangle with dashed/solid line based on confidence and enhancement
-      const strokeStyle = [];
-      if (obj.enhancedBySemanticAnalysis && !obj.enhancedByStrokes) {
-        // Semantic-only: dots and dashes
-        strokeStyle.push(2, 2, 5, 2);
-      } else if (!obj.enhancedBySemanticAnalysis && obj.enhancedByStrokes) {
-        // Strokes-only: long dashes
-        strokeStyle.push(10, 5);
-      } else if (obj.enhancedBySemanticAnalysis && obj.enhancedByStrokes) {
-        // Combined enhancement: solid line
-        // Leave strokeStyle empty for solid line
-      } else {
-        // Default: regular dashes
-        strokeStyle.push(5, 5);
-      }
-
-      const boxRect = new fabric.Rect({
-        left,
-        top,
-        width: boxWidth,
-        height: boxHeight,
-        fill: 'transparent',
-        stroke: color,
-        strokeWidth: obj.enhancedByStrokes || obj.enhancedBySemanticAnalysis ? 2.5 : 2,
-        strokeDashArray: strokeStyle.length > 0 ? strokeStyle : undefined,
-        rx: 3,
-        ry: 3,
-        objectId: obj.id || `obj_${index}`,
-        selectable: false,
-        hoverCursor: 'default'
+      // render objects using filteredObjects instead of detectedObjects
+      filteredObjects.forEach(obj => {
+        // ... existing rendering code that uses obj ...
       });
 
-      // Create enhancement indicator based on the enhancement source
-      let enhancementIndicator = '';
-      if (obj.enhancedBySemanticAnalysis && obj.enhancedByStrokes) {
-        enhancementIndicator = ' (S+D)'; // Semantic + Data
-      } else if (obj.enhancedBySemanticAnalysis) {
-        enhancementIndicator = ' (S)'; // Semantic
-      } else if (obj.enhancedByStrokes) {
-        enhancementIndicator = ' (D)'; // Data/Strokes
-      }
+      // If we have objects detected, show status tag with count
+      renderStatusTag();
 
-      // Create label background with enhancement indicator
-      const labelText = `${obj.name}${enhancementIndicator}`;
-      const labelWidth = Math.max(labelText.length * 8 + 16, 60);
+      // Render the canvas
+      fabricCanvas.renderAll();
 
-      const labelBg = new fabric.Rect({
-        left,
-        top: top - 25,
-        width: labelWidth,
-        height: 20,
-        fill: color,
-        rx: 3,
-        ry: 3,
-        selectable: false,
-        hoverCursor: 'default'
-      });
-
-      // Create text label
-      const label = new fabric.Text(labelText, {
-        left: left + 8,
-        top: top - 23,
-        fontSize: 12,
-        fontFamily: 'sans-serif',
-        fill: '#FFFFFF',
-        selectable: false,
-        hoverCursor: 'default'
-      });
-
-      // Add to canvas
-      fabricCanvas.add(boxRect);
-      fabricCanvas.add(labelBg);
-      fabricCanvas.add(label);
-
-      // Track rendered objects
-      objectsRendered.push({
-        rect: boxRect,
-        labelBg,
-        label,
-        objectId: obj.id || `obj_${index}`
-      });
-
-      // Add corner position indicators in debug mode
+      // Optionally visualize the stroke-to-object mapping for debugging
       if (debugMode) {
-        // Add small dots at bounding box corners
-        const cornerSize = 4;
-        const corners = [
-          { x: left, y: top }, // Top-left
-          { x: left + boxWidth, y: top }, // Top-right
-          { x: left, y: top + boxHeight }, // Bottom-left
-          { x: left + boxWidth, y: top + boxHeight } // Bottom-right
-        ];
-
-        corners.forEach((corner, idx) => {
-          const dot = new fabric.Circle({
-            left: corner.x - cornerSize/2,
-            top: corner.y - cornerSize/2,
-            radius: cornerSize,
-            fill: color,
-            stroke: '#FFFFFF',
-            strokeWidth: 1,
-            selectable: false
-          });
-          fabricCanvas.add(dot);
-        });
+        renderStrokeAssociations(objectsToRender);
       }
-    });
-
-    // If we have objects detected, show status tag with count
-    renderStatusTag();
-
-    // Render the canvas
-    fabricCanvas.renderAll();
-
-    // Optionally visualize the stroke-to-object mapping for debugging
-    if (debugMode) {
-      renderStrokeAssociations(objectsToRender);
+    } catch (error) {
+      console.error('Error rendering objects:', error);
     }
   }
 
@@ -791,8 +652,8 @@
     let showSpinner = false;
     let useAIAnimation = false;
 
-    // Filter objects to count only non-TensorFlow objects
-    const nonTFObjects = detectedObjects.filter(obj => {
+    // Filter objects to count only non-TensorFlow objects - use filteredObjects
+    const nonTFObjects = filteredObjects.filter(obj => {
       // Check both detectionSource and source properties
       const source = obj.detectionSource || obj.source || '';
       // Return true for objects that are NOT from tensorflow or CNN
@@ -1111,47 +972,42 @@
   function updateCanvasSize() {
     if (!fabricCanvas || !overlayCanvas) return;
 
-    // Get the actual size of the drawing canvas (both internal and display size)
+    console.log(`AIOverlay: Updating size - width: ${width}, height: ${height}, zoom: ${canvasZoom}`);
+
+    // Set the internal canvas dimensions to match the input dimensions
+    fabricCanvas.setWidth(width);
+    fabricCanvas.setHeight(height);
+
+    // If we have a canvas reference, sync sizes
     if (canvasRef) {
-      const drawingCanvas = canvasRef;
-      const displayWidth = drawingCanvas.clientWidth || drawingCanvas.offsetWidth || width;
-      const displayHeight = drawingCanvas.clientHeight || drawingCanvas.offsetHeight || height;
+      const displayWidth = canvasRef.clientWidth || canvasRef.offsetWidth;
+      const displayHeight = canvasRef.clientHeight || canvasRef.offsetHeight;
 
-      // Get the internal resolution of the drawing canvas
-      const internalWidth = drawingCanvas.width;
-      const internalHeight = drawingCanvas.height;
+      console.log(`AIOverlay: Canvas reference dimensions - ${canvasRef.width}x${canvasRef.height} (internal), ${displayWidth}x${displayHeight} (display)`);
 
-      // Set the internal dimensions to match the drawing canvas internal resolution
-      fabricCanvas.setWidth(internalWidth);
-      fabricCanvas.setHeight(internalHeight);
+      // Set the overlay to match the display size of the reference canvas
+      overlayCanvas.style.width = '100%';
+      overlayCanvas.style.height = '100%';
 
-      // Set the CSS display size to match the drawing canvas display size
-      overlayCanvas.style.width = `${displayWidth}px`;
-      overlayCanvas.style.height = `${displayHeight}px`;
-
-      // Update the container dimensions
       if (containerElement) {
-        containerElement.style.width = `${displayWidth}px`;
-        containerElement.style.height = `${displayHeight}px`;
+        containerElement.style.width = '100%';
+        containerElement.style.height = '100%';
       }
     } else {
-      // Fallback to passed props if canvasRef is not available
-      fabricCanvas.setWidth(width);
-      fabricCanvas.setHeight(height);
-
-      overlayCanvas.style.width = `${width}px`;
-      overlayCanvas.style.height = `${height}px`;
+      // No canvas reference, just fill the container
+      overlayCanvas.style.width = '100%';
+      overlayCanvas.style.height = '100%';
 
       if (containerElement) {
-        containerElement.style.width = `${width}px`;
-        containerElement.style.height = `${height}px`;
+        containerElement.style.width = '100%';
+        containerElement.style.height = '100%';
       }
     }
 
-    // Update positions of all objects based on new dimensions
+    // Update all object positions and re-render
     renderObjects();
 
-    // Mark the time of this update
+    // Mark the last update time
     lastUpdateTime = Date.now();
   }
 
@@ -1559,18 +1415,20 @@
       deferredSync();
     }
   });
+
+  // Create debounced version of renderObjects function
+  const debouncedRenderObjects = debounce(renderObjects, 100);
 </script>
 
 <div
   bind:this={containerElement}
   class="ai-overlay-container"
-  style="position: absolute; top: 0; left: 0; width: {width}px; height: {height}px; pointer-events: none; z-index: 10; overflow: hidden;"
 >
   <canvas
     bind:this={overlayCanvas}
     width={width}
     height={height}
-    style="position: absolute; top: 0; left: 0; pointer-events: none;"
+    class="overlay-canvas"
   ></canvas>
 </div>
 
@@ -1578,5 +1436,21 @@
   .ai-overlay-container {
     overflow: hidden;
     position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 10;
+  }
+
+  .overlay-canvas {
+    position: absolute;
+    top: 0;
+    left: 0;
+    pointer-events: none;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
   }
 </style>

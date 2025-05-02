@@ -3,13 +3,15 @@
   import { gsap } from 'gsap';
   import { goto } from '$app/navigation';
   import { isLoggedIn } from '$lib/stores/appStore';
-
+  import Header from '$lib/components/public/Header.svelte';
   let mainHeading: HTMLElement;
   let subHeading: HTMLElement;
   let loginButton: HTMLElement;
   let signupButton: HTMLElement;
   let demoButton: HTMLElement;
   let buttonsVisible = false;
+
+  import { fly } from 'svelte/transition';
 
   onMount(() => {
     console.log("Component mounted, buttons:", loginButton, signupButton, demoButton);
@@ -28,13 +30,13 @@
       const tl = gsap.timeline();
 
       tl.from(mainHeading, {
-        y: -50,
+        y: 50,
         opacity: 0,
         duration: 0.8,
         ease: "power3.out"
       })
       .from(subHeading, {
-        y: -30,
+        y: 30,
         opacity: 0,
         duration: 0.8,
         ease: "power3.out"
@@ -76,8 +78,12 @@
 </svelte:head>
 
 <main class="landing-page">
+
+  <div in:fly={{ y: 100, opacity: 0 }}>
+    <Header />
+  </div>
   <div class="hero-container">
-    <img src="/arachne-icon.png" alt="Arachne Logo" class="logo" />
+    <img src="wing.png" alt="Arachne Logo" class="logo" />
     <h1 bind:this={mainHeading}>Daydream</h1>
     <p bind:this={subHeading}>
       An easier way to interact with AI
@@ -105,9 +111,10 @@
       <button
         bind:this={demoButton}
         class="demo-button"
-        on:click={handleTryDemo}
-        style="opacity: 1; visibility: visible;">
+        on:click={handleTryDemo}>
+        <h2>
           Start Drawing
+        </h2>
       </button>
     </div>
   </div>
@@ -116,8 +123,8 @@
 <style lang="scss">
 
   .logo{
-    height: 120px;
-    margin-bottom: 16px;
+    height: 160px;
+    //margin-bottom: 16px;
   }
 
   .landing-page {
@@ -130,23 +137,26 @@
 
   .hero-container {
     text-align: center;
-    padding: 2rem;
+    padding: 0;
     max-width: 800px;
+    margin-bottom: 60px;
   }
 
   h1 {
-    font-size: 60px;
-    letter-spacing: -3.2px;
-    margin-bottom: 1rem;
-    font-weight: 600;
+    font-size: 72px;
+    letter-spacing: -3.6px;
+    margin-bottom: 4px;
+    font-weight: 700;
     color: $text-color;
+    text-shadow: -4px 8px 12px rgba(black,0.05);
   }
 
   p {
     font-size: 18px;
+    font-weight: 500;
     letter-spacing: -0.5px;
     margin-bottom: 2.5rem;
-    color: rgba($text-color, 0.8);
+    color: rgba($text-color, 0.6);
   }
 
   .button-container {
@@ -154,16 +164,6 @@
     justify-content: center;
     gap: 1rem;
     flex-wrap: wrap;
-  }
-
-  .login-button, .signup-button, .demo-button {
-    padding: 0.75rem 1.5rem;
-    font-size: 1rem;
-    border-radius: $border-radius-md;
-    transition: all $transition-fast;
-    /* Ensure buttons are visible even before animation */
-    opacity: 1 !important;
-    visibility: visible !important;
   }
 
   .login-button {
@@ -187,11 +187,17 @@
   }
 
   .demo-button {
-    background-color: #9c27b0;
+    background-color: #6355FF;
     color: white;
     border: none;
     position: relative;
     overflow: hidden;
+    transition: .2s ease;
+    border-radius: $border-radius-lg;
+
+    padding: 11px 24px 12px 24px;
+
+    box-shadow: 0 6px 12px rgba(black,0.1), inset 1px 2px 2px rgba(white,0.1), inset -1px -2px 4px rgba(black,0.1);
 
     &::after {
       content: '';
@@ -206,8 +212,9 @@
     }
 
     &:hover {
-      opacity: 0.9;
-      transform: translateY(-2px);
+      background-color: #5f3cf7;
+     // opacity: 0.9;
+      //transform: translateY(-2px);
       box-shadow: 0 4px 8px rgba(0,0,0,0.1);
     }
   }

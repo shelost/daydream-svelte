@@ -62,6 +62,8 @@ ${requestHierarchy && requestPositions ? `Return your analysis as a JSON object 
    - category: type category (e.g., "human", "animal")
    - x: horizontal position (0-1, from left to right)
    - y: vertical position (0-1, from top to bottom)
+   - width: width of the element (0-1, from left to right)
+   - height: height of the element (0-1, from top to bottom)
    - children: array of ids of child elements
    - isChild: boolean indicating if this is a child element
    - parentId: id of parent element if isChild is true` : ''}

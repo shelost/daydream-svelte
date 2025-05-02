@@ -61,7 +61,7 @@
 
 
 
-    <img src="/arachne-icon.png" alt="Arachne" class="sidebar-logo" />
+    <img src="wing.png" alt="Arachne" class="sidebar-logo" />
     <h2>Daydream</h2>
     <button on:click={toggleSidebar} class="toggle-button">
       <span class="material-icons">

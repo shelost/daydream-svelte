@@ -10,6 +10,17 @@
   import TFOverlay from '$lib/components/TFOverlay.svelte';
   import ShapeRecognitionButton from '$lib/components/ShapeRecognitionButton.svelte';
   import ShapeRecognitionDialog from '$lib/components/ShapeRecognitionDialog.svelte';
+  import {
+    gptImagePrompt,
+    generatedImageUrl,
+    generatedByModel,
+    isGenerating,
+    editedImageUrl,
+    editedByModel,
+    isEditing,
+    analysisOptions,
+    gptEditPrompt
+  } from '$lib/stores/drawStore';
 
   // Interface extension for Stroke type with hasPressure property
   interface EnhancedStroke extends Stroke {
@@ -59,9 +70,6 @@
   let strokeOpacity = 0.8;
   let imageData: string | null = null;
   let pointTimes: number[] = []; // Track time for velocity-based pressure
-  let isGenerating = false;
-  let generatedImageUrl: string | null = null;
-  let generatedByModel: string | null = null;
   let errorMessage: string | null = null;
   let showAnalysisView = true; // Toggle for AI analysis view
   let showStrokeOverlay = true; // Toggle for stroke recognition overlay
@@ -80,6 +88,9 @@
   let tfObjects: any[] = [];
   let gptObjects: any[] = [];
   let visualizationMode = 'gpt'; // Options: 'gpt', 'tensorflow', 'both'
+
+  // Add canvasScale variable
+  let canvasScale = 1; // Scale factor for canvas display relative to internal resolution
 
   // Drawing content with enhanced strokes
   let drawingContent: EnhancedDrawingContent = {
@@ -115,7 +126,130 @@
   // Variables for latest analysis results from API endpoints
   let sketchAnalysisOutput: any = null; // Store the full sketch analysis result
   let strokesAnalysisOutput: any = null; // Store the full stroke analysis result
-  let currentCanvasSnapshot: string = ''; // Store the current canvas snapshot
+  let currentCanvasSnapshot: string = ''; // Store the canvas snapshot for displaying in shape recognition dialog
+
+  // Function to build the prompt for GPT-Image-1
+  function buildGptImagePrompt() {
+    let prompt = `Complete this drawing. Do not change the image; simply add onto the existing drawing exactly as it is. CRITICAL STRUCTURE PRESERVATION: You MUST treat this sketch as an EXACT STRUCTURAL TEMPLATE. `;
+
+    /*
+    prompt += `ABSOLUTE RULE: The generated image MUST maintain the PRECISE:
+1. Exact positions of ALL elements on the canvas (preserve their x,y coordinates)
+2. Direct front-facing, straight-on perspective without any angling or skewing
+3. Proportions and sizes of ALL elements relative to each other and the canvas
+4. Orientations and facing directions exactly as in the sketch
+5. Exact spatial relationships between ALL elements
+
+`;
+*/
+
+    // Include the content description from our analysis
+    const contentGuide = sketchAnalysis !== "Draw something to see AI's interpretation" ? sketchAnalysis : "A user's drawing.";
+    prompt += `CONTENT DESCRIPTION: ${contentGuide}\n\n`;
+
+    // Add user's additional context if provided (preserve this as high priority)
+    if (additionalContext) {
+      prompt += `USER'S CONTEXT: "${additionalContext}"\n\n`;
+    }
+
+    // Include the detailed structural information if available
+    // Placeholder: Assume structuralGuide is derived from analysisElements
+    if (analysisElements.length > 0) {
+      const structuralGuide = `Based on analysis, the drawing contains ${analysisElements.length} main elements. Element positions and basic relationships are implied by the sketch.`;
+      prompt += `STRUCTURAL GUIDE: ${structuralGuide}\n\n`;
+    }
+
+    // Include the compositional analysis (placeholder)
+    const compositionGuide = `Focus on the arrangement within the ${selectedAspectRatio} frame.`;
+    prompt += `COMPOSITION GUIDE: ${compositionGuide}\n\n`;
+
+    // Add stroke-based recognition if available
+    if (strokeRecognition && strokeRecognition !== "Draw something to see shapes recognized") {
+      prompt += `RECOGNIZED SHAPES: ${strokeRecognition}\n\n`;
+    }
+
+    // Add AI detection objects section that combines both sources
+   // if (detectedObjectsText || tfDetectedObjectsText)
+    if (false) {
+      prompt += `This is a list of elements that you MUST include,
+      with coordinates relative to the canvas.
+      For example, "x:0.268,y:0.197 with width:0.386,height:0.457"
+      means that the element is located at the 26.8% point from the left, 19.7% point from the top,
+      with a width spanning 38.6% of the canvas width, and a height spanning 45.7% of the canvas height.
+      \n \n
+      DETECTED OBJECTS:\n`;
+
+      if (detectedObjectsText) {
+        prompt += `${detectedObjectsText}\n`;
+      }
+
+      if (tfDetectedObjectsText) {
+        prompt += `${tfDetectedObjectsText}\n`;
+      }
+
+      prompt += `\n`;
+    }
+
+    // Final instructions for perfect structural fidelity
+    prompt += `FINAL INSTRUCTIONS: Create a DIRECT, FRONT-FACING VIEW that maintains the EXACT same composition as the sketch. NEVER distort or reposition any element. Color and texture can be added, but the structural skeleton must remain identical to the original sketch.`;
+
+    // Trim the prompt to ensure it stays within API limits (assuming 4000 char limit)
+    return prompt.length > 4000 ? prompt.substring(0, 3997) + '...' : prompt;
+  }
+
+  // Function to build the prompt for GPT-Image-1 Edit mode
+  function buildGptEditPrompt() {
+    let prompt = `EDIT MODE: You are COMPLETING an existing sketch - enhance and complete the drawing while preserving its exact structure. `;
+
+    prompt += `EDIT OBJECTIVES:
+1. PRESERVE EXACT STRUCTURE: Keep all elements in their precise positions
+2. COMPLETE THE DRAWING: Add color, details, and texture to the existing sketch
+3. MAINTAIN ARTISTIC INTENT: Respect the style and content of the original drawing
+4. FOCUS ON COMPLETION: This is NOT creating a new image - it's enhancing what already exists
+`;
+
+    // Include the content description from our analysis
+    const contentGuide = sketchAnalysis !== "Draw something to see AI's interpretation" ? sketchAnalysis : "A user's drawing that needs completion.";
+    prompt += `CONTENT DESCRIPTION: ${contentGuide}\n\n`;
+
+    // Add user's additional context if provided (preserve this as high priority)
+    if (additionalContext) {
+      prompt += `USER'S CONTEXT: "${additionalContext}"\n\n`;
+    }
+
+    // Include the detailed structural information if available
+    if (analysisElements.length > 0) {
+      const structuralGuide = `The sketch contains ${analysisElements.length} main elements that should remain in their exact positions.`;
+      prompt += `STRUCTURAL GUIDE: ${structuralGuide}\n\n`;
+    }
+
+    // Include the compositional analysis
+    const compositionGuide = `Complete the composition within the ${selectedAspectRatio} frame, maintaining the front-facing view.`;
+    prompt += `COMPOSITION GUIDE: ${compositionGuide}\n\n`;
+
+    // Add stroke-based recognition if available
+    if (strokeRecognition && strokeRecognition !== "Draw something to see shapes recognized") {
+      prompt += `RECOGNIZED SHAPES: ${strokeRecognition}\n\n`;
+    }
+
+    // Final instructions for perfect structural fidelity with emphasis on completion
+    prompt += `FINAL INSTRUCTIONS: COMPLETE THE SKETCH by adding color, texture, and details while keeping the exact same layout and proportions. This is an EDIT task - enhance what's already there rather than creating something new.`;
+
+    // Trim the prompt to ensure it stays within API limits
+    return prompt.length > 4000 ? prompt.substring(0, 3997) + '...' : prompt;
+  }
+
+  // Reactive update for the GPT image prompt store
+  $: {
+    const newPrompt = buildGptImagePrompt();
+    gptImagePrompt.set(newPrompt);
+  }
+
+  // Reactive update for the GPT edit prompt store
+  $: {
+    const newEditPrompt = buildGptEditPrompt();
+    gptEditPrompt.set(newEditPrompt);
+  }
 
   // Function to determine if an event is a real user edit vs. a programmatic change
   function isRealUserEdit(): boolean {
@@ -126,7 +260,7 @@
     }
 
     // Skip during loading or artificial events
-    if (isGenerating || isArtificialEvent) {
+    if ($isGenerating || isArtificialEvent) { // Use $ prefix for store value
       console.log('Skipping analysis due to loading or artificial event');
       return false;
     }
@@ -151,6 +285,9 @@
   // Initialize browser variable for local storage check
   let browser = typeof window !== 'undefined';
 
+  // Track the last resize time
+  let lastResizeTime = 0;
+
   // Initialize on component mount
   onMount(() => {
     // First, set up the canvas
@@ -170,25 +307,169 @@
 
         // Initialize stroke renderer
         renderStrokes();
+
+        // Capture initial canvas image for output preview
+        imageData = inputCanvas.toDataURL('image/png');
       }
     }
 
-    // Start analyzing strokes automatically after a short delay
-    setTimeout(() => {
-      // Only if we have strokes to analyze
-      if (drawingContent.strokes.length > 0) {
-        recognizeStrokes();
-        analyzeSketch();
-      }
-    }, 1000);
+    console.log('Component mounted');
+    initializeCanvas();
+    mobileCheck();
+    window.addEventListener('resize', mobileCheck);
 
+    // Return cleanup function
     return () => {
-      // Cleanup when component unmounts
-      if (renderDebounceTimeout) {
-        clearTimeout(renderDebounceTimeout);
-      }
+      window.removeEventListener('resize', mobileCheck);
     };
   });
+
+  // Initialize canvas with proper dimensions
+  function initializeCanvas() {
+    console.log('Initializing canvas');
+    if (inputCanvas) {
+      const containerWidth = 800; // Default width
+      const containerHeight = getHeightFromAspectRatio(containerWidth, selectedAspectRatio);
+
+      // Set canvas dimensions
+      inputCanvas.width = containerWidth;
+      inputCanvas.height = containerHeight;
+
+      // Update canvasWidth and canvasHeight variables
+      canvasWidth = containerWidth;
+      canvasHeight = containerHeight;
+
+      console.log(`Canvas initialized with dimensions: ${canvasWidth}x${canvasHeight}`);
+
+      // Set up canvas context
+      ctx = inputCanvas.getContext('2d');
+      if (ctx) {
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        ctx.strokeStyle = strokeColor;
+        ctx.lineWidth = strokeSize;
+      }
+
+      // Capture initial image data for output preview
+      imageData = inputCanvas.toDataURL('image/png');
+    }
+  }
+
+  // Helper function to get height based on aspect ratio
+  function getHeightFromAspectRatio(width, aspectRatio) {
+    if (aspectRatio === '1:1') {
+      return width; // Square
+    } else if (aspectRatio === 'portrait') {
+      return width * (1024 / 1792); // Portrait 1792x1024
+    } else if (aspectRatio === 'landscape') {
+      return width * (1792 / 1024); // Landscape 1024x1792
+    }
+    // Default fallback
+    return width;
+  }
+
+  // Function to resize canvas
+  function resizeCanvas() {
+    if (!inputCanvas || !inputCanvas.parentElement) return;
+
+    lastResizeTime = Date.now(); // Track resize time
+    isResizeEvent = true; // Flag that this is a resize event
+
+    // Get the actual available space in the container
+    const container = inputCanvas.parentElement;
+
+    // Get computed style to account for padding, border, etc.
+    const containerStyle = window.getComputedStyle(container);
+    const paddingHorizontal = parseFloat(containerStyle.paddingLeft) + parseFloat(containerStyle.paddingRight);
+    const paddingVertical = parseFloat(containerStyle.paddingTop) + parseFloat(containerStyle.paddingBottom);
+
+    // Calculate actual available space accounting for padding
+    const availableWidth = container.clientWidth - paddingHorizontal;
+    const availableHeight = container.clientHeight - paddingVertical;
+
+    console.log(`Available container space: ${availableWidth}x${availableHeight}`);
+
+    // Set internal resolution based on gpt-image-1 supported formats
+    let internalWidth, internalHeight;
+
+    if (selectedAspectRatio === '1:1') {
+      // Square 1024x1024
+      internalWidth = 1024;
+      internalHeight = 1024;
+    } else if (selectedAspectRatio === 'portrait') {
+      // Portrait 1792x1024
+      internalWidth = 1792;
+      internalHeight = 1024;
+    } else if (selectedAspectRatio === 'landscape') {
+      // Landscape 1024x1792
+      internalWidth = 1024;
+      internalHeight = 1792;
+    }
+
+    // Calculate display size based on container constraints
+    // Determine which dimension is the limiting factor
+    const widthRatio = availableWidth / internalWidth;
+    const heightRatio = availableHeight / internalHeight;
+
+    // Use the smaller ratio to ensure the entire canvas fits
+    const scaleFactor = Math.min(widthRatio, heightRatio);
+
+    // Calculate new display dimensions ensuring they're never larger than available space
+    const newCanvasWidth = Math.min(internalWidth * scaleFactor, availableWidth);
+    const newCanvasHeight = Math.min(internalHeight * scaleFactor, availableHeight);
+
+    console.log(`Calculated canvas size: ${newCanvasWidth}x${newCanvasHeight}, scale: ${scaleFactor}`);
+
+    // Set internal canvas dimensions (for rendering)
+    inputCanvas.width = internalWidth;
+    inputCanvas.height = internalHeight;
+
+    // Update global canvas dimensions for overlays
+    canvasWidth = internalWidth;
+    canvasHeight = internalHeight;
+
+    // Set display size based on calculated dimensions
+    inputCanvas.style.width = `${Math.round(newCanvasWidth)}px`;
+    inputCanvas.style.height = `${Math.round(newCanvasHeight)}px`;
+
+    // Store the scale factor for use with overlays
+    canvasScale = scaleFactor;
+
+    // Update drawing content bounds to match internal resolution
+    drawingContent.bounds = {
+      width: internalWidth,
+      height: internalHeight
+    };
+
+    // Re-render all strokes after a short delay to allow layout to settle
+    // Clear any existing render debounce
+    if (renderDebounceTimeout) {
+      clearTimeout(renderDebounceTimeout);
+    }
+    renderDebounceTimeout = setTimeout(() => {
+      console.log('Rendering strokes after resize debounce');
+      renderStrokes();
+
+      // Update the canvas snapshot for the output preview
+      imageData = inputCanvas.toDataURL('image/png');
+
+      // Update the canvas snapshot for the shape recognition dialog
+      if (showShapeRecognitionDialog && drawingContent.strokes.length > 0) {
+        currentCanvasSnapshot = captureCanvasSnapshot();
+      }
+
+      // Reset resize event flag after rendering
+      setTimeout(() => { isResizeEvent = false; }, 50); // Short delay after render
+    }, 100); // Debounce rendering on resize
+
+    console.log(
+      `Canvas resized. Container: ${availableWidth}x${availableHeight}, ` +
+      `Aspect Ratio: ${selectedAspectRatio}, ` +
+      `Display Size: ${Math.round(newCanvasWidth)}x${Math.round(newCanvasHeight)}, ` +
+      `Internal Res: ${internalWidth}x${internalHeight}, ` +
+      `Scale: ${canvasScale}`
+    );
+  }
 
   // Make the component reactive to changes in the drawingContent
   $: {
@@ -214,101 +495,11 @@
     }
   }
 
-  // Track the last resize time
-  let lastResizeTime = 0;
-
-  // Function to resize canvas
-  function resizeCanvas() {
-    if (!inputCanvas || !inputCanvas.parentElement) return;
-
-    lastResizeTime = Date.now(); // Track resize time
-    isResizeEvent = true; // Flag that this is a resize event
-
-    const container = inputCanvas.parentElement;
-    const containerWidth = container.clientWidth;
-    const containerHeight = container.clientHeight - 50; // Account for header
-
-    // Get the selected aspect ratio value
-    const targetRatio = aspectRatios[selectedAspectRatio];
-
-    // Calculate dimensions that will fit in the container while maintaining aspect ratio
-    let newCanvasWidth = 0;
-    let newCanvasHeight = 0;
-
-    // For vertical aspect ratios (height > width)
-    if (targetRatio < 1) {
-      // Start by trying to fit the height
-      newCanvasHeight = Math.min(containerHeight, 800); // Cap at 800px height
-      newCanvasWidth = newCanvasHeight * targetRatio;
-
-      // If width exceeds container width, recalculate based on width
-      if (newCanvasWidth > containerWidth) {
-        newCanvasWidth = containerWidth;
-        newCanvasHeight = newCanvasWidth / targetRatio;
-      }
-    }
-    // For square or horizontal aspect ratios
-    else {
-      // Start by trying to fit the width
-      newCanvasWidth = Math.min(containerWidth, 800); // Cap at 800px width
-      newCanvasHeight = newCanvasWidth / targetRatio;
-
-      // If height exceeds container height, recalculate based on height
-      if (newCanvasHeight > containerHeight) {
-        newCanvasHeight = containerHeight;
-        newCanvasWidth = newCanvasHeight * targetRatio;
-      }
-    }
-
-    // Use a fixed internal resolution for high quality, but maintain the aspect ratio
-    const internalResolutionBase = 1024;
-    const internalWidth = Math.round(internalResolutionBase * targetRatio);
-    const internalHeight = internalResolutionBase;
-
-    // Set internal canvas dimensions (for rendering)
-    inputCanvas.width = internalWidth;
-    inputCanvas.height = internalHeight;
-
-    // Set display size based on calculated dimensions
-    inputCanvas.style.width = `${Math.round(newCanvasWidth)}px`;
-    inputCanvas.style.height = `${Math.round(newCanvasHeight)}px`;
-
-    // Update drawing content bounds to match internal resolution
-    drawingContent.bounds = {
-      width: internalWidth,
-      height: internalHeight
-    };
-
-    // Re-render all strokes after a short delay to allow layout to settle
-    // Clear any existing render debounce
-    if (renderDebounceTimeout) {
-      clearTimeout(renderDebounceTimeout);
-    }
-    renderDebounceTimeout = setTimeout(() => {
-      console.log('Rendering strokes after resize debounce');
-      renderStrokes();
-      // Reset resize event flag after rendering
-      setTimeout(() => { isResizeEvent = false; }, 50); // Short delay after render
-    }, 100); // Debounce rendering on resize
-
-    console.log(
-      `Canvas resized. Container: ${containerWidth}x${containerHeight}, ` +
-      `Aspect Ratio: ${selectedAspectRatio} (${targetRatio.toFixed(2)}), ` +
-      `Display Size: ${Math.round(newCanvasWidth)}x${Math.round(newCanvasHeight)}, ` +
-      `Internal Res: ${internalWidth}x${internalHeight}`
-    );
-  }
-
-  // Reactive statement to resize canvas when aspect ratio changes or on window resize
+  // Reactive statement to update canvas when aspect ratio changes
   $: {
-    if (browser) {
-      resizeCanvas(); // Initial resize
-      // Trigger analysis if needed after resize
-      if (drawingContent.strokes.length > 0 && !isAnalyzing && !isRecognizingStrokes) {
-        forceAnalysisFlag = true; // Force analysis after resize if there's content
-        analyzeSketch();
-        recognizeStrokes();
-      }
+    if (browser && selectedAspectRatio) {
+      // Only resize the canvas, don't trigger analysis
+      resizeCanvas();
     }
   }
 
@@ -508,6 +699,11 @@
 
     // Reset alpha
     inputCtx.globalAlpha = 1;
+
+    // Capture the canvas image for output preview
+    if (inputCanvas) {
+      imageData = inputCanvas.toDataURL('image/png');
+    }
   }
 
   // Function to analyze the current sketch with OpenAI Vision
@@ -525,18 +721,15 @@
       return;
     }
 
-    // Skip if we don't have pending user edits
-    if (!forceAnalysisFlag && !pendingAnalysis && (now - lastUserEditTime > ANALYSIS_THROTTLE_MS * 2)) {
-      console.log('Skipping analysis - no recent user edits');
+    // Skip if we don't have pending user edits and we're not forcing analysis
+    if (!forceAnalysisFlag && !pendingAnalysis) {
+      console.log('Skipping analysis - no pending user edits');
       return;
     }
 
-    // Generate a perceptual hash of the current strokes to check if they've changed meaningfully
-    const currentStrokesHash = generateStrokesHash(drawingContent.strokes);
-
-    // Skip if the strokes haven't changed meaningfully since last analysis
-    if (!forceAnalysisFlag && currentStrokesHash === lastAnalyzedStrokesHash) {
-      console.log('Skipping analysis - strokes unchanged');
+    // Skip if it's been a long time since the last user edit and we're not forcing
+    if (!forceAnalysisFlag && (now - lastUserEditTime > ANALYSIS_THROTTLE_MS * 5)) {
+      console.log('Skipping analysis - user edit too old');
       pendingAnalysis = false;
       return;
     }
@@ -550,13 +743,13 @@
 
       // Update tracking variables
       previousAnalyzedStrokeCount = drawingContent.strokes.length;
-      lastAnalyzedStrokesHash = currentStrokesHash;
+      lastAnalyzedStrokesHash = generateStrokesHash(drawingContent.strokes);
       pendingAnalysis = false;
 
       // Reset force flag
       forceAnalysisFlag = false;
 
-      console.log('Starting sketch analysis API call...');
+      console.log('Starting sketch analysis API call...', new Date().toISOString());
 
       // Set a timeout for the analysis request
       const timeoutMs = 20000; // 20 seconds max
@@ -564,8 +757,8 @@
       const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
       try {
-        // Capture the current canvas as an image
-        const imageData = captureCanvasSnapshot();
+        // Use the existing snapshot if available, or capture a new one
+        const imageData = currentCanvasSnapshot || captureCanvasSnapshot();
 
         // First, use our enhanced sketch analysis endpoint
         const response = await fetch('/api/ai/analyze-sketch', {
@@ -817,9 +1010,16 @@
       return;
     }
 
-    // Skip if we don't have pending user edits
-    if (!forceAnalysisFlag && !pendingAnalysis && (now - lastUserEditTime > ANALYSIS_THROTTLE_MS * 2)) {
-      console.log('Skipping stroke recognition - no recent user edits');
+    // Skip if we don't have pending user edits and we're not forcing
+    if (!forceAnalysisFlag && !pendingAnalysis) {
+      console.log('Skipping stroke recognition - no pending user edits');
+      return;
+    }
+
+    // Skip if it's been a long time since the last user edit and we're not forcing
+    if (!forceAnalysisFlag && (now - lastUserEditTime > ANALYSIS_THROTTLE_MS * 5)) {
+      console.log('Skipping stroke recognition - user edit too old');
+      pendingAnalysis = false;
       return;
     }
 
@@ -848,7 +1048,7 @@
       // Reset force flag
       forceAnalysisFlag = false;
 
-      console.log('Starting stroke recognition API call...');
+      console.log('Starting stroke recognition API call...', new Date().toISOString());
 
       // Create abort controller for timeout handling
       const controller = new AbortController();
@@ -1064,9 +1264,16 @@
     drawingContent.strokes = [];
     // Trigger Svelte reactivity
     drawingContent = drawingContent;
-    generatedImageUrl = null;
-    generatedByModel = null;
+    generatedImageUrl.set(null); // Reset store
+    generatedByModel.set(null); // Reset store
+    // Reset the canvas snapshot when clearing the canvas
+    currentCanvasSnapshot = '';
     renderStrokes();
+
+    // Update imageData after clearing
+    if (inputCanvas) {
+      imageData = inputCanvas.toDataURL('image/png');
+    }
   }
 
   // Function to generate image from drawing
@@ -1082,131 +1289,148 @@
       console.log('Additional context provided:', additionalContext);
     }
 
+    // Always capture the canvas image first for preview
+    imageData = inputCanvas.toDataURL('image/png');
+    console.log('Canvas image captured for preview');
+
     try {
-      isGenerating = true;
+      // Set the generating flags
+      isGenerating.set(true);
+      isEditing.set(true);
       errorMessage = null;
-      generatedByModel = null;
+
+      // Reset previous results
+      generatedByModel.set(null);
+      generatedImageUrl.set(null);
+      editedByModel.set(null);
+      editedImageUrl.set(null);
 
       // Store the current aspect ratio to use for the generated image
       // This ensures the generated image matches the drawing canvas
       generatedImageAspectRatio = selectedAspectRatio;
       console.log(`Using aspect ratio ${selectedAspectRatio} (${aspectRatios[selectedAspectRatio]}) for generated image`);
 
-      // Capture the canvas image and store it for preview during loading
-      imageData = inputCanvas.toDataURL('image/png');
-
       // Create a deep copy of the drawing content to avoid any reactivity issues
       const drawingContentCopy = JSON.parse(JSON.stringify(drawingContent));
 
-      // Analyze the drawing to extract any text
-      console.log('Sending to text analysis API...');
-      const textAnalysisResponse = await fetch('/api/ai/analyze', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          drawingContent: drawingContentCopy,
-          userPrompt: "Extract any text or labels from this drawing, and describe what objects or scenes are depicted.",
-          imageData,
-          useVision: true
+      // Get the prompts from the stores
+      const imagePrompt = $gptImagePrompt;
+      const editPrompt = $gptEditPrompt;
+
+      console.log('Using image prompt from store:', imagePrompt ? 'yes (length: ' + imagePrompt.length + ')' : 'no');
+      console.log('Using edit prompt from store:', editPrompt ? 'yes (length: ' + editPrompt.length + ')' : 'no');
+
+      // Add structure preservation metadata
+      const structureData = {
+        aspectRatio: selectedAspectRatio,
+        canvasWidth,
+        canvasHeight,
+        viewportWidth: window.innerWidth,
+        viewportHeight: window.innerHeight,
+        pixelRatio: window.devicePixelRatio || 1
+      };
+
+      // Create enhanced detected objects with precise coordinates
+      const enhancedObjects = analysisElements.map(obj => ({
+        label: obj.label || obj.name || 'object',
+        x: obj.x / canvasWidth, // normalized 0-1
+        y: obj.y / canvasHeight, // normalized 0-1
+        width: obj.width / canvasWidth, // normalized 0-1
+        height: obj.height / canvasHeight, // normalized 0-1
+        centerX: (obj.x + obj.width/2) / canvasWidth, // normalized 0-1
+        centerY: (obj.y + obj.height/2) / canvasHeight, // normalized 0-1
+        confidence: obj.confidence || 1.0
+      }));
+
+      // Prepare request payloads - one for each endpoint
+      const standardRequestPayload = {
+        drawingContent: drawingContentCopy,
+        imageData,
+        additionalContext,
+        aspectRatio: selectedAspectRatio,
+        prompt: imagePrompt, // Use the image generation prompt
+        structureData,
+        detectedObjects: enhancedObjects
+      };
+
+      const editRequestPayload = {
+        drawingContent: drawingContentCopy,
+        imageData,
+        additionalContext,
+        aspectRatio: selectedAspectRatio,
+        prompt: editPrompt, // Use the edit prompt
+        structureData,
+        detectedObjects: enhancedObjects
+      };
+
+      // Call both API endpoints in parallel
+      const [standardResponse, editResponse] = await Promise.all([
+        // Standard image generation
+        fetch('/api/ai/generate-image', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(standardRequestPayload)
+        }),
+
+        // Edited image generation
+        fetch('/api/ai/edit-image', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(editRequestPayload)
         })
-      });
+      ]);
 
-      if (!textAnalysisResponse.ok) {
-        throw new Error("Failed to analyze drawing");
+      // Handle standard image generation response
+      if (standardResponse.ok) {
+        const standardResult = await standardResponse.json();
+        console.log('Standard image generation successful');
+
+        // Handle different response formats robustly
+        const standardImageUrl = standardResult.imageUrl || standardResult.url;
+        if (standardImageUrl) {
+          generatedImageUrl.set(standardImageUrl);
+          generatedByModel.set(standardResult.model || 'gpt-image-1');
+          if (standardResult.aspectRatio) {
+            generatedImageAspectRatio = standardResult.aspectRatio;
+          }
+        } else {
+          console.error('No image URL found in standard response:', standardResult);
+        }
+      } else {
+        console.error('Failed to generate standard image:', standardResponse.status, standardResponse.statusText);
       }
 
-      const textAnalysis = await textAnalysisResponse.json();
-      console.log('Text analysis completed');
+      // Handle edited image response
+      if (editResponse.ok) {
+        const editResult = await editResponse.json();
+        console.log('Edit image generation successful');
 
-      // Prepare detailed structural information from our analysis elements
-      let structuralDetails = null;
-      if (analysisElements.length > 0) {
-        // Collect information about all analyzed elements and their precise positions
-        structuralDetails = {
-          elementCount: analysisElements.length,
-          elements: analysisElements.map(element => ({
-            id: element.id,
-            name: element.name,
-            category: element.category || 'unknown',
-            position: {
-              x: element.x,
-              y: element.y,
-            },
-            bounds: element.boundingBox ? {
-              minX: element.boundingBox.minX,
-              minY: element.boundingBox.minY,
-              maxX: element.boundingBox.maxX,
-              maxY: element.boundingBox.maxY,
-              width: element.boundingBox.width,
-              height: element.boundingBox.height
-            } : {
-              // Fallback for elements without precise bounds
-              minX: element.x - (element.width / canvasWidth) / 2,
-              minY: element.y - (element.height / canvasHeight) / 2,
-              width: element.width / canvasWidth,
-              height: element.height / canvasHeight
-            },
-            isChild: element.isChild || false,
-            parentId: element.parentId,
-            children: element.children || []
-          }))
-        };
-
-        console.log('Including detailed structural information:', structuralDetails);
+        // Handle different response formats robustly
+        const editImageUrl = editResult.imageUrl || editResult.url;
+        if (editImageUrl) {
+          editedImageUrl.set(editImageUrl);
+          editedByModel.set(editResult.model || 'gpt-image-1-edit');
+        } else {
+          console.error('No image URL found in edit response:', editResult);
+        }
+      } else {
+        console.error('Failed to generate edited image:', editResponse.status, editResponse.statusText);
       }
 
-      // Now call the endpoint to generate an image based on the drawing
-      console.log('Sending to image generation API...');
-      const response = await fetch('/api/ai/generate-image', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          drawingContent: drawingContentCopy,
-          imageData,
-          textAnalysis: textAnalysis.message,
-          additionalContext: additionalContext,
-          sketchAnalysis: sketchAnalysis,
-          strokeRecognition: strokeRecognition,
-          structuralDetails: structuralDetails, // Send the detailed structural information
-          aspectRatio: selectedAspectRatio, // Explicitly set the selected aspect ratio
-          aspectRatioValue: aspectRatios[selectedAspectRatio] // Also pass the numerical value for precision
-        })
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to generate image');
-      }
-
-      const result = await response.json();
-      console.log('Image generation successful');
-      console.log('API response:', result);
-      console.log('API response type:', typeof result);
-      console.log('API response keys:', Object.keys(result));  // Log all keys in the response
-
-      // Handle different response formats robustly
-      const imageUrl = result.imageUrl || result.url;
-      if (!imageUrl) {
-        console.error('No image URL found in response:', result);
-        errorMessage = 'Missing image URL in API response';
-        return;
-      }
-
-      // Set the URL and model values, and store returned aspect ratio if available
-      generatedImageUrl = imageUrl;
-      generatedByModel = result.model || 'AI Model';
-      if (result.aspectRatio) {
-        generatedImageAspectRatio = result.aspectRatio;
+      // Check if both requests failed
+      if (!standardResponse.ok && !editResponse.ok) {
+        throw new Error('Failed to generate both standard and edited images');
       }
     } catch (error) {
-      console.error('Error generating image:', error);
+      console.error('Error generating images:', error);
       errorMessage = error instanceof Error ? error.message : 'An unknown error occurred';
     } finally {
-      isGenerating = false;
+      isGenerating.set(false);
+      isEditing.set(false);
     }
   }
 
@@ -1605,6 +1829,9 @@
     lastUserEditTime = Date.now();
     pendingAnalysis = true;
 
+    // Capture canvas snapshot immediately after an edit
+    currentCanvasSnapshot = captureCanvasSnapshot();
+
     // Trigger sketch analysis after a short delay to let the canvas update
     // Only if we haven't analyzed recently
     const now = Date.now();
@@ -1626,11 +1853,13 @@
 
   // Function to toggle Shape Recognition Dialog
   function toggleShapeRecognitionDialog() {
-    // Capture canvas snapshot when dialog is opened
-    if (!showShapeRecognitionDialog) {
+    // Toggle the dialog state
+    showShapeRecognitionDialog = !showShapeRecognitionDialog;
+
+    // Always capture a fresh canvas snapshot when opening the dialog and there are strokes
+    if (showShapeRecognitionDialog && drawingContent.strokes.length > 0) {
       currentCanvasSnapshot = captureCanvasSnapshot();
     }
-    showShapeRecognitionDialog = !showShapeRecognitionDialog;
   }
 
   // Function to toggle Debug Mode
@@ -1639,16 +1868,16 @@
   }
 
   // Position for the shape recognition button
-  let buttonPosition = { right: '20px', bottom: '70px' };
+  let buttonPosition = { right: '20px', bottom: '20px' };
   // Position for the shape recognition dialog
-  let shapeDialogPosition = { right: '20px', top: '120px' };
+  let shapeDialogPosition = { right: '20px', top: '20px' };
 
   // State for aspect ratio
-  let selectedAspectRatio = '4:5'; // Default aspect ratio (vertical 4:5)
+  let selectedAspectRatio = '1:1'; // Default aspect ratio (square)
   const aspectRatios = {
-    '4:5': 4 / 5,   // Vertical 4:5 aspect ratio
-    '1:1': 1 / 1,   // Square aspect ratio
-    '9:16': 9 / 16  // Vertical 9:16 aspect ratio (more extreme vertical)
+    '1:1': 1 / 1,          // Square 1024x1024
+    'portrait': 1792 / 1024,  // Portrait 1792x1024
+    'landscape': 1024 / 1792  // Landscape 1024x1792
   };
 
   // Store the aspect ratio of the generated image
@@ -1688,11 +1917,235 @@
       return '';
     }
   }
+
+  // Function to handle enhanced objects from AIOverlay and update prompt
+  function handleEnhancedObjects(event) {
+    const enhancedObjects = event.detail.objects;
+    updatePromptWithObjects(enhancedObjects);
+  }
+
+  // Update the prompt with detailed object information
+  function updatePromptWithObjects(objects) {
+    if (!objects || objects.length === 0) return;
+
+    // Format object information in a structured way
+    const objectsText = objects.map(obj => {
+      let desc = `${obj.name} (confidence: ${Math.round(obj.confidence * 100)}%)`;
+
+      if (obj.boundingBox) {
+        const bb = obj.boundingBox;
+        // Format bounding box as normalized coordinates (0-1 range)
+        desc += ` at position x:${bb.minX.toFixed(3)},y:${bb.minY.toFixed(3)} with width:${bb.width.toFixed(3)},height:${bb.height.toFixed(3)}`;
+      }
+
+      // Include enhancement information
+      if (obj.enhancedBy) {
+        const enhancementSources = [];
+        if (obj.enhancedBy.semantic) enhancementSources.push('semantic');
+        if (obj.enhancedBy.strokes) enhancementSources.push('strokes');
+        if (obj.enhancedBy.cnn) enhancementSources.push('cnn');
+
+        if (enhancementSources.length > 0) {
+          //desc += ` (enhanced by: ${enhancementSources.join(', ')})`;
+        }
+      }
+
+      return desc;
+    }).join('\n- ');
+
+    // Update our local variable for the prompt building
+    if (objectsText) {
+      detectedObjectsText = `- ${objectsText}`;
+    }
+
+    // Rebuild the prompt with the new object information
+    const newPrompt = buildGptImagePrompt();
+    gptImagePrompt.set(newPrompt);
+  }
+
+  // Add detectedObjectsText variable to store the formatted objects text
+  let detectedObjectsText = '';
+
+  // Function to handle objects detected by TensorFlow
+  function handleTFObjects(event) {
+    const tfDetectedObjects = event.detail.objects;
+    updateTFObjectsInPrompt(tfDetectedObjects);
+  }
+
+  // Update the prompt with TensorFlow detected objects
+  function updateTFObjectsInPrompt(objects) {
+    if (!objects || objects.length === 0) return;
+
+    // Format TensorFlow objects (similar to enhancedObjects but simpler format)
+    // This is just a basic implementation - adjust based on your TFOverlay output format
+    const tfObjectsText = objects.map(obj => {
+      let desc = `${obj.name || obj.class} (confidence: ${Math.round((obj.confidence || obj.score) * 100)}%)`;
+
+      if (obj.boundingBox || obj.bbox) {
+        const bb = obj.boundingBox || obj.bbox;
+        desc += ` at position x:${(bb.x || bb.minX).toFixed(3)},y:${(bb.y || bb.minY).toFixed(3)} with width:${bb.width.toFixed(3)},height:${bb.height.toFixed(3)}`;
+      }
+
+      return desc;
+    }).join('\n- ');
+
+    // Store in a separate variable for TF objects
+    if (tfObjectsText) {
+      tfDetectedObjectsText = `- ${tfObjectsText}`;
+    }
+
+    // Rebuild the prompt with the updated object information
+    const newPrompt = buildGptImagePrompt();
+    gptImagePrompt.set(newPrompt);
+  }
+
+  // Add variable for TensorFlow detected objects text
+  let tfDetectedObjectsText = '';
+
+  // Add a handler for analysis options changes
+  function handleAnalysisOptionsChanged(event) {
+    console.log('Analysis options changed:', event.detail.options);
+    // Set force analysis flag to true and trigger reanalysis
+    forceAnalysisFlag = true;
+    // Re-analyze with the new options
+    runAnalysis(true);
+  }
+
+  // Modify the analyzeDrawing function to respect analysis options
+  async function analyzeDrawing() {
+    if (!drawingContent.strokes || drawingContent.strokes.length === 0) {
+      console.log('No strokes to analyze');
+      sketchAnalysis = "Draw something to see AI's interpretation";
+      strokeRecognition = "Draw something to see shapes recognized";
+      return;
+    }
+
+    isAnalyzing = true;
+    sketchAnalysis = "Analyzing drawing...";
+
+    // Capture current canvas state
+    captureCanvas();
+
+    try {
+      // Only run GPT-4 Vision analysis if that option is enabled
+      if ($analysisOptions.useGPTVision) {
+        // Analyze sketch with GPT-4 Vision API
+        const response = await fetch('/api/ai/analyze-sketch', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            imageData: imageData,
+            enhancedAnalysis: true,
+            requestHierarchy: true,
+            requestPositions: true,
+            context: additionalContext
+          }),
+        });
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          throw new Error(`API error: ${errorText}`);
+        }
+
+        // Process the response
+        const result = await response.json();
+        sketchAnalysisOutput = result;
+
+        sketchAnalysis = result.description || result.analysis?.content || "AI couldn't analyze the drawing";
+
+        // Process detected objects from GPT-4 Vision response
+        if (result.detectedObjects && Array.isArray(result.detectedObjects)) {
+          gptObjects = result.detectedObjects.map(obj => ({
+            ...obj,
+            id: obj.id || `gpt_${Math.random().toString(36).substring(2, 9)}`,
+            source: 'openai',
+            confidence: obj.confidence || 0.8
+          }));
+        }
+      } else {
+        // Skip GPT-4 Vision analysis
+        console.log('GPT-4 Vision analysis skipped due to options settings');
+        sketchAnalysis = "GPT-4 Vision analysis disabled";
+        gptObjects = [];
+      }
+
+      // Only run stroke analysis if that option is enabled
+      if ($analysisOptions.useStrokeAnalysis || $analysisOptions.useCNN || $analysisOptions.useShapeRecognition) {
+        // Analyze strokes with custom recognition
+        isRecognizingStrokes = true;
+
+        // Filter which technologies to use in the stroke analysis
+        const strokeAnalysisOptions = {
+          useCNN: $analysisOptions.useCNN,
+          useShapeRecognition: $analysisOptions.useShapeRecognition,
+          useStrokeAnalysis: $analysisOptions.useStrokeAnalysis
+        };
+
+        const strokeResponse = await fetch('/api/ai/analyze-strokes', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            strokes: drawingContent.strokes,
+            enhancedAnalysis: true,
+            context: additionalContext,
+            options: strokeAnalysisOptions
+          }),
+        });
+
+        if (!strokeResponse.ok) {
+          const errorText = await strokeResponse.text();
+          throw new Error(`Stroke API error: ${errorText}`);
+        }
+
+        // Process stroke analysis results
+        const strokeResult = await strokeResponse.json();
+        strokesAnalysisOutput = strokeResult;
+        recognitionResult = strokeResult;
+
+        strokeRecognition = strokeResult.analysis?.content || "No shapes recognized";
+
+        // Process combined detection results
+        analyzeResults(strokeResult);
+
+        isRecognizingStrokes = false;
+      } else {
+        // Skip stroke analysis
+        console.log('Stroke analysis skipped due to options settings');
+        strokeRecognition = "Stroke analysis disabled";
+        isRecognizingStrokes = false;
+      }
+
+      // Update last analysis time and hash
+      lastAnalysisTime = Date.now();
+      lastAnalyzedStrokesHash = computeStrokesHash(drawingContent.strokes);
+      previousAnalyzedStrokeCount = drawingContent.strokes.length;
+
+      // Reset the pending and force flags
+      pendingAnalysis = false;
+      forceAnalysisFlag = false;
+    } catch (error) {
+      console.error('Error analyzing drawing:', error);
+      errorMessage = `Analysis error: ${error.message}`;
+      sketchAnalysis = "Error analyzing drawing";
+      strokeRecognition = "Error analyzing strokes";
+    } finally {
+      isAnalyzing = false;
+
+      // Build the prompt with whatever results we have
+      const newPrompt = buildGptImagePrompt();
+      gptImagePrompt.set(newPrompt);
+    }
+  }
+
+  // Update the analyze-strokes endpoint call in other places as needed
 </script>
 
 <svelte:head>
-  // ... existing code ...
-  <title>Precision AI Structure-Preserving Image Generator | Daydream</title>
+  <title>Daydream</title>
   <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
   <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
 </svelte:head>
@@ -1713,8 +2166,17 @@
   <div class="canvas-container">
     <div class="vertical-toolbar">
         <div class="tools-group">
+
           <div class="tool-group">
-            <span class="material-icons tool-icon-label">brush</span>
+            <input
+              type="color"
+              bind:value={strokeColor}
+              on:change={renderStrokes}
+            />
+          </div>
+
+
+          <div class="tool-group">
             <VerticalSlider
               min={1}
               max={20}
@@ -1727,17 +2189,8 @@
             />
           </div>
 
-          <div class="tool-group">
-            <span class="material-icons tool-icon-label">palette</span>
-            <input
-              type="color"
-              bind:value={strokeColor}
-              on:change={renderStrokes}
-            />
-          </div>
 
           <div class="tool-group">
-            <span class="material-icons tool-icon-label">opacity</span>
             <VerticalSlider
               min={0.1}
               max={1}
@@ -1758,7 +2211,6 @@
                 <option value={ratioKey}>{ratioKey}</option>
               {/each}
             </select>
-            <span class="tool-label">Aspect Ratio</span>
           </div>
 
           <!-- Updated analysis toggles to show both separately -->
@@ -1794,8 +2246,7 @@
         </div>
     </div>
 
-    <div class="canvas-wrapper input-canvas" class:ratio-4-5={selectedAspectRatio === '4:5'} class:ratio-1-1={selectedAspectRatio === '1:1'} class:ratio-9-16={selectedAspectRatio === '9:16'}>
-      <h2>Your Sketch</h2>
+    <div class="canvas-wrapper input-canvas" class:ratio-1-1={selectedAspectRatio === '1:1'} class:ratio-portrait={selectedAspectRatio === 'portrait'} class:ratio-landscape={selectedAspectRatio === 'landscape'}>
       <canvas
         bind:this={inputCanvas}
         class="drawing-canvas"
@@ -1809,16 +2260,21 @@
       <!-- Update the overlay rendering conditions -->
       {#if showAnalysisView && (analysisElements.length > 0 || (drawingContent?.strokes?.length === 0 && !analysisElements.length))}
         {#if showGPTOverlay}
-          <AIOverlay
-            detectedObjects={gptObjects}
-            width={inputCanvas?.width || 800}
-            height={inputCanvas?.height || 600}
-            visible={showAnalysisView && showGPTOverlay}
-            canvasRef={inputCanvas}
-            isAnalyzing={isAnalyzing}
-            waitingForInput={drawingContent?.strokes?.length === 0 && !analysisElements.length}
-            strokes={drawingContent?.strokes || [] as any}
-          />
+          <div class="ai-overlay-wrapper" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none;">
+            <AIOverlay
+              detectedObjects={analysisElements}
+              width={inputCanvas?.width}
+              height={inputCanvas?.height}
+              visible={showAnalysisView && showGPTOverlay}
+              canvasRef={inputCanvas}
+              strokes={drawingContent.strokes as any[]}
+              isAnalyzing={isAnalyzing}
+              waitingForInput={!isAnalyzing && drawingContent.strokes.length === 0}
+              canvasZoom={canvasScale}
+              debugMode={false}
+              on:enhancedObjects={handleEnhancedObjects}
+            />
+          </div>
         {/if}
 
         {#if showTFOverlay}
@@ -1830,6 +2286,7 @@
             isAnalyzing={isRecognizingStrokes}
             waitingForInput={drawingContent?.strokes?.length === 0 && !analysisElements.length}
             strokes={drawingContent?.strokes || [] as any}
+            on:detectedObjects={handleTFObjects}
           />
         {/if}
       {/if}
@@ -1846,17 +2303,16 @@
       {/if}
     </div>
 
-    <div class="canvas-wrapper output-canvas" class:ratio-4-5={generatedImageAspectRatio === '4:5'} class:ratio-1-1={generatedImageAspectRatio === '1:1'} class:ratio-9-16={generatedImageAspectRatio === '9:16'}>
-      <h2>Generated Image</h2>
-      <div class="output-display" class:ratio-4-5={generatedImageAspectRatio === '4:5'} class:ratio-1-1={generatedImageAspectRatio === '1:1'} class:ratio-9-16={generatedImageAspectRatio === '9:16'}>
-        {#if generatedImageUrl}
-          <img src={generatedImageUrl} alt="AI generated image" />
-          {#if generatedByModel}
+    <div class="canvas-wrapper output-canvas" class:ratio-1-1={generatedImageAspectRatio === '1:1'} class:ratio-portrait={generatedImageAspectRatio === 'portrait'} class:ratio-landscape={generatedImageAspectRatio === 'landscape'}>
+      <div class="output-display" class:ratio-1-1={generatedImageAspectRatio === '1:1'} class:ratio-portrait={generatedImageAspectRatio === 'portrait'} class:ratio-landscape={generatedImageAspectRatio === 'landscape'}>
+        {#if $generatedImageUrl}
+          <img src={$generatedImageUrl} alt="AI generated image" />
+          {#if $generatedByModel}
             <div class="model-badge">
-              Generated by {generatedByModel === 'gpt-image-1' ? 'GPT-image-1' : generatedByModel}
+              Generated by {$generatedByModel === 'gpt-image-1' ? 'GPT-image-1' : $generatedByModel}
             </div>
           {/if}
-        {:else if isGenerating}
+        {:else if $isGenerating}
           <div class="ai-scanning-animation">
             <!-- Show translucent version of the sketch being analyzed -->
             <div class="sketch-preview">
@@ -1871,10 +2327,49 @@
             </div>
           </div>
         {:else}
-          <div class="empty-output">
-            <p>Your AI-generated image will appear here</p>
+          <!-- Show translucent preview of drawing canvas when no generated image -->
+          <div class="drawing-preview" style="aspect-ratio: {inputCanvas?.width}/{inputCanvas?.height}">
+            {#if imageData}
+              <img src={imageData} alt="Drawing preview" class="drawing-preview-image" style="width: 100%; height: 100%; object-fit: contain;" />
+            {:else}
+              <p>Your AI-generated image will appear here</p>
+            {/if}
           </div>
         {/if}
+
+        <!-- Always display the AIOverlay in the output container -->
+        <div class="output-overlay-container" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 10;">
+          <AIOverlay
+            detectedObjects={analysisElements}
+            width={inputCanvas?.width}
+            height={inputCanvas?.height}
+            visible={showAnalysisView && showGPTOverlay}
+            canvasRef={null}
+            strokes={drawingContent.strokes as any[]}
+            isAnalyzing={isAnalyzing}
+            waitingForInput={!isAnalyzing && drawingContent.strokes.length === 0}
+            canvasZoom={canvasScale}
+            debugMode={false}
+            on:enhancedObjects={handleEnhancedObjects}
+          />
+        </div>
+
+        <!-- Update the output AIOverlay with proper scaling -->
+        <div class="output-overlay-container" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 10;">
+          <AIOverlay
+            detectedObjects={analysisElements}
+            width={inputCanvas?.width}
+            height={inputCanvas?.height}
+            visible={showAnalysisView && showGPTOverlay}
+            canvasRef={null}
+            strokes={drawingContent.strokes as any[]}
+            isAnalyzing={isAnalyzing}
+            waitingForInput={!isAnalyzing && drawingContent.strokes.length === 0}
+            canvasZoom={canvasScale}
+            debugMode={false}
+            on:enhancedObjects={handleEnhancedObjects}
+          />
+        </div>
       </div>
     </div>
   </div>
@@ -1883,10 +2378,10 @@
     <button
       class="generate-button"
       on:click={generateImage}
-      disabled={isGenerating || strokeCount === 0}
+      disabled={$isGenerating || strokeCount === 0}
     >
       <span class="material-icons">image</span>
-      {isGenerating ? 'Generating...' : 'Generate Structure-Perfect Image'}
+      {$isGenerating ? 'Generating...' : 'Generate Structure-Perfect Image'}
     </button>
 
     {#if errorMessage}
@@ -2101,8 +2596,8 @@
       active={showShapeRecognitionDialog}
       objectCount={analysisElements.length}
       isAnalyzing={isAnalyzing || isRecognizingStrokes}
-      hasTextAnalysis={sketchAnalysis && sketchAnalysis.length > 0}
-      hasStrokesAnalysis={strokeRecognition && strokeRecognition.length > 0}
+      hasTextAnalysis={sketchAnalysis && sketchAnalysis !== "Draw something to see AI's interpretation" && sketchAnalysis !== "Analyzing drawing..."}
+      hasStrokesAnalysis={strokeRecognition && strokeRecognition !== "Draw something to see shapes recognized" && strokeRecognition !== "Analyzing drawing..."}
       hasSketchAnalysis={analysisElements.length > 0}
       on:toggle={toggleShapeRecognitionDialog}
     ></ShapeRecognitionButton>
@@ -2119,9 +2614,10 @@
       debugMode={showAIDebugMode}
       on:close={() => showShapeRecognitionDialog = false}
       on:toggleDebug={toggleDebugMode}
-      canvasSnapshot={currentCanvasSnapshot || captureCanvasSnapshot()}
+      canvasSnapshot={currentCanvasSnapshot}
       sketchAnalysisOutput={sketchAnalysisOutput}
       strokesAnalysisOutput={strokesAnalysisOutput}
+      on:optionsChanged={handleAnalysisOptionsChanged}
     />
 
     {#if showDebugPressure && drawingContent.strokes.length > 0}
@@ -2229,7 +2725,7 @@
 
   /* Toolbar styles */
   .vertical-toolbar {
-    background: white;
+    background: rgba(white, .1);
     border-radius: 8px;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
     padding: 0;
@@ -2256,8 +2752,9 @@
   input[type="color"] {
     -webkit-appearance: none;
     border: none;
-    width: 40px;
-    height: 40px;
+    width: 28px;
+    height: 28px;
+    padding: 0;
     border-radius: 20px;
     cursor: pointer;
     overflow: hidden;
@@ -2302,16 +2799,17 @@
 
   .canvas-wrapper {
     flex: 1;
-    display: flex;
-    flex-direction: column;
     position: relative;
-    background: white;
-    border-radius: 8px;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-    padding: 1rem;
-    margin: 0 1rem;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+   // border-radius: 8px;
+    overflow: visible;
     transition: all 0.3s ease;
-    overflow: hidden;
+    border-radius: 4px;
+
+    //box-shadow: 0 8px 16px rgba(black, 0.5);
+
 
     &.input-canvas {
       min-width: 300px;
@@ -2336,25 +2834,26 @@
         aspect-ratio: 9 / 16;
       }
 
+
+      /* Update to ensure proper canvas containment */
       .drawing-canvas {
-        background: white;
-        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-        margin: 0 auto;
+        border-radius: 4px;
+        margin: 0;
         display: block;
-        position: absolute;
-        top: 0;
-        left: 0;
-        width: 100%;
-        height: 100%;
+        max-width: 100%;
+        max-height: 100%;
+        width: auto;
+        height: auto;
         cursor: crosshair;
-        touch-action: none; /* Prevent browser handling of drags/pinch gestures */
+        object-fit: contain;
+
+        box-shadow: 0 8px 16px rgba(black, 0.5);
       }
     }
 
     &.output-canvas {
       min-width: 300px;
       max-width: 800px;
-      background: #fafafa;
 
       // Adjust dimensions based on aspect ratio
       &.ratio-4-5 {
@@ -2667,7 +3166,8 @@
     justify-content: center;
     width: 100%;
     height: 100%;
-    background: #f8f8f8;
+    border-radius: 0;
+
 
     // Dynamically adjust aspect ratio based on the generated image
     &.ratio-4-5 {
@@ -3547,5 +4047,97 @@
 
   .tool-button:hover .material-icons {
     color: #6355FF;
+  }
+
+  /* Add styles for overlay container on the output image */
+  .output-overlay-container {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 10;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+  }
+
+  /* Drawing preview styling */
+  .drawing-preview {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    overflow: hidden;
+    position: relative;
+    color: #888;
+    font-size: 1rem;
+    text-align: center;
+  }
+
+  .drawing-preview-image {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    opacity: 0.1; /* Translucent as specified */
+  }
+
+
+
+
+  /* Ensure canvases maintain proper size and are fully contained */
+  canvas.drawing-canvas {
+    max-width: 100%;
+    max-height: 100%;
+    display: block;
+    object-fit: contain;
+  }
+
+
+  .output-display img {
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+  }
+
+  /* Ensure the aspect ratios match exactly */
+  .canvas-wrapper.input-canvas.ratio-4-5,
+  .canvas-wrapper.output-canvas.ratio-4-5,
+  .output-display.ratio-4-5 {
+    aspect-ratio: 4/5;
+  }
+
+  .canvas-wrapper.input-canvas.ratio-1-1,
+  .canvas-wrapper.output-canvas.ratio-1-1,
+  .output-display.ratio-1-1 {
+    aspect-ratio: 1/1;
+  }
+
+  .canvas-wrapper.input-canvas.ratio-9-16,
+  .canvas-wrapper.output-canvas.ratio-9-16,
+  .output-display.ratio-9-16 {
+    aspect-ratio: 9/16;
+  }
+
+  /* Replace with: */
+  /* Ensure the aspect ratios match exactly */
+  .canvas-wrapper.input-canvas.ratio-1-1,
+  .canvas-wrapper.output-canvas.ratio-1-1,
+  .output-display.ratio-1-1 {
+    aspect-ratio: 1/1;
+  }
+
+  .canvas-wrapper.input-canvas.ratio-portrait,
+  .canvas-wrapper.output-canvas.ratio-portrait,
+  .output-display.ratio-portrait {
+    aspect-ratio: 1792/1024;
+  }
+
+  .canvas-wrapper.input-canvas.ratio-landscape,
+  .canvas-wrapper.output-canvas.ratio-landscape,
+  .output-display.ratio-landscape {
+    aspect-ratio: 1024/1792;
   }
 </style>

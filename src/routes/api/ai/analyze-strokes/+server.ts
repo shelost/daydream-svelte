@@ -29,7 +29,17 @@ export async function POST({ request, fetch }) {
       return json({ error: 'Invalid request: Missing or empty strokes' }, { status: 400 });
     }
 
-    const { strokes, enhancedAnalysis = false, context = '' } = body;
+    const {
+      strokes,
+      enhancedAnalysis = false,
+      context = '',
+      options = {
+        useCNN: true,
+        useShapeRecognition: true,
+        useStrokeAnalysis: true,
+        useTensorFlow: true
+      }
+    } = body;
 
     // Input validation
     try {
@@ -39,7 +49,7 @@ export async function POST({ request, fetch }) {
       return json({ error: `Invalid stroke data: ${error instanceof Error ? error.message : error}` }, { status: 400 });
     }
 
-    console.log(`Processing ${strokes.length} strokes for analysis`);
+    console.log(`Processing ${strokes.length} strokes for analysis with options:`, options);
 
     // First, generate an SVG from the strokes
     let svgString;
@@ -56,15 +66,20 @@ export async function POST({ request, fetch }) {
       }, { status: 500 });
     }
 
-    // Basic shape detection using our improved shape recognition service
-    const shapeRecognitionResult = detectShapes(strokes);
+    // Basic shape detection using our improved shape recognition service - only if enabled
+    let shapeRecognitionResult = { shapes: [], multiStrokeShapes: [] };
+    if (options.useShapeRecognition) {
+      shapeRecognitionResult = detectShapes(strokes);
+    } else {
+      console.log('Shape recognition disabled by options');
+    }
 
     // Create a temporary canvas to use for CNN and Quick Draw analysis
     let canvas = null;
     let pngDataUrl = null;
 
     try {
-      // Convert SVG to PNG for analysis
+      // Convert SVG to PNG for analysis - needed regardless of options
       pngDataUrl = await svgToPngDataUrl(svgString, 600, 600);
       console.log('Generated PNG data URL successfully');
 
@@ -138,8 +153,10 @@ export async function POST({ request, fetch }) {
       // Continue with basic shape recognition
     }
 
-    // Extract recognized shapes with high confidence
-    const recognizedShapes = [
+    // Extract recognized shapes with high confidence - only if shape recognition is enabled
+    let recognizedShapes = [];
+    if (options.useShapeRecognition) {
+      recognizedShapes = [
       ...shapeRecognitionResult.shapes.filter(shape => shape.confidence >= SHAPE_CONFIDENCE_THRESHOLD),
       ...(shapeRecognitionResult.multiStrokeShapes || []).filter(shape => shape.confidence >= SHAPE_CONFIDENCE_THRESHOLD - 0.1)
     ].sort((a, b) => b.confidence - a.confidence);
@@ -155,6 +172,7 @@ export async function POST({ request, fetch }) {
         boundingBox: maybeHouse.boundingBox,
         strokeIds: maybeHouse.strokeIds
       });
+      }
     }
 
     // Find the best match (highest confidence)
@@ -188,8 +206,8 @@ export async function POST({ request, fetch }) {
       };
     });
 
-    // Try direct TensorFlow analysis first if we have a canvas
-    if (canvas) {
+    // Try direct TensorFlow analysis first if we have a canvas and TF is enabled
+    if (canvas && options.useTensorFlow) {
       try {
         console.log('Running TensorFlow direct analysis on canvas');
         const tensorflowResults = await analyzeTensorflowBoundingBoxes(canvas);
@@ -235,6 +253,8 @@ export async function POST({ request, fetch }) {
         console.error('TensorFlow analysis failed:', tfError);
         // Continue with other methods
       }
+    } else if (!options.useTensorFlow) {
+      console.log('TensorFlow analysis skipped due to options settings');
     }
 
     // Variable to store Quick Draw results
@@ -245,117 +265,65 @@ export async function POST({ request, fetch }) {
       source: "tensorflow" | "cnn" | "shape-recognition" | "strokes" | "openai" | "fallback" | "hybrid";
     }[] | null = null;
 
-    // Run Quick Draw analysis if canvas is available
-    if (canvas) {
+    // Run Quick Draw analysis if canvas is available and CNN is enabled
+    if (canvas && options.useCNN) {
       try {
-        console.log('Running Quick Draw analysis on sketch');
-        quickDrawResults = await analyzeQuickDraw(canvas, strokes);
+        console.log('Running Quick Draw CNN analysis');
+        const quickDrawResponse = await analyzeQuickDraw(canvas);
 
-        if (quickDrawResults && quickDrawResults.length > 0) {
-          console.log(`Quick Draw detected ${quickDrawResults.length} objects: ${quickDrawResults.map(obj => obj.name).join(', ')}`);
+        if (quickDrawResponse && quickDrawResponse.success) {
+          quickDrawResults = quickDrawResponse.results.map(result => ({
+            name: result.className,
+            confidence: result.probability,
+            source: 'cnn',
+            boundingBox: {
+              minX: 0.1,
+              minY: 0.1,
+              width: 0.8,
+              height: 0.8,
+              // Add derived properties
+              maxX: 0.9,
+              maxY: 0.9
+            }
+          }));
 
-          // Add Quick Draw results to detected shapes
-          // For objects already detected, use the one with higher confidence
-          for (const quickDrawObject of quickDrawResults) {
+          console.log('Quick Draw recognized:', quickDrawResults.map(r => r.name).join(', '));
+
+          // Add to detected shapes if confidence is high enough
+          quickDrawResults.forEach(qdr => {
+            if (qdr.confidence > 0.7) {
+              // Check if already exists
             const existingIndex = detectedShapes.findIndex(shape =>
-              shape.name.toLowerCase() === quickDrawObject.name.toLowerCase());
+                shape.name.toLowerCase() === qdr.name.toLowerCase());
 
             if (existingIndex >= 0) {
-              // If we already have this object, update if Quick Draw has higher confidence
-              if (quickDrawObject.confidence > detectedShapes[existingIndex].confidence) {
+                // Only update if Quick Draw has higher confidence
+                if (qdr.confidence > detectedShapes[existingIndex].confidence) {
                 detectedShapes[existingIndex] = {
                   ...detectedShapes[existingIndex],
-                  name: quickDrawObject.name,
-                  confidence: quickDrawObject.confidence,
-                  boundingBox: quickDrawObject.boundingBox || detectedShapes[existingIndex].boundingBox,
-                  source: "tensorflow", // Use tensorflow as the source for Quick Draw results
+                    confidence: qdr.confidence,
+                    source: 'cnn',
                   enhancedByQuickDraw: true
                 };
               }
             } else {
-              // Add new object from Quick Draw
+                // Add as new object
               detectedShapes.push({
-                name: quickDrawObject.name,
-                confidence: quickDrawObject.confidence,
-                boundingBox: quickDrawObject.boundingBox,
-                source: "tensorflow", // Use tensorflow as the source for Quick Draw results
+                  ...qdr,
                 enhancedByQuickDraw: true
               });
             }
           }
-
-          // Sort by confidence
-          detectedShapes.sort((a, b) => b.confidence - a.confidence);
-
-          // Update analysis with best Quick Draw result if confidence is high
-          if (quickDrawResults[0].confidence > 0.7 && (!bestMatch || quickDrawResults[0].confidence > bestMatch.confidence)) {
-            analysis = {
-              type: 'drawing',
-              content: quickDrawResults[0].name,
-              confidence: quickDrawResults[0].confidence
-            };
-          }
+          });
         }
-      } catch (quickDrawError) {
-        console.error('Quick Draw analysis failed:', quickDrawError);
-        // Continue with shape recognition results
+      } catch (qdError) {
+        console.error('Quick Draw analysis failed:', qdError);
       }
-
-      // Run CNN analysis as a fallback if Quick Draw didn't produce good results
-      try {
-        console.log('Running CNN analysis on sketch');
-        const cnnResults = await analyzeSketchWithCNN(canvas, strokes);
-
-        if (cnnResults && cnnResults.length > 0 && (!quickDrawResults || quickDrawResults.length === 0 || quickDrawResults[0].confidence < 0.6)) {
-          console.log(`CNN detected ${cnnResults.length} objects`);
-
-          // Merge CNN results with existing shape detection
-          // For existing shapes, enhance with CNN bounding boxes if available
-          for (const shape of detectedShapes) {
-            const matchingCnn = cnnResults.find(cnn =>
-              cnn.name.toLowerCase() === shape.name.toLowerCase());
-
-            if (matchingCnn && matchingCnn.boundingBox) {
-              // Use the CNN bounding box which should be more precise
-              shape.boundingBox = completeBoundingBox(matchingCnn.boundingBox);
-              shape.confidence = Math.max(shape.confidence, matchingCnn.confidence);
-              shape.enhancedByCNN = true;
-            }
+    } else if (!options.useCNN) {
+      console.log('CNN/QuickDraw analysis skipped due to options settings');
           }
 
-          // Add new shapes detected by CNN but not by other methods
-          for (const cnnObject of cnnResults) {
-            const exists = detectedShapes.some(shape =>
-              shape.name.toLowerCase() === cnnObject.name.toLowerCase());
-
-            if (!exists) {
-              detectedShapes.push({
-                name: cnnObject.name,
-                confidence: cnnObject.confidence,
-                boundingBox: completeBoundingBox(cnnObject.boundingBox),
-                source: 'cnn',
-                enhancedByCNN: true
-              });
-            }
-          }
-
-          // If we got good CNN results but no good shape recognition or Quick Draw,
-          // use the best CNN result for the analysis
-          if (bestMatch?.confidence < 0.6 && cnnResults[0]?.confidence > 0.7) {
-            analysis = {
-              type: 'drawing',
-              content: cnnResults[0].name,
-              confidence: cnnResults[0].confidence
-            };
-          }
-        }
-      } catch (cnnError) {
-        console.error('CNN analysis failed:', cnnError);
-        // Continue with shape recognition results
-      }
-    } else {
-      console.log('Skipping advanced analysis - no canvas available');
-    }
+    // Continue with the remaining function, which will use the detected shapes...
 
     // Enhanced analysis with OpenAI if requested
     if (enhancedAnalysis) {
@@ -438,23 +406,17 @@ export async function POST({ request, fetch }) {
       }
     }
 
-    // Return the analysis result
+    // Return an object with the detected shapes and analysis
     return json({
-      analysis,
       detectedShapes,
-      debug: {
-        shapeRecognition: {
-          shapes: shapeRecognitionResult.shapes,
-          multiStrokeShapes: shapeRecognitionResult.multiStrokeShapes,
-          bestMatch
-        }
-      }
+      analysis,
+      usedOptions: options
     });
   } catch (error) {
-    console.error('Unexpected error in analyze-strokes API:', error);
+    console.error('Error in analyze-strokes endpoint:', error);
     return json({
-      error: `Server error: ${error instanceof Error ? error.message : 'Unknown error'}`,
-      debug: { stack: error instanceof Error ? error.stack : undefined }
+      error: error instanceof Error ? error.message : 'Unknown error',
+      details: error instanceof Error ? error.stack : 'No details available'
     }, { status: 500 });
   }
 }

@@ -208,7 +208,7 @@
   .vertical-slider-track {
     position: relative;
     height: 100%;
-    width: 24px;
+    width: 32px;
     background-color: rgba(0, 0, 0, 0.1);
     border-radius: 4px;
     cursor: pointer;
@@ -225,16 +225,17 @@
     left: 0;
     width: 100%;
     border-radius: 4px;
+    background-color: rgba(white, .25) !important;
   }
 
   .vertical-slider-thumb {
     position: absolute;
     left: 50%;
     transform: translate(-50%, 50%);
-    width: 24px;
+    width: 32px;
     height: 12px;
     background-color: white;
-    border: 2px solid;
+    //border: 2px solid white !important;
     border-radius: 20px;
     box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
     transition: transform 0.15s ease;
@@ -248,7 +249,7 @@
       width: 6px;
       height: 6px;
       border-radius: 50%;
-      background-color: currentColor;
+      background-color: white;
       opacity: 0;
       transition: opacity 0.2s ease;
     }
