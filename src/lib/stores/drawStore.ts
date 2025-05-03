@@ -32,6 +32,9 @@ export const analysisOptions = writable({
 // Add a store to track if Apple Pencil (or similar stylus) is active
 export const isApplePencilActive = writable<boolean>(false);
 
+// Store for the selected drawing tool
+export const selectedTool = writable<'pen' | 'eraser' | 'select'>('pen');
+
 // Store for PerfectFreehand stroke options
 export const strokeOptions = writable({
   // Basic stroke appearance

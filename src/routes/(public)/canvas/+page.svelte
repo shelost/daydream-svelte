@@ -21,13 +21,15 @@
     isEditing,
     analysisOptions,
     strokeOptions,
-    isApplePencilActive // Import the new store
+    isApplePencilActive,
+    selectedTool
   } from '$lib/stores/drawStore';
 
   // Interface extension for Stroke type with hasPressure property
   interface EnhancedStroke extends Stroke {
     hasPressure?: boolean;
     hasHardwarePressure?: boolean; // Flag for true hardware pressure support
+    isEraserStroke?: boolean; // Flag for eraser strokes
   }
 
   // Drawing content object with enhanced strokes
@@ -88,7 +90,7 @@
   let imageData: string | null = null;
   let pointTimes: number[] = []; // Track time for velocity-based pressure
   let errorMessage: string | null = null;
-  let showAnalysisView = true; // Toggle for AI analysis view
+  let showAnalysisView = false; // Toggle for AI analysis view
   let showStrokeOverlay = true; // Toggle for stroke recognition overlay
   let sketchAnalysis = "Draw something to see AI's interpretation";
   let previousSketchAnalysis = "";
@@ -147,7 +149,7 @@
 
   // Function to build the prompt for GPT-Image-1
   function buildGptImagePrompt() {
-    let prompt = `Complete this drawing. Do not change the image; simply add onto the existing drawing exactly as it is. CRITICAL STRUCTURE PRESERVATION: You MUST treat this sketch as an EXACT STRUCTURAL TEMPLATE. `;
+    let prompt = `Complete this drawing. DO NOT change the original image sketch at all; simply add onto the existing drawing EXACTLY as it is. CRITICAL STRUCTURE PRESERVATION: You MUST treat this sketch as an EXACT STRUCTURAL TEMPLATE. `;
 
     /*
     prompt += `ABSOLUTE RULE: The generated image MUST maintain the PRECISE:
@@ -472,117 +474,294 @@
     }
   }
 
-  // Function to start drawing
-  function startDrawing(e: PointerEvent) {
-    if (e.button !== 0) return; // Only draw on left click/touch
+  // --- Unified Event Handlers ---
 
+  function onPointerDown(e: PointerEvent) {
+    if (e.button !== 0) return; // Only handle left click/touch
+
+    switch ($selectedTool) {
+      case 'pen':
+        startPenStroke(e);
+        break;
+      case 'eraser':
+        startEraserStroke(e);
+        break;
+      case 'select':
+        startSelection(e);
+        break;
+    }
+  }
+
+  function onPointerMove(e: PointerEvent) {
+    switch ($selectedTool) {
+      case 'pen':
+        continuePenStroke(e);
+        break;
+      case 'eraser':
+        continueEraserStroke(e);
+        break;
+      case 'select':
+        continueSelection(e);
+        break;
+    }
+  }
+
+  function onPointerUp(e: PointerEvent) {
+     switch ($selectedTool) {
+      case 'pen':
+        endPenStroke(e);
+        break;
+      case 'eraser':
+        endEraserStroke(e);
+        break;
+      case 'select':
+        endSelection(e);
+        break;
+    }
+  }
+
+  // --- Tool Specific Functions ---
+
+  // PEN TOOL
+  function startPenStroke(e: PointerEvent) {
     isDrawing = true;
     const isPen = e.pointerType === 'pen';
     isApplePencilActive.set(isPen);
-    console.log(`Drawing started. Pointer type: ${e.pointerType}, Pressure: ${e.pressure}`);
+    console.log(`Pen Draw Started. Pointer type: ${e.pointerType}, Pressure: ${e.pressure}`);
 
-    // Get pointer position
     const point = getPointerPosition(e);
-
-    // Store initial timestamp for pressure calculation
     const timestamp = Date.now();
     pointTimes = [timestamp];
-
-    // Check if pressure is supported AND seems valid (not 0 or default 0.5)
-    // Some browsers/devices report 0.5 as default even for pens
     const hasHardwarePressure = isPen && e.pressure > 0 && e.pressure !== 0.5;
     console.log(`Hardware pressure detected: ${hasHardwarePressure}`);
 
-    // Get current stroke options
     let currentOptions;
-    const unsubscribe = strokeOptions.subscribe(options => {
-      currentOptions = options;
-    });
+    const unsubscribe = strokeOptions.subscribe(options => { currentOptions = options; });
     unsubscribe();
 
-    // Create a new stroke with store values
     currentStroke = {
       tool: 'pen',
       points: [point],
       color: currentOptions.color,
       size: currentOptions.size,
       opacity: currentOptions.opacity,
-      hasHardwarePressure: hasHardwarePressure // Set the flag here
+      hasHardwarePressure: hasHardwarePressure
     };
-
-    // Capture pointer
     inputCanvas.setPointerCapture(e.pointerId);
   }
 
-  // Function to continue drawing
-  function continueDrawing(e: PointerEvent) {
+  function continuePenStroke(e: PointerEvent) {
     if (!isDrawing || !currentStroke || !inputCtx) return;
-
-    // Get pointer position and pressure
     const point = getPointerPosition(e);
-
-    // Store timestamp for velocity-based pressure
     const timestamp = Date.now();
     pointTimes.push(timestamp);
 
-    // Use hardware pressure ONLY if the flag is set AND the pressure is not the default 0.5
-    // Otherwise, use velocity simulation
     if (!currentStroke.hasHardwarePressure || (e.pointerType === 'pen' && e.pressure === 0.5)) {
-      if (currentStroke.points.length > 1) {
-        // Calculate pressure based on velocity between points
+       if (currentStroke.points.length > 1) {
         const calculatedPressure = calculatePressureFromVelocity(
-          currentStroke.points,
-          currentStroke.points.length - 1,
-          0.2, // velocityScale
-          true, // use time-based velocity
-          pointTimes
+          currentStroke.points, currentStroke.points.length - 1, 0.2, true, pointTimes
         );
-        // Update pressure in the point
         point.pressure = calculatedPressure;
       } else {
-        point.pressure = 0.5; // Default pressure if not enough points for velocity calc
+        point.pressure = 0.5;
       }
     } else {
-      // Use hardware pressure directly (already set in getPointerPosition)
-      // No action needed here as point.pressure already holds the hardware value
        console.log(`Using hardware pressure: ${point.pressure}`);
     }
 
-    // Add point to current stroke
     currentStroke.points.push(point);
-
-    // Render all strokes including the current one
     renderStrokes();
   }
 
-  // Function to end drawing
-  function endDrawing(e: PointerEvent) {
+  function endPenStroke(e: PointerEvent) {
     if (!isDrawing || !currentStroke) return;
+    console.log('Pen Draw Ended');
+    isApplePencilActive.set(false);
 
-    console.log('Drawing ended');
-    isApplePencilActive.set(false); // Reset stylus state
+    // Add final point if needed (can sometimes be missed on fast lifts)
+    //const point = getPointerPosition(e);
+    //currentStroke.points.push(point);
 
-    // Add the current stroke to strokes array
     drawingContent.strokes.push(currentStroke);
-    // Trigger Svelte reactivity with reassignment
     drawingContent = drawingContent;
-    console.log('Stroke added, total strokes:', drawingContent.strokes.length);
 
-    // Reset current stroke
     currentStroke = null;
     isDrawing = false;
-
-    // Release pointer
     inputCanvas.releasePointerCapture(e.pointerId);
 
-    // Mark this as an edit time
     lastUserEditTime = Date.now();
     pendingAnalysis = true;
+    triggerAnalysis(); // Renamed function for clarity
+  }
 
-    // Trigger sketch analysis after a short delay to let the canvas update
-    // Only if we haven't analyzed recently
-    const now = Date.now();
-    if (now - lastAnalysisTime > ANALYSIS_THROTTLE_MS) {
+  // ERASER TOOL (Simulated)
+  // Local variable for eraser size (can be added to store later if needed)
+  let eraserSize = 20;
+
+  function startEraserStroke(e: PointerEvent) {
+    isDrawing = true;
+    console.log('Eraser Started');
+    const point = getPointerPosition(e);
+    currentStroke = {
+      tool: 'eraser',
+      points: [point],
+      color: '#f8f8f8', // Canvas background color
+      size: eraserSize, // Use a dedicated eraser size
+      opacity: 1,       // Eraser should be fully opaque
+      isEraserStroke: true // Mark as eraser stroke
+    };
+    inputCanvas.setPointerCapture(e.pointerId);
+  }
+
+  function continueEraserStroke(e: PointerEvent) {
+    if (!isDrawing || !currentStroke || !inputCtx) return;
+    const point = getPointerPosition(e);
+    currentStroke.points.push(point);
+    // For eraser, render immediately to give feedback
+    renderStrokes();
+  }
+
+  function endEraserStroke(e: PointerEvent) {
+    if (!isDrawing || !currentStroke) return;
+    console.log('Eraser Ended');
+
+    drawingContent.strokes.push(currentStroke);
+    drawingContent = drawingContent;
+
+    currentStroke = null;
+    isDrawing = false;
+    inputCanvas.releasePointerCapture(e.pointerId);
+    renderStrokes(); // Final render after adding stroke
+  }
+
+  // SELECT TOOL (Initial - Bounding Box Selection)
+  let isSelecting = false;
+  let selectionStartPoint: {x: number, y: number} | null = null;
+  let selectionBoxElement: HTMLDivElement | null = null;
+  let selectedStrokeIndices: number[] = []; // Keep local for now, can move to store
+
+  function startSelection(e: PointerEvent) {
+    isSelecting = true;
+    selectedStrokeIndices = []; // Clear previous selection
+    const rect = inputCanvas.getBoundingClientRect();
+    selectionStartPoint = {
+      x: e.clientX - rect.left,
+      y: e.clientY - rect.top
+    };
+    console.log('Selection Started at:', selectionStartPoint);
+    createSelectionBoxElement();
+    updateSelectionBoxElement(selectionStartPoint.x, selectionStartPoint.y, selectionStartPoint.x, selectionStartPoint.y);
+    inputCanvas.setPointerCapture(e.pointerId);
+  }
+
+  function continueSelection(e: PointerEvent) {
+    if (!isSelecting || !selectionStartPoint || !selectionBoxElement) return;
+    const rect = inputCanvas.getBoundingClientRect();
+    const currentX = e.clientX - rect.left;
+    const currentY = e.clientY - rect.top;
+    updateSelectionBoxElement(selectionStartPoint.x, selectionStartPoint.y, currentX, currentY);
+  }
+
+  function endSelection(e: PointerEvent) {
+    if (!isSelecting || !selectionStartPoint || !selectionBoxElement) return;
+    isSelecting = false;
+    console.log('Selection Ended');
+    inputCanvas.releasePointerCapture(e.pointerId);
+
+    const rect = inputCanvas.getBoundingClientRect();
+    const endX = e.clientX - rect.left;
+    const endY = e.clientY - rect.top;
+
+    // Define final selection box (ensure x1 < x2, y1 < y2)
+    const finalSelectionBox = {
+      x1: Math.min(selectionStartPoint.x, endX),
+      y1: Math.min(selectionStartPoint.y, endY),
+      x2: Math.max(selectionStartPoint.x, endX),
+      y2: Math.max(selectionStartPoint.y, endY)
+    };
+
+    console.log('Final Selection Box:', finalSelectionBox);
+
+    // Scale selection box coords to internal canvas coords
+    const scaleX = inputCanvas.width / rect.width;
+    const scaleY = inputCanvas.height / rect.height;
+    const scaledSelectionBox = {
+      x1: finalSelectionBox.x1 * scaleX,
+      y1: finalSelectionBox.y1 * scaleY,
+      x2: finalSelectionBox.x2 * scaleX,
+      y2: finalSelectionBox.y2 * scaleY
+    };
+
+    // Find intersecting strokes
+    selectedStrokeIndices = findIntersectingStrokes(scaledSelectionBox);
+    console.log('Selected Stroke Indices:', selectedStrokeIndices);
+
+    // Remove the visual selection box element
+    removeSelectionBoxElement();
+
+    // Re-render to highlight selected strokes
+    renderStrokes();
+  }
+
+  // --- Selection Helper Functions ---
+
+  function createSelectionBoxElement() {
+    if (!selectionBoxElement) {
+      selectionBoxElement = document.createElement('div');
+      selectionBoxElement.style.position = 'absolute';
+      selectionBoxElement.style.border = '1px dashed blue';
+      selectionBoxElement.style.backgroundColor = 'rgba(0, 0, 255, 0.1)';
+      selectionBoxElement.style.pointerEvents = 'none'; // Prevent interference
+      selectionBoxElement.style.zIndex = '100';
+      inputCanvas.parentElement?.appendChild(selectionBoxElement);
+    }
+  }
+
+  function updateSelectionBoxElement(x1: number, y1: number, x2: number, y2: number) {
+    if (!selectionBoxElement) return;
+    const left = Math.min(x1, x2);
+    const top = Math.min(y1, y2);
+    const width = Math.abs(x1 - x2);
+    const height = Math.abs(y1 - y2);
+    selectionBoxElement.style.left = `${left}px`;
+    selectionBoxElement.style.top = `${top}px`;
+    selectionBoxElement.style.width = `${width}px`;
+    selectionBoxElement.style.height = `${height}px`;
+  }
+
+  function removeSelectionBoxElement() {
+    if (selectionBoxElement) {
+      selectionBoxElement.remove();
+      selectionBoxElement = null;
+    }
+  }
+
+  // Helper function to find strokes intersecting the selection box
+  function findIntersectingStrokes(selectionBox) {
+    const intersectingIndices: number[] = [];
+    drawingContent.strokes.forEach((stroke, index) => {
+       if (stroke.isEraserStroke) return; // Don't select eraser strokes
+
+       // Simple check: If any point of the stroke is inside the box
+       // A more robust check would involve line segment/box intersection
+       const strokeInBox = stroke.points.some(point =>
+         point.x >= selectionBox.x1 &&
+         point.x <= selectionBox.x2 &&
+         point.y >= selectionBox.y1 &&
+         point.y <= selectionBox.y2
+       );
+
+       if (strokeInBox) {
+         intersectingIndices.push(index);
+       }
+    });
+    return intersectingIndices;
+  }
+
+  // --- Analysis Trigger ---
+  function triggerAnalysis() {
+     const now = Date.now();
+     if (now - lastAnalysisTime > ANALYSIS_THROTTLE_MS) {
       clearTimeout(analysisDebounceTimer);
       analysisDebounceTimer = setTimeout(() => {
         if (!isAnalyzing && !isRecognizingStrokes && pendingAnalysis) {
@@ -601,16 +780,10 @@
     }
 
     const rect = inputCanvas.getBoundingClientRect();
-
-    // Calculate scaling factors in case the canvas rendering size differs from its CSS display size
     const scaleX = inputCanvas.width / rect.width;
     const scaleY = inputCanvas.height / rect.height;
-
-    // Check if the device provides pressure
-    // Pass the raw pressure value directly. Handle 0 or 0.5 defaults in continueDrawing
     const pressure = e.pressure;
 
-    // Apply the scaling to get the correct position within the canvas
     return {
       x: (e.clientX - rect.left) * scaleX,
       y: (e.clientY - rect.top) * scaleY,
@@ -637,7 +810,7 @@
     unsubscribe(); // Immediately unsubscribe to avoid memory leaks
 
     // Function to render a single stroke
-    const renderStroke = (stroke: EnhancedStroke) => {
+    const renderStroke = (stroke: EnhancedStroke, index: number) => { // Add index parameter
       if (stroke.points.length < 2) return;
 
       // Generate perfect-freehand options using values from the store
@@ -718,18 +891,31 @@
       inputCtx!.fillStyle = stroke.color;
       inputCtx!.globalAlpha = stroke.opacity;
 
+      // Add highlight for selected strokes
+      if ($selectedTool === 'select' && selectedStrokeIndices.includes(index)) {
+        inputCtx!.strokeStyle = 'rgba(0, 0, 255, 0.5)'; // Blue highlight
+        inputCtx!.lineWidth = 2;
+        // Draw bounding box (simple version, more accurate would use getStrokeOutlinePoints)
+        const bounds = calculateMultiStrokeBoundingBox([stroke]); // Use helper if available
+        if (bounds) {
+          inputCtx!.strokeRect(bounds.minX - 2, bounds.minY - 2, bounds.width + 4, bounds.height + 4);
+        }
+        inputCtx!.lineWidth = stroke.size; // Reset line width if needed elsewhere
+      }
+
       // Fill the path
       inputCtx!.fill(path);
     };
 
     // Render all strokes
-    for (const stroke of drawingContent.strokes) {
-      renderStroke(stroke);
-    }
+    drawingContent.strokes.forEach((stroke, index) => { // Pass index here
+      renderStroke(stroke, index); // Pass index to renderStroke
+    });
 
     // Render current stroke if it exists
     if (currentStroke) {
-      renderStroke(currentStroke);
+      // Current stroke doesn't have a fixed index yet, handle differently or don't highlight
+      renderStroke(currentStroke, -1); // Pass -1 or handle selection logic inside
     }
 
     // Reset alpha
@@ -1834,103 +2020,6 @@
     // ... existing code ...
   }
 
-  // Handle pointer up event - end drawing
-  function onPointerUp(e: PointerEvent) {
-    if (!isDrawing || !currentStroke) return;
-
-    // Add the final point
-    const point = getPointerPosition(e);
-    currentStroke.points.push(point);
-
-    // Add the stroke to the drawing content
-    drawingContent.strokes.push(currentStroke);
-    // Trigger Svelte reactivity with reassignment
-    drawingContent = drawingContent;
-    console.log('Stroke added, total strokes:', drawingContent.strokes.length);
-
-    // Reset current stroke
-    currentStroke = null;
-    isDrawing = false;
-
-    // Release pointer
-    inputCanvas.releasePointerCapture(e.pointerId);
-
-    // Mark this as an edit time
-    lastUserEditTime = Date.now();
-    pendingAnalysis = true;
-
-    // Capture canvas snapshot immediately after an edit
-    currentCanvasSnapshot = captureCanvasSnapshot();
-
-    // Trigger sketch analysis after a short delay to let the canvas update
-    // Only if we haven't analyzed recently
-    const now = Date.now();
-    if (now - lastAnalysisTime > ANALYSIS_THROTTLE_MS) {
-      clearTimeout(analysisDebounceTimer);
-      analysisDebounceTimer = setTimeout(() => {
-        if (!isAnalyzing && !isRecognizingStrokes && pendingAnalysis) {
-          analyzeSketch();
-          recognizeStrokes();
-          pendingAnalysis = false;
-        }
-      }, 300); // Short delay to let canvas update
-    }
-  }
-
-  // State variables for Shape Recognition Dialog
-  let showShapeRecognitionDialog = false;
-  let showAIDebugMode = false;
-
-  // Function to toggle Shape Recognition Dialog
-  function toggleShapeRecognitionDialog() {
-    // Toggle the dialog state
-    showShapeRecognitionDialog = !showShapeRecognitionDialog;
-
-    // Always capture a fresh canvas snapshot when opening the dialog and there are strokes
-    if (showShapeRecognitionDialog && drawingContent.strokes.length > 0) {
-      currentCanvasSnapshot = captureCanvasSnapshot();
-    }
-  }
-
-  // Function to toggle Debug Mode
-  function toggleDebugMode() {
-    showAIDebugMode = !showAIDebugMode;
-  }
-
-  // Position for the shape recognition button
-  let buttonPosition = { right: '20px', bottom: '20px' };
-  // Position for the shape recognition dialog
-  let shapeDialogPosition = { right: '20px', top: '20px' };
-
-  // State for aspect ratio
-  let selectedAspectRatio = '1:1'; // Default aspect ratio (square)
-  const aspectRatios = {
-    '1:1': 1 / 1,          // Square 1024x1024
-    'portrait': 1792 / 1024,  // Portrait 1792x1024
-    'landscape': 1024 / 1792  // Landscape 1024x1792
-  };
-
-  // Store the aspect ratio of the generated image
-  let generatedImageAspectRatio = '4:5'; // Default to match the selectedAspectRatio
-
-  // Update the generated image aspect ratio when the canvas aspect ratio changes
-  $: {
-    if (selectedAspectRatio) {
-      // When aspect ratio changes, update the generated image aspect ratio
-      // This ensures that the AI output will match the drawing canvas
-      generatedImageAspectRatio = selectedAspectRatio;
-
-      // Trigger resize when aspect ratio changes
-      if (browser) {
-        resizeCanvas();
-        // Force redraw of the canvas content at the new aspect ratio
-        if (drawingContent.strokes.length > 0) {
-          renderStrokes();
-        }
-      }
-    }
-  }
-
   // Function to capture the current canvas as an image
   function captureCanvasSnapshot() {
     if (!inputCanvas || !drawingContent || drawingContent.strokes.length === 0) {
@@ -2175,7 +2264,9 @@
 
   // Function to build the prompt for GPT-Image-1 Edit (edit-image endpoint)
   function buildGptEditPrompt() {
-    let prompt = `Complete this drawing, in the exact same style and proportions as the original.`;
+
+    let prompt = `Complete this drawing, in the exact same style and proportions as the original. DO NOT change the original image sketch at all; simply add onto the existing drawing EXACTLY as it is. CRITICAL STRUCTURE PRESERVATION: You MUST treat this sketch as an EXACT STRUCTURAL TEMPLATE. `;
+
 
     // Content description from analysis
     const contentGuide = sketchAnalysis !== "Draw something to see AI's interpretation" ? sketchAnalysis : "A user's drawing.";
@@ -2303,6 +2394,60 @@
   }
 
   // Taper is now set in the strokeOptions store
+
+  // State variables for Shape Recognition Dialog
+  let showShapeRecognitionDialog = false;
+  let showAIDebugMode = false;
+
+  // Position for the shape recognition button
+  let buttonPosition = { right: '20px', bottom: '20px' };
+  // Position for the shape recognition dialog
+  let shapeDialogPosition = { right: '20px', top: '20px' };
+
+  // State for aspect ratio
+  let selectedAspectRatio = '1:1'; // Default aspect ratio (square)
+  const aspectRatios = {
+    '1:1': 1 / 1,          // Square 1024x1024
+    'portrait': 1792 / 1024,  // Portrait 1792x1024
+    'landscape': 1024 / 1792  // Landscape 1024x1792
+  };
+
+  // Store the aspect ratio of the generated image
+  let generatedImageAspectRatio = '1:1'; // Default to match the selectedAspectRatio
+
+  // Update the generated image aspect ratio when the canvas aspect ratio changes
+  $: {
+    if (selectedAspectRatio) {
+      // When aspect ratio changes, update the generated image aspect ratio
+      // This ensures that the AI output will match the drawing canvas
+      generatedImageAspectRatio = selectedAspectRatio;
+
+      // Trigger resize when aspect ratio changes
+      if (browser) {
+        resizeCanvas();
+        // Force redraw of the canvas content at the new aspect ratio
+        if (drawingContent.strokes.length > 0) {
+          renderStrokes();
+        }
+      }
+    }
+  }
+
+  // Function to toggle Shape Recognition Dialog
+  function toggleShapeRecognitionDialog() {
+    // Toggle the dialog state
+    showShapeRecognitionDialog = !showShapeRecognitionDialog;
+
+    // Always capture a fresh canvas snapshot when opening the dialog and there are strokes
+    if (showShapeRecognitionDialog && drawingContent.strokes.length > 0) {
+      currentCanvasSnapshot = captureCanvasSnapshot();
+    }
+  }
+
+  // Function to toggle Debug Mode
+  function toggleDebugMode() {
+    showAIDebugMode = !showAIDebugMode;
+  }
 </script>
 
 <svelte:head>
@@ -2334,92 +2479,125 @@
   </header>
 
   <div class="canvas-container">
-    <div class="vertical-toolbar">
-        <div class="tools-group">
+    <div class="toolbars-wrapper">
+      <!-- New Tool Selection Toolbar -->
+      <div class="vertical-toolbar tool-selector-toolbar">
+        <button
+          class="tool-button"
+          class:active={$selectedTool === 'pen'}
+          on:click={() => selectedTool.set('pen')}
+          title="Pen Tool"
+        >
+          <span class="material-icons">edit</span>
+        </button>
+        <button
+          class="tool-button"
+          class:active={$selectedTool === 'eraser'}
+          on:click={() => selectedTool.set('eraser')}
+          title="Eraser Tool"
+        >
+          <span class="material-icons">layers_clear</span>
+        </button>
+        <button
+          class="tool-button"
+          class:active={$selectedTool === 'select'}
+          on:click={() => selectedTool.set('select')}
+          title="Select Tool"
+        >
+          <span class="material-icons">touch_app</span>
+        </button>
+      </div>
 
-          <div class="tool-group">
-            <input
-              type="color"
-              bind:value={strokeColor}
-              on:change={() => {
-                strokeOptions.update(opts => ({...opts, color: strokeColor}));
-                renderStrokes();
-              }}
-            />
-          </div>
+      <!-- Existing Stroke Options Toolbar -->
+      <div class="vertical-toolbar options-toolbar">
+          <div class="tools-group">
 
-
-          <div class="tool-group">
-            <VerticalSlider
-              min={1}
-              max={20}
-              step={0.5}
-              bind:value={strokeSize}
-              color="#6355FF"
-              height="100px"
-              onChange={() => {
-                strokeOptions.update(opts => ({...opts, size: strokeSize}));
-                renderStrokes();
-              }}
-              showValue={true}
-            />
-          </div>
-
-
-          <div class="tool-group">
-            <VerticalSlider
-              min={0.1}
-              max={1}
-              step={0.1}
-              bind:value={strokeOpacity}
-              color="#6355FF"
-              height="100px"
-              onChange={() => {
-                strokeOptions.update(opts => ({...opts, opacity: strokeOpacity}));
-                renderStrokes();
-              }}
-              showValue={true}
-            />
-          </div>
-
-          <!-- Aspect Ratio Selector -->
-          <div class="tool-group aspect-ratio-selector">
-            <span class="material-icons tool-icon-label">aspect_ratio</span>
-            <select bind:value={selectedAspectRatio} on:change={resizeCanvas}>
-              {#each Object.keys(aspectRatios) as ratioKey}
-                <option value={ratioKey}>{ratioKey}</option>
-              {/each}
-            </select>
-          </div>
-
-          <!-- Updated analysis toggles to show both separately -->
-          <div class="tool-group toggle-switch">
-            <span class="material-icons tool-icon-label">auto_awesome</span>
-            <div class="switch">
+            <div class="tool-group">
               <input
-                type="checkbox"
-                id="analysis-toggle"
-                bind:checked={showAnalysisView}
+                type="color"
+                bind:value={strokeColor}
+                on:change={() => {
+                  strokeOptions.update(opts => ({...opts, color: strokeColor}));
+                  renderStrokes();
+                }}
               />
-              <label for="analysis-toggle"></label>
             </div>
-            <span class="tool-label">AI Overlay</span>
+
+
+            <div class="tool-group">
+              <VerticalSlider
+                min={1}
+                max={20}
+                step={0.5}
+                bind:value={strokeSize}
+                color="#6355FF"
+                height="120px"
+                onChange={() => {
+                  strokeOptions.update(opts => ({...opts, size: strokeSize}));
+                  renderStrokes();
+                }}
+                showValue={true}
+              />
+            </div>
+
+
+            <div class="tool-group">
+              <VerticalSlider
+                min={0.1}
+                max={1}
+                step={0.1}
+                bind:value={strokeOpacity}
+                color="#6355FF"
+                height="120px"
+                onChange={() => {
+                  strokeOptions.update(opts => ({...opts, opacity: strokeOpacity}));
+                  renderStrokes();
+                }}
+                showValue={true}
+              />
+            </div>
+
+                       <!--
+
+            <div class="tool-group aspect-ratio-selector">
+              <span class="material-icons tool-icon-label">aspect_ratio</span>
+              <select bind:value={selectedAspectRatio} on:change={resizeCanvas}>
+                {#each Object.keys(aspectRatios) as ratioKey}
+                  <option value={ratioKey}>{ratioKey}</option>
+                {/each}
+              </select>
+            </div>
+
+
+            <div class="tool-group toggle-switch">
+              <span class="material-icons tool-icon-label">auto_awesome</span>
+              <div class="switch">
+                <input
+                  type="checkbox"
+                  id="analysis-toggle"
+                  bind:checked={showAnalysisView}
+                />
+                <label for="analysis-toggle"></label>
+              </div>
+              <span class="tool-label">AI Overlay</span>
+            </div>
+           -->
+
+            <button class="tool-button" on:click={clearCanvas}>
+              <span class="material-icons">delete_outline</span>
+            </button>
+
+
           </div>
-
-          <button class="tool-button" on:click={clearCanvas}>
-            <span class="material-icons">delete_outline</span>
-          </button>
-
-
-        </div>
+      </div>
     </div>
 
     <div class="canvas-wrapper input-canvas" class:ratio-1-1={selectedAspectRatio === '1:1'} class:ratio-portrait={selectedAspectRatio === 'portrait'} class:ratio-landscape={selectedAspectRatio === 'landscape'}>
       <canvas
         bind:this={inputCanvas}
         class="drawing-canvas"
-        on:pointerdown={startDrawing}
-        on:pointermove={continueDrawing}
+        on:pointerdown={onPointerDown}
+        on:pointermove={onPointerMove}
         on:pointerup={onPointerUp}
         on:pointercancel={onPointerUp}
         on:pointerleave={onPointerUp}
@@ -2489,8 +2667,7 @@
               {#if $isGenerating}
                 <div class="ai-scanning-animation">
                   <div class="scanning-status">
-                    <span>Analyzing structure</span>
-                    <div class="status-text">Preserving exact positions and proportions</div>
+                    <h2> Creating ... </h2>
                   </div>
                 </div>
               {/if}
@@ -2766,9 +2943,25 @@
     max-height: 85vh;
     position: relative;
 
+    // New wrapper for toolbars
+    .toolbars-wrapper {
+      display: flex;
+      flex-direction: column; // Stack toolbars vertically
+      gap: 10px; // Space between toolbars
+      height: fit-content; // Adjust height to content
+      z-index: 5;
+    }
+
     @media (max-width: 768px) {
       flex-direction: column;
       max-height: none;
+
+      .toolbars-wrapper {
+        flex-direction: row; // Side-by-side on mobile
+        width: 100%;
+        justify-content: center;
+        gap: 15px;
+      }
     }
   }
 
@@ -2777,14 +2970,23 @@
     background: rgba(white, .1);
     border-radius: 8px;
     box-shadow: -4px 16px 24px rgba(black, 0.15);
-    padding: 12px 0;
+    padding: 12px 6px; // Adjusted padding
     box-sizing: border-box;
-    width: 60px;
-    height: fit-content;
+    width: 52px; // Slightly narrower
     display: flex;
     flex-direction: column;
-    gap: 20px;
-    z-index: 5;
+    align-items: center;
+    gap: 15px;
+
+    &.tool-selector-toolbar {
+      // Specific styles for the tool selector if needed
+      gap: 10px;
+    }
+
+    &.options-toolbar {
+      // Specific styles for the options toolbar if needed
+      gap: 20px; // Keep original gap for options
+    }
   }
 
   .tool-group {
@@ -2792,11 +2994,12 @@
     flex-direction: column;
     align-items: center;
     gap: 8px;
+    width: 100%; // Ensure tool groups take width
   }
 
   .tool-icon-label {
-    color: #555;
-    font-size: 20px;
+    color: #ccc; // Lighter label color
+    font-size: 18px;
   }
 
   /* Color picker styles */
@@ -4027,12 +4230,12 @@
 
   .tool-button .material-icons {
     font-size: 22px;
-    color: #555;
-    transition: color 0.2s;
+    color: #ccc; // Lighter icon color
+    transition: color 0.2s, background-color 0.2s;
   }
 
   .tool-button:hover {
-    background: #e0e0e0;
+    background: rgba(white, 0.1);
   }
 
   .tool-button:hover .material-icons {
@@ -4140,5 +4343,13 @@
   .canvas-wrapper.output-canvas.ratio-landscape,
   .output-display.ratio-landscape {
     aspect-ratio: 1024/1792;
+  }
+
+  // Active state for tool buttons
+  .tool-button.active {
+    background: rgba(#6355FF, 0.2);
+    .material-icons {
+      color: #6355FF;
+    }
   }
 </style>

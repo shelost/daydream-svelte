@@ -172,7 +172,9 @@
 
   {#if showValue}
     <div class="slider-value">
+      <h3>
       {typeof value === 'number' ? value.toFixed(step < 1 ? 1 : 0) : value}
+    </h3>
     </div>
   {/if}
 </div>
@@ -191,7 +193,7 @@
   .slider-label {
     margin-bottom: 8px;
     font-size: 0.8rem;
-    color: #555;
+    color: white;
     text-align: center;
   }
 
@@ -274,9 +276,13 @@
 
   .slider-value {
     margin-top: 8px;
-    font-size: 0.8rem;
-    color: #555;
-    text-align: center;
     font-variant-numeric: tabular-nums;
+
+    h3{
+      color: white;
+      font-size: 13px;
+      font-weight: 600;
+      text-align: center;
+    }
   }
 </style>

@@ -1,0 +1,2424 @@
+<script lang="ts">
+	import { onMount, onDestroy } from 'svelte'; // Added onDestroy
+	import { fade } from 'svelte/transition';
+	import { fabric } from 'fabric'; // Import fabric
+	// import { EraserBrush } from 'fabric'; // EraserBrush is not a direct export, access via fabric.EraserBrush
+	import type { Tool, Stroke, StrokePoint } from '$lib/types';
+	import { getStroke } from 'perfect-freehand';
+	import {
+		getSvgPathFromStroke,
+		calculatePressureFromVelocity,
+		calculateMultiStrokeBoundingBox,
+		findRelatedStrokes,
+		normalizeBoundingBox
+	} from '$lib/utils/drawingUtils.js';
+	import VerticalSlider from '$lib/components/VerticalSlider.svelte';
+	// Comment out overlays temporarily - need coordinate system adjustments for Fabric
+	// import AIOverlay from '$lib/components/AIOverlay.svelte';
+	// import StrokeOverlay from '$lib/components/StrokeOverlay.svelte';
+	// import TFOverlay from '$lib/components/TFOverlay.svelte';
+	import ShapeRecognitionButton from '$lib/components/ShapeRecognitionButton.svelte';
+	import ShapeRecognitionDialog from '$lib/components/ShapeRecognitionDialog.svelte';
+	import {
+		gptImagePrompt,
+		gptEditPrompt,
+		generatedImageUrl,
+		generatedByModel,
+		isGenerating,
+		editedImageUrl,
+		editedByModel,
+		isEditing,
+		analysisOptions,
+		strokeOptions,
+		isApplePencilActive,
+		selectedTool
+	} from '$lib/stores/drawStore';
+
+	// Fabric Canvas instance
+	let fabricCanvas: fabric.Canvas | null = null;
+	let htmlCanvasElement: HTMLCanvasElement; // Bind target element
+
+	// Interface extension for Stroke type with hasPressure property
+	interface EnhancedStroke extends Stroke {
+		hasPressure?: boolean;
+		hasHardwarePressure?: boolean; // Flag for true hardware pressure support
+		// isEraserStroke is no longer needed with Fabric eraser
+	}
+
+	// Drawing content object with enhanced strokes (Keep for analysis for now)
+	interface EnhancedDrawingContent {
+		strokes: EnhancedStroke[];
+		bounds?: {
+			width: number;
+			height: number;
+		};
+	}
+
+	// Analysis element type
+	interface AnalysisElement {
+		id: string;
+		name: string;
+		category?: string;
+		x: number;
+		y: number;
+		width?: number;
+		height?: number;
+		color: string;
+		isChild?: boolean;
+		parentId?: string;
+		children?: string[];
+		pressure?: number; // Add pressure property for visual effects
+		boundingBox?: {
+			minX: number;
+			minY: number;
+			maxX: number;
+			maxY: number;
+			width: number;
+			height: number;
+		};
+	}
+
+	// State variables
+	// let inputCanvas: HTMLCanvasElement; // Renamed to htmlCanvasElement
+	// let inputCtx: CanvasRenderingContext2D | null = null; // Removed, use fabricCanvas
+	let isDrawing = false; // Still useful for tracking pen/eraser state
+	let currentStroke: EnhancedStroke | null = null; // Keep for accumulating points for pen tool
+	// Use the store values for reference but maintain local variables for reactivity
+	let strokeColor: string;
+	let strokeSize: number;
+	let strokeOpacity: number;
+	let currentPerfectFreehandOptions: any = {}; // Store current options locally
+
+	// Subscribe to store changes for stroke options
+	strokeOptions.subscribe((options) => {
+		strokeColor = options.color;
+		strokeSize = options.size;
+		strokeOpacity = options.opacity;
+		currentPerfectFreehandOptions = options; // Update local cache
+
+		// Update Fabric brush settings if canvas exists
+		if (fabricCanvas) {
+			if ($selectedTool === 'pen' && fabricCanvas.freeDrawingBrush) {
+				fabricCanvas.freeDrawingBrush.color = options.color;
+				fabricCanvas.freeDrawingBrush.width = options.size;
+				// Opacity needs to be handled differently in Fabric, often per-object or via color alpha
+			} else if ($selectedTool === 'eraser' && fabricCanvas.freeDrawingBrush) {
+				fabricCanvas.freeDrawingBrush.width = eraserSize; // Keep eraser size separate
+			}
+		}
+		// No need to call renderStrokes() anymore
+	});
+
+	let imageData: string | null = null; // Keep for output preview
+	let pointTimes: number[] = []; // Track time for velocity-based pressure
+	let errorMessage: string | null = null;
+	let showAnalysisView = false; // Toggle for AI analysis view
+	let showStrokeOverlay = true; // Toggle for stroke recognition overlay
+	let sketchAnalysis = "Draw something to see AI's interpretation";
+	let previousSketchAnalysis = '';
+	let isAnalyzing = false;
+	let lastAnalysisTime = 0;
+	let strokeRecognition = 'Draw something to see shapes recognized';
+	let previousStrokeRecognition = '';
+	let isRecognizingStrokes = false;
+	let lastStrokeAnalysisTime = 0;
+	let recognitionResult: any = null; // Store the full API response
+	let additionalContext = '';
+	let analysisElements: any[] = [];
+	let showDebugPressure = false; // Toggle for pressure visualization
+	let tfObjects: any[] = [];
+	let gptObjects: any[] = [];
+	let visualizationMode = 'gpt'; // Options: 'gpt', 'tensorflow', 'both'
+
+	// Add canvasScale variable - Fabric handles zoom differently
+	// let canvasScale = 1; // Use fabricCanvas.getZoom() instead
+
+	// Drawing content with enhanced strokes (Keep for analysis for now)
+	let drawingContent: EnhancedDrawingContent = {
+		strokes: [],
+		bounds: { width: 800, height: 600 }
+	};
+
+	// Canvas dimensions (Store internal resolution)
+	let internalCanvasWidth = 1024;
+	let internalCanvasHeight = 1024;
+
+	// Overlay visibility controls
+	let showGPTOverlay = true; // Control for GPT overlay visibility
+	let showTFOverlay = true; // Control for TensorFlow overlay visibility
+
+	// Constants for throttling analysis
+	const ANALYSIS_THROTTLE_MS = 3000;
+	const ANALYSIS_DEBOUNCE_MS = 1500;
+
+	// Variables for tracking user edits and analysis state
+	let pendingAnalysis = false;
+	let lastUserEditTime = 0;
+	let lastAnalyzedStrokesHash = '';
+	let lastStrokeAnalyzedHash = '';
+	let forceAnalysisFlag = false;
+	let isResizeEvent = false;
+	let analysisDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+	let renderDebounceTimeout: ReturnType<typeof setTimeout> | null = null;
+	let isArtificialEvent = false; // Flag for programmatically triggered events
+	let previousAnalyzedStrokeCount = 0; // Track stroke count for analysis
+	let previousRecognizedStrokeCount = 0; // Track stroke count for recognition
+
+	// Variables for latest analysis results from API endpoints
+	let sketchAnalysisOutput: any = null; // Store the full sketch analysis result
+	let strokesAnalysisOutput: any = null; // Store the full stroke analysis result
+	let currentCanvasSnapshot: string = ''; // Store the canvas snapshot for displaying in shape recognition dialog
+
+	// Function to build the prompt for GPT-Image-1
+	function buildGptImagePrompt() {
+		let prompt = `Complete this drawing. DO NOT change the original image sketch at all; simply add onto the existing drawing EXACTLY as it is. CRITICAL STRUCTURE PRESERVATION: You MUST treat this sketch as an EXACT STRUCTURAL TEMPLATE. `;
+
+		// Include the content description from our analysis
+		const contentGuide =
+			sketchAnalysis !== "Draw something to see AI's interpretation"
+				? sketchAnalysis
+				: "A user's drawing.";
+		prompt += `CONTENT DESCRIPTION: ${contentGuide}\n\n`;
+
+		// Add user's additional context if provided (preserve this as high priority)
+		if (additionalContext) {
+			prompt += `USER'S CONTEXT: "${additionalContext}"\n\n`;
+		}
+
+		// Include the detailed structural information if available
+		if (analysisElements.length > 0) {
+			const structuralGuide = `Based on analysis, the drawing contains ${analysisElements.length} main elements. Element positions and basic relationships are implied by the sketch.`;
+			prompt += `STRUCTURAL GUIDE: ${structuralGuide}\n\n`;
+		}
+
+		// Include the compositional analysis (placeholder)
+		const compositionGuide = `Focus on the arrangement within the ${selectedAspectRatio} frame.`;
+		prompt += `COMPOSITION GUIDE: ${compositionGuide}\n\n`;
+
+		// Add stroke-based recognition if available
+		if (strokeRecognition && strokeRecognition !== 'Draw something to see shapes recognized') {
+			prompt += `RECOGNIZED SHAPES: ${strokeRecognition}\n\n`;
+		}
+
+		// Add AI detection objects section
+		if (detectedObjectsText || tfDetectedObjectsText) {
+			prompt += `This is a list of elements that you MUST include,\n       with coordinates relative to the canvas.\n       For example, "x:0.268,y:0.197 with width:0.386,height:0.457"\n       means that the element is located at the 26.8% point from the left, 19.7% point from the top,\n       with a width spanning 38.6% of the canvas width, and a height spanning 45.7% of the canvas height.\n       \n \n\n       DETECTED OBJECTS:\n`;
+
+			if (detectedObjectsText) {
+				prompt += `${detectedObjectsText}\n`;
+			}
+
+			if (tfDetectedObjectsText) {
+				prompt += `${tfDetectedObjectsText}\n`;
+			}
+
+			prompt += `\n`;
+		}
+
+		// Final instructions for perfect structural fidelity
+		prompt += `FINAL INSTRUCTIONS: Create a DIRECT, FRONT-FACING VIEW that maintains the EXACT same composition as the sketch. NEVER distort or reposition any element. Color and texture can be added, but the structural skeleton must remain identical to the original sketch.`;
+
+		// Trim the prompt to ensure it stays within API limits (assuming 4000 char limit)
+		return prompt.length > 4000 ? prompt.substring(0, 3997) + '...' : prompt;
+	}
+
+	// Reactive update for the GPT image prompt store
+	$: {
+		const newPrompt = buildGptImagePrompt();
+		gptImagePrompt.set(newPrompt);
+	}
+
+	// Function to determine if an event is a real user edit vs. a programmatic change
+	function isRealUserEdit(): boolean {
+		if (isResizeEvent) {
+			console.log('Skipping analysis due to resize event');
+			return false;
+		}
+		if ($isGenerating || isArtificialEvent) {
+			console.log('Skipping analysis due to loading or artificial event');
+			return false;
+		}
+		if (isAnalyzing || isRecognizingStrokes) {
+			console.log('Skipping analysis due to ongoing analysis');
+			return false;
+		}
+		lastUserEditTime = Date.now();
+		pendingAnalysis = true;
+		return true;
+	}
+
+	// Computed property for stroke count (reactive)
+	// Note: This will become less accurate as it only counts strokes added via pen tool
+	$: strokeCount = drawingContent?.strokes?.length || 0;
+
+	// No longer needed for Fabric paths
+	// let pathBuilderLookup = {};
+
+	// Initialize browser variable for local storage check
+	let browser = typeof window !== 'undefined';
+
+	// Track the last resize time
+	let lastResizeTime = 0;
+
+	// Initialize on component mount
+	onMount(() => {
+		initializeFabricCanvas(); // New function for Fabric setup
+		mobileCheck(); // Keep mobile check
+		window.addEventListener('resize', handleResize); // Use a named handler for resizing
+
+		// Return cleanup function
+		return () => {
+			window.removeEventListener('resize', handleResize);
+			// Dispose Fabric canvas instance
+			if (fabricCanvas) {
+				// Remove event listeners before disposing
+				fabricCanvas.off('mouse:down', onPointerDownFabric);
+				fabricCanvas.off('mouse:move', onPointerMoveFabric);
+				fabricCanvas.off('mouse:up', onPointerUpFabric);
+				fabricCanvas.off('path:created', onPathCreatedFabric);
+				fabricCanvas.dispose();
+				fabricCanvas = null;
+				console.log('Fabric canvas disposed');
+			}
+		};
+	});
+
+	// Initialize Fabric canvas
+	function initializeFabricCanvas() {
+		if (!htmlCanvasElement) {
+			console.error('HTML Canvas element not found for Fabric initialization.');
+			return;
+		}
+		if (fabricCanvas) {
+			console.warn('Fabric canvas already initialized. Disposing existing one.');
+			fabricCanvas.dispose();
+			fabricCanvas = null;
+		}
+		console.log('Initializing Fabric canvas');
+
+		fabricCanvas = new fabric.Canvas(htmlCanvasElement, {
+			backgroundColor: '#f8f8f8',
+			isDrawingMode: $selectedTool === 'pen' || $selectedTool === 'eraser', // Initial drawing mode based on selected tool
+			selection: $selectedTool === 'select', // Enable selection if select tool is active
+			stopContextMenu: true, // Prevent right-click context menu on canvas
+			fireRightClick: true // Enable right-click events if needed later
+			// Consider adding performance flags from search result if needed later
+			// renderOnAddRemove: false, // Set to false for bulk adds, but true is default and often fine
+		});
+
+		// Set initial brush based on selected tool
+		updateFabricBrush();
+
+		// Set initial dimensions
+		resizeCanvas();
+
+		// Event listeners (moved from element to Fabric canvas)
+		fabricCanvas.on('mouse:down', onPointerDownFabric);
+		fabricCanvas.on('mouse:move', onPointerMoveFabric);
+		fabricCanvas.on('mouse:up', onPointerUpFabric);
+		fabricCanvas.on('path:created', onPathCreatedFabric); // Event after free drawing a path
+
+		// Capture initial image data for output preview
+		imageData = captureCanvasSnapshot();
+		console.log('Fabric canvas initialized successfully.');
+	}
+
+	// Clean up old initializeCanvas function (now initializeFabricCanvas)
+	// function initializeCanvas() { ... } // REMOVED
+
+	// Helper function to get height based on aspect ratio
+	function getHeightFromAspectRatio(width, aspectRatio) {
+		if (aspectRatio === '1:1') return width;
+		if (aspectRatio === 'portrait') return width * (1792 / 1024); // Corrected portrait
+		if (aspectRatio === 'landscape') return width * (1024 / 1792); // Corrected landscape
+		return width;
+	}
+
+	// Debounce the resize handler
+	let resizeDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+	function handleResize() {
+		if (resizeDebounceTimer) clearTimeout(resizeDebounceTimer);
+		resizeDebounceTimer = setTimeout(() => {
+			resizeCanvas();
+		}, 150); // 150ms debounce time
+	}
+
+	// Function to resize canvas (Updated for Fabric)
+	function resizeCanvas() {
+		if (!htmlCanvasElement || !htmlCanvasElement.parentElement || !fabricCanvas) {
+			console.log('Resize skipped: Missing elements or canvas');
+			return;
+		}
+
+		lastResizeTime = Date.now();
+		isResizeEvent = true;
+
+		const container = htmlCanvasElement.parentElement;
+		const containerStyle = window.getComputedStyle(container);
+		const paddingHorizontal =
+			parseFloat(containerStyle.paddingLeft) + parseFloat(containerStyle.paddingRight);
+		const paddingVertical =
+			parseFloat(containerStyle.paddingTop) + parseFloat(containerStyle.paddingBottom);
+
+		// Ensure container has dimensions
+		if (container.clientWidth <= 0 || container.clientHeight <= 0) {
+			console.log('Resize skipped: Container has zero dimensions');
+			isResizeEvent = false; // Reset flag if we skip
+			return;
+		}
+
+		const availableWidth = container.clientWidth - paddingHorizontal;
+		const availableHeight = container.clientHeight - paddingVertical;
+
+		console.log(`Available container space: ${availableWidth}x${availableHeight}`);
+
+		// Determine internal resolution based on aspect ratio
+		if (selectedAspectRatio === '1:1') {
+			internalCanvasWidth = 1024;
+			internalCanvasHeight = 1024;
+		} else if (selectedAspectRatio === 'portrait') {
+			internalCanvasWidth = 1024;
+			internalCanvasHeight = 1792;
+		} else if (selectedAspectRatio === 'landscape') {
+			internalCanvasWidth = 1792;
+			internalCanvasHeight = 1024;
+		}
+
+		// Calculate display size and scale factor
+		const widthRatio = availableWidth / internalCanvasWidth;
+		const heightRatio = availableHeight / internalCanvasHeight;
+		const scaleFactor = Math.min(widthRatio, heightRatio); // Allow scaling up/down
+
+		// Calculate the display dimensions based on the scale factor
+		const displayWidth = internalCanvasWidth * scaleFactor;
+		const displayHeight = internalCanvasHeight * scaleFactor;
+
+		// Set Fabric canvas LOGICAL dimensions (important for coordinate system)
+		fabricCanvas.setWidth(internalCanvasWidth);
+		fabricCanvas.setHeight(internalCanvasHeight);
+
+		// Set Fabric canvas CSS DISPLAY dimensions using setDimensions
+		fabricCanvas.setDimensions(
+			{ width: `${displayWidth}px`, height: `${displayHeight}px` },
+			{ cssOnly: true }
+		);
+
+		// Apply zoom to make content fit the display dimensions
+		fabricCanvas.setZoom(scaleFactor);
+
+		// Center the viewport (optional, but good for consistent view)
+		fabricCanvas.centerVptOn(new fabric.Point(internalCanvasWidth / 2, internalCanvasHeight / 2));
+
+		// Re-render all objects
+		fabricCanvas.renderAll();
+
+		// Store dimensions for overlays (use internal resolution)
+		// These might need adjustment based on how overlays handle Fabric zoom/coords
+		// canvasWidth = internalCanvasWidth;
+		// canvasHeight = internalCanvasHeight;
+		// canvasScale = scaleFactor; // Store scale if needed for overlays
+
+		// Update drawing content bounds (if still used)
+		drawingContent.bounds = { width: internalCanvasWidth, height: internalCanvasHeight };
+
+		// Debounce resetting the flag and updating snapshot
+		if (renderDebounceTimeout) clearTimeout(renderDebounceTimeout);
+		renderDebounceTimeout = setTimeout(() => {
+			imageData = captureCanvasSnapshot();
+			if (showShapeRecognitionDialog && getFabricObjectCount() > 0) {
+				currentCanvasSnapshot = captureCanvasSnapshot();
+			}
+			isResizeEvent = false;
+			console.log('Resize event flag reset');
+		}, 200); // Slightly longer delay after resize completes
+
+		console.log(
+			`Fabric Canvas resized. Container: ${availableWidth}x${availableHeight}, ` +
+				`Aspect Ratio: ${selectedAspectRatio}, ` +
+				`Display Size: ${Math.round(displayWidth)}x${Math.round(displayHeight)}, ` +
+				`Internal Res: ${internalCanvasWidth}x${internalCanvasHeight}, ` +
+				`Scale Factor: ${scaleFactor.toFixed(3)}`
+		);
+	}
+
+	// Make the component reactive to changes in the drawingContent
+	// NOTE: This only triggers analysis based on PEN strokes added to drawingContent.
+	// Erasing via Fabric won't trigger this analysis loop.
+	$: {
+		if (drawingContent.strokes && drawingContent.strokes.length > 0) {
+			if (isRealUserEdit()) {
+				console.log('User edit (pen stroke) detected, scheduling analysis');
+				if (analysisDebounceTimer) clearTimeout(analysisDebounceTimer);
+				analysisDebounceTimer = setTimeout(() => {
+					if (pendingAnalysis) {
+						console.log('Running analysis after debounce period');
+						analyzeSketch();
+						recognizeStrokes();
+						pendingAnalysis = false;
+					}
+				}, ANALYSIS_DEBOUNCE_MS);
+			}
+		}
+	}
+
+	// Reactive statement to update canvas when aspect ratio changes
+	$: {
+		if (browser && selectedAspectRatio && fabricCanvas) {
+			resizeCanvas();
+		}
+	}
+
+	// Reactive statement to update Fabric brush/mode when selectedTool changes
+	$: {
+		if (fabricCanvas) {
+			updateFabricBrush();
+		}
+	}
+
+	// --- Fabric Event Handlers ---\n
+
+	function getFabricPointerPosition(options: fabric.IEvent<MouseEvent>): StrokePoint {
+		const pointer = fabricCanvas?.getPointer(options.e);
+		if (!pointer) return { x: 0, y: 0, pressure: 0.5 };
+
+		// Fabric's getPointer accounts for canvas offset and zoom
+		const pressure = options.e instanceof PointerEvent ? options.e.pressure : 0.5;
+		// Clamp pressure to avoid extreme values sometimes reported
+		const clampedPressure = Math.max(0.01, Math.min(1.0, pressure));
+
+		// console.log(`Fabric Pointer: x=${pointer.x.toFixed(2)}, y=${pointer.y.toFixed(2)}, Pressure: ${clampedPressure.toFixed(2)} (Raw: ${pressure})`);
+
+		return {
+			x: pointer.x,
+			y: pointer.y,
+			pressure: clampedPressure
+		};
+	}
+
+	function onPointerDownFabric(options: fabric.IEvent<MouseEvent>) {
+		if (options.e.button !== 0) return; // Only handle left click/touch
+
+		// For free drawing modes (pen/eraser), Fabric handles the start internally
+		if ($selectedTool === 'pen' || $selectedTool === 'eraser') {
+			isDrawing = true; // Track drawing state
+			const isPen = options.e instanceof PointerEvent && options.e.pointerType === 'pen';
+			isApplePencilActive.set(isPen);
+			console.log(
+				`${$selectedTool} Draw Started (Fabric). Pointer type: ${options.e instanceof PointerEvent ? options.e.pointerType : 'mouse'}, Pressure: ${options.e instanceof PointerEvent ? options.e.pressure : 'N/A'}`
+			);
+
+			// Reset points for perfect-freehand stroke generation if using pen
+			if ($selectedTool === 'pen') {
+				const point = getFabricPointerPosition(options);
+				const timestamp = Date.now();
+				pointTimes = [timestamp];
+				const hasHardwarePressure =
+					isPen &&
+					options.e instanceof PointerEvent &&
+					options.e.pressure > 0 &&
+					options.e.pressure !== 0.5;
+
+				// Initialize currentStroke for storing points (needed for perfect-freehand path creation later)
+				currentStroke = {
+					tool: 'pen',
+					points: [point],
+					color: strokeColor, // Use current color/size/opacity
+					size: strokeSize,
+					opacity: strokeOpacity,
+					hasHardwarePressure: hasHardwarePressure
+				};
+			}
+		} else if ($selectedTool === 'select') {
+			// Fabric handles selection start automatically when isDrawingMode is false
+			console.log('Selection Mode: Mouse Down');
+		}
+	}
+
+	function onPointerMoveFabric(options: fabric.IEvent<MouseEvent>) {
+		// Fabric handles drawing path updates internally in free drawing mode
+		if (isDrawing && ($selectedTool === 'pen' || $selectedTool === 'eraser')) {
+			// If using pen tool, still collect points for perfect-freehand shape generation
+			if ($selectedTool === 'pen' && currentStroke) {
+				const point = getFabricPointerPosition(options);
+				const timestamp = Date.now();
+				pointTimes.push(timestamp);
+
+				// Calculate pressure if needed (optional, Fabric brush pressure might suffice)
+				// if (!currentStroke.hasHardwarePressure || (options.e instanceof PointerEvent && options.e.pointerType === 'pen' && options.e.pressure === 0.5)) {
+				//    if (currentStroke.points.length > 1) {
+				//      const calculatedPressure = calculatePressureFromVelocity(
+				//        currentStroke.points, currentStroke.points.length - 1, 0.2, true, pointTimes
+				//      );
+				//      point.pressure = calculatedPressure;
+				//    } else {
+				//      point.pressure = 0.5;
+				//    }
+				// } else {
+				//    // console.log(`Using hardware pressure: ${point.pressure}`);
+				// }
+				// Simplification: just use event pressure (already clamped in getFabricPointerPosition)
+				// point.pressure = options.e instanceof PointerEvent ? options.e.pressure : 0.5;
+
+				currentStroke.points.push(point);
+			}
+		} else if ($selectedTool === 'select') {
+			// Fabric handles selection drag automatically
+		}
+	}
+
+	function onPointerUpFabric(options: fabric.IEvent<MouseEvent>) {
+		if (isDrawing && ($selectedTool === 'pen' || $selectedTool === 'eraser')) {
+			isDrawing = false;
+			isApplePencilActive.set(false);
+			console.log(`${$selectedTool} Draw Ended (Fabric)`);
+
+			// For the pen tool, the actual path object is created in onPathCreatedFabric
+			// We can optionally finalize the stroke data here for analysis
+			if ($selectedTool === 'pen' && currentStroke) {
+				// Finalize the stroke for the drawingContent array (for analysis)
+				// Ensure we don't push an empty or single-point stroke
+				if (currentStroke.points.length > 1) {
+					drawingContent.strokes.push(currentStroke);
+					drawingContent = drawingContent; // Trigger reactivity if needed elsewhere
+					lastUserEditTime = Date.now();
+					pendingAnalysis = true;
+					triggerAnalysis(); // Trigger analysis based on pen stroke added
+					console.log(
+						`Pen stroke added to drawingContent ( ${currentStroke.points.length} points)`
+					);
+				} else {
+					console.log('Skipping empty/single-point pen stroke from drawingContent');
+				}
+				currentStroke = null; // Clear current stroke regardless
+			}
+			// Eraser actions modify existing paths, no new stroke added to drawingContent
+			else if ($selectedTool === 'eraser') {
+				// The eraser path is created in onPathCreatedFabric, which removes the path itself.
+				// Fabric handles the actual erasing during the drag.
+				// We need to mark an edit occurred for potential future analysis triggers
+				// based on canvas object state changes (not implemented yet)
+				lastUserEditTime = Date.now();
+				imageData = captureCanvasSnapshot(); // Update snapshot after erase
+				console.log('Eraser action completed.');
+			}
+		} else if ($selectedTool === 'select') {
+			console.log('Selection Mode: Mouse Up');
+			// Fabric handles selection end automatically
+		}
+	}
+
+	// Called AFTER a freehand path (pen OR eraser) is drawn and added to the canvas
+	// NOTE: This is CRITICAL for replacing the default Fabric path with the perfect-freehand one
+	// For the eraser, this event fires but the path added by Fabric is temporary and should be ignored/removed
+	function onPathCreatedFabric(e) {
+		if (!fabricCanvas) return;
+		const path = e.path as fabric.Path; // The newly created path object
+
+		if (!path) {
+			console.warn('onPathCreatedFabric called without a path object.');
+			return;
+		}
+
+		console.log('Fabric Path Created Event:', $selectedTool);
+
+		if ($selectedTool === 'pen' && currentStroke?.points && path) {
+			// Replace the rough Fabric path with a smooth perfect-freehand path
+			fabricCanvas.remove(path); // Remove the default path drawn by PencilBrush
+
+			// Generate perfect-freehand path based on collected points
+			// Ensure we have enough points for getStroke
+			if (currentStroke.points.length > 1) {
+				const finalPath = createPerfectFreehandPath(currentStroke);
+				if (finalPath) {
+					fabricCanvas.add(finalPath);
+					fabricCanvas.renderAll(); // Ensure it's rendered
+					console.log('Replaced Fabric path with Perfect Freehand path');
+					imageData = captureCanvasSnapshot(); // Update snapshot after adding final path
+				} else {
+					console.warn('Could not generate perfect-freehand path from stroke data.');
+				}
+			} else {
+				console.log('Skipping perfect-freehand path generation for single-point stroke.');
+			}
+			// currentStroke should be cleared in onPointerUpFabric
+		} else if ($selectedTool === 'eraser') {
+			// The EraserBrush modifies existing paths directly DURING the drag.
+			// The path created here is just the visual representation of the eraser's path,
+			// it doesn't perform the actual erasing itself. We should remove it.
+			console.log('Eraser path created event - Removing temporary eraser visual path.');
+			fabricCanvas.remove(path);
+			// The actual erasing happened during mouse:move interactions with the EraserBrush.
+			// The canvas should already reflect the erased state.
+			fabricCanvas.renderAll(); // Re-render just in case
+		}
+	}
+
+	// Helper function to create a Fabric Path from perfect-freehand points
+	function createPerfectFreehandPath(stroke: EnhancedStroke): fabric.Path | null {
+		if (!stroke || stroke.points.length < 2) {
+			console.log('Skipping path creation - insufficient points:', stroke?.points?.length);
+			return null;
+		}
+
+		// Use cached strokeOptions and stroke-specific properties
+		const options = {
+			size: stroke.size,
+			thinning: currentPerfectFreehandOptions.thinning ?? 0.5, // Provide defaults
+			smoothing: currentPerfectFreehandOptions.smoothing ?? 0.5,
+			streamline: currentPerfectFreehandOptions.streamline ?? 0.5,
+			easing: currentPerfectFreehandOptions.easing ?? ((t) => t),
+			simulatePressure: !stroke.hasHardwarePressure, // Use hardware pressure if available
+			start: {
+				taper: currentPerfectFreehandOptions.start?.taper ? currentPerfectFreehandOptions.start.taper : 0,
+        		cap: currentPerfectFreehandOptions.start?.cap !== undefined ? currentPerfectFreehandOptions.start.cap : true,
+			},
+			end: {
+				taper: currentPerfectFreehandOptions.end?.taper ? currentPerfectFreehandOptions.end.taper : 0,
+				cap: currentPerfectFreehandOptions.end?.cap !== undefined ? currentPerfectFreehandOptions.end.cap : true,
+			},
+			last: false // Important: Set to false for the final stroke generation
+		};
+
+		// Apply pressure enhancement if necessary (moved logic here)
+		const enhancedPoints = stroke.points.map((p) => {
+			let basePressure = p.pressure || 0.5;
+			let enhancedPressure = basePressure;
+			const intensity = currentPerfectFreehandOptions.pressureIntensity || 1.0; // Get from options
+
+			if (intensity !== 1.0) {
+				const intensityFactor = Math.max(1, intensity / 2);
+				const lightPressureThreshold = 0.35;
+				let amplifiedPressure; // Declare here
+				if (basePressure < lightPressureThreshold) {
+					const normalizedPressure = basePressure / lightPressureThreshold;
+					amplifiedPressure = Math.pow(normalizedPressure, 0.5); // Assign here
+					enhancedPressure = 0.1 + 0.3 * amplifiedPressure;
+				} else {
+					const normalizedPressure = (basePressure - lightPressureThreshold) / (1 - lightPressureThreshold);
+					enhancedPressure = 0.4 + 0.6 * Math.pow(normalizedPressure, 1 / intensityFactor);
+				}
+				enhancedPressure = Math.min(1.0, Math.max(0.1, enhancedPressure));
+			}
+			// Make sure points are finite numbers
+			const x = Number.isFinite(p.x) ? p.x : 0;
+			const y = Number.isFinite(p.y) ? p.y : 0;
+			const pressure = Number.isFinite(enhancedPressure) ? enhancedPressure : 0.5;
+
+			return [x, y, pressure];
+		});
+
+
+		// Check if enhancedPoints are valid before calling getStroke
+		if (!enhancedPoints || enhancedPoints.length < 2 || !enhancedPoints.every(p => p.length === 3 && p.every(Number.isFinite))) {
+			console.error("Invalid points array for getStroke:", enhancedPoints);
+			return null;
+		}
+
+
+		try {
+			const freehandOutline = getStroke(enhancedPoints, options);
+
+			if (!freehandOutline || freehandOutline.length === 0) {
+				console.warn('getStroke returned empty outline.');
+				return null;
+			}
+
+			const pathData = getSvgPathFromStroke(freehandOutline);
+
+			if (!pathData) {
+				console.warn('getSvgPathFromStroke returned empty path data.');
+				return null;
+			}
+
+			// Create Fabric Path object
+			const fabricPath = new fabric.Path(pathData, {
+				fill: stroke.color, // Use fill for perfect-freehand shapes
+				strokeWidth: 0, // No stroke needed, the fill defines the shape
+				opacity: stroke.opacity,
+				originX: 'left', // Set origin to top-left for consistency
+				originY: 'top',
+				selectable: $selectedTool === 'select', // Make selectable only in select mode
+				evented: $selectedTool === 'select', // Only trigger events in select mode
+				objectCaching: false // May improve performance for complex paths, test needed
+			});
+
+			// console.log("Created Fabric Path:", fabricPath);
+			return fabricPath;
+
+		} catch (error) {
+			console.error("Error during perfect-freehand path creation:", error);
+			console.error("Stroke data:", stroke);
+			console.error("Options used:", options);
+			console.error("Enhanced Points:", enhancedPoints);
+			return null;
+		}
+	}
+
+	// --- Tool Specific Fabric Logic ---\n
+
+	// Function to update Fabric's brush based on selected tool
+	function updateFabricBrush() {
+		if (!fabricCanvas) return;
+
+		if ($selectedTool === 'pen') {
+			fabricCanvas.isDrawingMode = true;
+			fabricCanvas.selection = false; // Disable selection
+			// Use PencilBrush for basic drawing, perfect-freehand replaces it on path:created
+			fabricCanvas.freeDrawingBrush = new fabric.PencilBrush(fabricCanvas);
+			fabricCanvas.freeDrawingBrush.color = strokeColor;
+			fabricCanvas.freeDrawingBrush.width = strokeSize;
+			fabricCanvas.freeDrawingBrush.strokeLineCap = 'round'; // Ensure round caps
+			fabricCanvas.freeDrawingBrush.strokeLineJoin = 'round'; // Ensure round joins
+			// Note: We could try customizing PencilBrush pressure, but perfect-freehand gives more control
+			console.log('Fabric Brush: Pen (PencilBrush)');
+		} else if ($selectedTool === 'eraser') {
+			fabricCanvas.isDrawingMode = true;
+			fabricCanvas.selection = false; // Disable selection
+			// Attempt to use EraserBrush
+			try {
+				// Check if EraserBrush exists directly on the fabric object (might depend on build)
+				// fabric['EraserBrush'] checks property existence without TS error if not standard export
+				if (fabric['EraserBrush']) {
+					// @ts-ignore - Ignore TS error if EraserBrush is not in standard typings
+					fabricCanvas.freeDrawingBrush = new fabric.EraserBrush(fabricCanvas);
+					fabricCanvas.freeDrawingBrush.width = eraserSize;
+					console.log('Fabric Brush: Eraser (EraserBrush)');
+				} else {
+					console.warn(
+						'fabric.EraserBrush not found. Eraser tool will draw white strokes as fallback. Ensure Fabric.js build includes eraser.'
+					);
+					// Fallback: Draw white strokes if EraserBrush is not available
+					fabricCanvas.freeDrawingBrush = new fabric.PencilBrush(fabricCanvas);
+					fabricCanvas.freeDrawingBrush.color = '#f8f8f8'; // Match background color
+					fabricCanvas.freeDrawingBrush.width = eraserSize;
+				}
+			} catch (error) {
+				console.error('Error initializing EraserBrush:', error);
+				// Fallback to pencil brush drawing white if EraserBrush fails instantiation
+				fabricCanvas.freeDrawingBrush = new fabric.PencilBrush(fabricCanvas);
+				fabricCanvas.freeDrawingBrush.color = '#f8f8f8'; // Match background color
+				fabricCanvas.freeDrawingBrush.width = eraserSize;
+			}
+		} else if ($selectedTool === 'select') {
+			fabricCanvas.isDrawingMode = false;
+			fabricCanvas.selection = true; // Enable selection
+			// Make existing objects selectable
+			fabricCanvas.getObjects().forEach((obj) => {
+				obj.selectable = true;
+				obj.evented = true;
+			});
+			fabricCanvas.renderAll(); // Update visual state of objects
+			console.log('Fabric Mode: Select');
+		}
+
+		// Make sure objects are not selectable/evented when not in select mode
+		if ($selectedTool !== 'select') {
+			fabricCanvas.getObjects().forEach((obj) => {
+				obj.selectable = false;
+				obj.evented = false;
+			});
+			fabricCanvas.discardActiveObject(); // Deselect any active object
+			fabricCanvas.renderAll();
+		}
+	}
+
+	// PEN TOOL (Fabric - simplified, relies on path:created)
+	function startPenStrokeFabric(e: PointerEvent) {
+		/* Now handled in onPointerDownFabric */
+	}
+	function continuePenStrokeFabric(e: PointerEvent) {
+		/* Now handled in onPointerMoveFabric */
+	}
+	function endPenStrokeFabric(e: PointerEvent) {
+		/* Now handled in onPointerUpFabric and onPathCreatedFabric */
+	}
+
+	// ERASER TOOL (Fabric)
+	let eraserSize = 20; // Keep local eraser size
+	function startEraserStrokeFabric(e: PointerEvent) {
+		/* Now handled in onPointerDownFabric */
+	}
+	function continueEraserStrokeFabric(e: PointerEvent) {
+		/* Now handled in onPointerMoveFabric */
+	}
+	function endEraserStrokeFabric(e: PointerEvent) {
+		/* Now handled in onPointerUpFabric and onPathCreatedFabric */
+	}
+
+	// SELECT TOOL (Fabric - simplified)
+	function startSelectionFabric(e: PointerEvent) {
+		/* Fabric handles this */
+	}
+	function continueSelectionFabric(e: PointerEvent) {
+		/* Fabric handles this */
+	}
+	function endSelectionFabric(e: PointerEvent) {
+		/* Fabric handles this */
+	}
+
+	// Remove old selection helper functions
+	// function createSelectionBoxElement() { ... } // REMOVED
+	// function updateSelectionBoxElement(...) { ... } // REMOVED
+	// function removeSelectionBoxElement() { ... } // REMOVED
+	// function findIntersectingStrokes(...) { ... } // REMOVED
+
+	// --- Analysis Trigger ---\n
+	// Stays the same, but only triggered by pen strokes added to drawingContent
+	function triggerAnalysis() {
+		const now = Date.now();
+		// More aggressive check: if enough time has passed OR force flag is set
+		if (forceAnalysisFlag || now - lastAnalysisTime > ANALYSIS_THROTTLE_MS) {
+			clearTimeout(analysisDebounceTimer);
+			analysisDebounceTimer = setTimeout(
+				() => {
+					// Only analyze if pending and analysis not running
+					if (!isAnalyzing && !isRecognizingStrokes && (pendingAnalysis || forceAnalysisFlag)) {
+						// Check if drawingContent.strokes actually changed significantly if needed
+						console.log('Triggering analysis via pen stroke add');
+						analyzeSketch();
+						recognizeStrokes();
+						pendingAnalysis = false;
+						// Reset force flag after triggering
+						// forceAnalysisFlag = false; // Keep forceAnalysisFlag logic within analyze* functions
+					} else {
+						console.log('Analysis trigger skipped (already running or no pending changes)');
+					}
+				},
+				forceAnalysisFlag ? 100 : 300
+			); // Shorter delay if forced
+		} else {
+			console.log('Analysis trigger skipped (throttled)');
+		}
+	}
+
+	// Function to get pointer position (No longer needed, use Fabric's getPointer)
+	// function getPointerPosition(e: PointerEvent): StrokePoint { ... } // REMOVED
+
+	// Function to render all strokes (No longer needed, Fabric handles rendering)
+	// function renderStrokes() { ... } // REMOVED
+
+	// Function to analyze the current sketch with OpenAI Vision (Keep as is for now)
+	async function analyzeSketch() {
+		// Ensure we use the current Fabric canvas snapshot
+		currentCanvasSnapshot = captureCanvasSnapshot();
+		if (!currentCanvasSnapshot || getFabricObjectCount() === 0) {
+			// Check Fabric objects instead
+			console.log('Skipping analysis - no snapshot or no Fabric objects');
+			sketchAnalysis = "Draw something to see AI's interpretation";
+			analysisElements = []; // Clear elements if canvas is empty
+			return;
+		}
+
+		// Check throttling, debounce, etc. (Keep existing logic)
+		if (isAnalyzing) { console.log("Analysis skipped: Already analyzing"); return; }
+		const now = Date.now();
+		if (!forceAnalysisFlag && now - lastAnalysisTime < ANALYSIS_THROTTLE_MS) { console.log("Analysis skipped: Throttled"); return; }
+		// Removed pendingAnalysis check here - rely on throttling/force flag
+		// if (!forceAnalysisFlag && !pendingAnalysis) return;
+		if (!forceAnalysisFlag && now - lastUserEditTime > ANALYSIS_THROTTLE_MS * 5) {
+			pendingAnalysis = false; // Clear pending if idle too long
+			console.log("Analysis skipped: Idle too long");
+			return;
+		}
+
+		// Hash based on Fabric objects (simple JSON stringify for now, might need refinement)
+		const currentFabricJSON = fabricCanvas?.toJSON();
+		const currentFabricHash = JSON.stringify(currentFabricJSON);
+		if (!forceAnalysisFlag && currentFabricHash === lastAnalyzedStrokesHash) {
+			console.log("Analysis skipped: Fabric content unchanged");
+			pendingAnalysis = false;
+			return;
+		}
+
+
+		try {
+			isAnalyzing = true;
+			previousSketchAnalysis = sketchAnalysis;
+			lastAnalysisTime = Date.now();
+			sketchAnalysis = 'Analyzing drawing...';
+
+			// Update hash and count based on Fabric objects
+			previousAnalyzedStrokeCount = getFabricObjectCount();
+			lastAnalyzedStrokesHash = currentFabricHash;
+
+			pendingAnalysis = false; // Analysis is starting
+			const analysisWasForced = forceAnalysisFlag; // Store flag state
+			forceAnalysisFlag = false; // Reset force flag
+
+			console.log('Starting sketch analysis API call...', new Date().toISOString());
+
+			const timeoutMs = 20000;
+			const controller = new AbortController();
+			const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+			try {
+				// Use the captured snapshot
+				const imageDataForApi = currentCanvasSnapshot;
+
+				const response = await fetch('/api/ai/analyze-sketch', {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({
+						imageData: imageDataForApi, // Use Fabric snapshot
+						enhancedAnalysis: true,
+						requestHierarchy: true,
+						requestPositions: true,
+						excludeTrivialElements: true,
+						context: additionalContext || '',
+						options: {
+							complexity: getFabricObjectCount() > 20 ? 'high' : 'normal',
+							detectionMode: 'precise',
+							includeConfidence: true
+						}
+					}),
+					signal: controller.signal
+				});
+
+				clearTimeout(timeoutId);
+
+				if (!response.ok) {
+					const errorData = await response.json();
+					throw new Error(errorData.error || 'Failed to analyze sketch');
+				}
+
+				const result = await response.json();
+				sketchAnalysis = result.description || 'No analysis available';
+				sketchAnalysisOutput = { description: sketchAnalysis, detectedObjects: result.detectedObjects || [], raw: result }; // Store more info
+
+
+				// Process detected objects using their bounding boxes from API if available
+				// This part needs refactoring later to use fabric objects if possible for finding related strokes
+				if (result.detectedObjects && Array.isArray(result.detectedObjects)) {
+					const processedElements = [];
+					const canvasWidthForAnalysis = internalCanvasWidth; // Use internal dims
+					const canvasHeightForAnalysis = internalCanvasHeight;
+
+					for (const obj of result.detectedObjects) {
+						// Use bounding box directly from API if present
+						let boundingBox = null;
+						let normalizedBox = null;
+						if (obj.x && obj.y && obj.width && obj.height) {
+							// API provides normalized 0-1 coords and dimensions
+							normalizedBox = {
+								minX: obj.x,
+								minY: obj.y,
+								width: obj.width,
+								height: obj.height,
+								maxX: obj.x + obj.width,
+								maxY: obj.y + obj.height
+							};
+							// Convert normalized to absolute for potential use later
+							boundingBox = {
+								minX: normalizedBox.minX * canvasWidthForAnalysis,
+								minY: normalizedBox.minY * canvasHeightForAnalysis,
+								maxX: normalizedBox.maxX * canvasWidthForAnalysis,
+								maxY: normalizedBox.maxY * canvasHeightForAnalysis,
+								width: normalizedBox.width * canvasWidthForAnalysis,
+								height: normalizedBox.height * canvasHeightForAnalysis,
+							};
+						} else {
+							// Fallback: Try to find related strokes using drawingContent.strokes (less accurate)
+							const relatedStrokes = findRelatedStrokes(
+								drawingContent.strokes, // Still uses the old strokes array
+								obj.x, obj.y, canvasWidthForAnalysis, canvasHeightForAnalysis, 0.18, true
+							);
+							if (relatedStrokes.length > 0) {
+								boundingBox = calculateMultiStrokeBoundingBox(relatedStrokes, true);
+								normalizedBox = normalizeBoundingBox(boundingBox, canvasWidthForAnalysis, canvasHeightForAnalysis);
+							}
+						}
+
+						processedElements.push({
+							id: obj.id || `${obj.name}-${Date.now()}`, // Ensure ID
+							name: obj.name || 'Unnamed Element',
+							category: obj.category || getCategoryFromObjectName(obj.name),
+							// Use normalized coords from API directly
+							x: obj.x || (normalizedBox ? normalizedBox.minX + normalizedBox.width / 2 : 0.5),
+							y: obj.y || (normalizedBox ? normalizedBox.minY + normalizedBox.height / 2 : 0.5),
+							// Store normalized box if available
+							width: obj.width || (normalizedBox ? normalizedBox.width : undefined),
+							height: obj.height || (normalizedBox ? normalizedBox.height : undefined),
+							color: getColorForCategory(obj.category || getCategoryFromObjectName(obj.name)),
+							boundingBox: normalizedBox, // Store the normalized bounding box
+							// Add other properties from API if needed
+							confidence: obj.confidence,
+							details: obj.details,
+							detectionSource: 'gpt-vision' // Mark source
+						});
+					}
+
+					// Update analysisElements based on significant change or if forced
+					const hasSignificantChange = hasElementsChanged(analysisElements, processedElements);
+					if (hasSignificantChange || analysisWasForced) {
+						isArtificialEvent = true;
+						analysisElements = processedElements;
+						console.log('Updated analysis elements with new detection results');
+						// Reset artificial event flag after short delay?
+						setTimeout(() => { isArtificialEvent = false; }, 50);
+					} else {
+						console.log('No significant changes in detected elements, maintaining current UI');
+					}
+				} else {
+					updateAnalysisElements(sketchAnalysis); // Fallback to text parsing
+				}
+			} catch (fetchError) {
+				clearTimeout(timeoutId);
+				if (fetchError.name === 'AbortError') {
+					sketchAnalysis = 'Analysis timed out.';
+				} else {
+					throw fetchError;
+				}
+			}
+		} catch (error) {
+			console.error('Error analyzing sketch:', error);
+			sketchAnalysis = `Error analyzing sketch: ${error instanceof Error ? error.message : 'Unknown error'}`;
+			// Consider fallback using stroke recognition result if available
+			// if (strokeRecognition && strokeRecognition !== "Draw something to see shapes recognized") {
+			//   updateAnalysisElements(strokeRecognition);
+			// }
+		} finally {
+			isAnalyzing = false;
+			forceAnalysisFlag = false; // Ensure flag is reset even on error
+		}
+	}
+
+	// Helper function to determine if there are significant changes (Keep as is)
+	function hasElementsChanged(oldElements, newElements) {
+		if (!oldElements || !newElements) return true;
+		if (oldElements.length !== newElements.length) return true;
+		if (newElements.length === 0) return false; // No change if both empty
+		if (newElements.length <= 3) return true; // Assume change for few elements
+
+		let changedElements = 0;
+		const threshold = 0.05; // 5% change threshold
+
+		for (let i = 0; i < newElements.length; i++) {
+			const newEl = newElements[i];
+			// Find old element by ID preferably, fallback to name
+			const oldEl = oldElements.find(el => el.id === newEl.id) || oldElements.find(el => el.name === newEl.name);
+
+			if (!oldEl) {
+				changedElements++;
+				continue;
+			}
+
+			// Check position change
+			const positionChanged =
+				Math.abs((oldEl.x || 0) - (newEl.x || 0)) > threshold ||
+				Math.abs((oldEl.y || 0) - (newEl.y || 0)) > threshold;
+
+			// Check size change (using normalized bounding box)
+			const sizeChanged =
+				!oldEl.boundingBox ||
+				!newEl.boundingBox ||
+				Math.abs((oldEl.boundingBox.width || 0) - (newEl.boundingBox.width || 0)) > threshold ||
+				Math.abs((oldEl.boundingBox.height || 0) - (newEl.boundingBox.height || 0)) > threshold;
+
+			if (positionChanged || sizeChanged) {
+				changedElements++;
+			}
+		}
+		// Consider it a significant change if more than 25% of elements changed
+		return changedElements > newElements.length * 0.25;
+	}
+
+	// Function to analyze stroke data using our custom recognition service (Keep as is for now)
+	// Still relies on drawingContent.strokes
+	async function recognizeStrokes(retries = 2, timeout = 15000) {
+		if (isRecognizingStrokes) { console.log("Stroke recog skipped: Already running"); return; }
+		if (drawingContent.strokes.length === 0) { console.log("Stroke recog skipped: No strokes"); return; } // Use strokes array for now
+
+		const now = Date.now();
+		if (!forceAnalysisFlag && now - lastStrokeAnalysisTime < ANALYSIS_THROTTLE_MS) { console.log("Stroke recog skipped: Throttled"); return; }
+		// Removed pendingAnalysis check here
+		// if (!forceAnalysisFlag && !pendingAnalysis) return;
+		if (!forceAnalysisFlag && now - lastUserEditTime > ANALYSIS_THROTTLE_MS * 5) {
+			pendingAnalysis = false; // Clear pending if idle too long
+			console.log("Stroke recog skipped: Idle too long");
+			return;
+		}
+		const currentStrokesHash = generateStrokesHash(drawingContent.strokes); // Still uses strokes array
+		if (!forceAnalysisFlag && currentStrokesHash === lastStrokeAnalyzedHash) {
+			console.log("Stroke recog skipped: Strokes unchanged");
+			pendingAnalysis = false;
+			return;
+		}
+
+		try {
+			isRecognizingStrokes = true;
+			previousStrokeRecognition = strokeRecognition;
+			lastStrokeAnalysisTime = Date.now();
+			strokeRecognition = 'Analyzing shapes...';
+			previousRecognizedStrokeCount = drawingContent.strokes.length;
+			lastStrokeAnalyzedHash = currentStrokesHash;
+			pendingAnalysis = false; // Recognition is starting
+			const recogWasForced = forceAnalysisFlag;
+			forceAnalysisFlag = false; // Reset force flag
+
+			console.log('Starting stroke recognition API call...', new Date().toISOString());
+			const controller = new AbortController();
+			const timeoutId = setTimeout(() => controller.abort(), timeout);
+
+			try {
+				const validStrokes = drawingContent.strokes.filter((stroke) => stroke?.points?.length > 0);
+				if (validStrokes.length === 0) throw new Error('No valid points in strokes');
+
+				const response = await fetch('/api/ai/analyze-strokes', {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({
+						strokes: validStrokes, // Sends the strokes array
+						enhancedAnalysis: true,
+						context: additionalContext || '',
+						options: {
+							recognitionLevel: 'detailed', // Example option
+							simplifyThreshold: 0.5 // Example option
+						}
+					}),
+					signal: controller.signal
+				});
+
+				clearTimeout(timeoutId);
+				if (!response.ok) {
+					const errorText = await response.text();
+					console.error("Stroke recog error response:", errorText);
+					throw new Error(`Server error: ${response.status}`);
+				}
+
+				const result = await response.json();
+				recognitionResult = result;
+				strokesAnalysisOutput = result; // Store full result
+
+				// Format result and potentially update analysisElements based on detectedShapes
+				// This part also relies on drawingContent.strokes for bounding box calculation
+				let recognitionSummary = 'No shapes recognized.';
+				let shapesForElements: any[] = [];
+
+				if (result.analysis.type === 'drawing' && result.detectedShapes && Array.isArray(result.detectedShapes)) {
+					recognitionSummary = `Detected shapes: ${result.detectedShapes.map(s => s.name).join(', ')}`;
+					const canvasWidthForAnalysis = internalCanvasWidth;
+					const canvasHeightForAnalysis = internalCanvasHeight;
+
+					shapesForElements = result.detectedShapes.map(shape => {
+						// Use API bbox if available
+						let boundingBox = null;
+						let normalizedBox = null;
+						if(shape.x && shape.y && shape.width && shape.height) {
+							normalizedBox = { minX: shape.x, minY: shape.y, width: shape.width, height: shape.height, maxX: shape.x+shape.width, maxY: shape.y+shape.height };
+							boundingBox = { minX: normalizedBox.minX * canvasWidthForAnalysis, minY: normalizedBox.minY * canvasHeightForAnalysis, maxX: normalizedBox.maxX * canvasWidthForAnalysis, maxY: normalizedBox.maxY * canvasHeightForAnalysis, width: normalizedBox.width * canvasWidthForAnalysis, height: normalizedBox.height * canvasHeightForAnalysis };
+						} else {
+							// Fallback: find related strokes (less accurate)
+							const relatedStrokes = findRelatedStrokes(
+								drawingContent.strokes, // Use strokes array
+								shape.x, shape.y, canvasWidthForAnalysis, canvasHeightForAnalysis, 0.2
+							);
+							if (relatedStrokes.length > 0) {
+								boundingBox = calculateMultiStrokeBoundingBox(relatedStrokes);
+								normalizedBox = normalizeBoundingBox(boundingBox, canvasWidthForAnalysis, canvasHeightForAnalysis);
+							}
+						}
+						return {
+							id: shape.id || `${shape.name}-${Date.now()}`,
+							name: shape.name || 'Unnamed Shape',
+							category: shape.category || 'shape',
+							x: shape.x || (normalizedBox ? normalizedBox.minX + normalizedBox.width / 2 : 0.5),
+							y: shape.y || (normalizedBox ? normalizedBox.minY + normalizedBox.height / 2 : 0.5),
+							width: shape.width || (normalizedBox ? normalizedBox.width : undefined),
+							height: shape.height || (normalizedBox ? normalizedBox.height : undefined),
+							color: getColorForCategory(shape.category || 'shape'),
+							boundingBox: normalizedBox,
+							confidence: shape.confidence,
+							details: shape.details,
+							detectionSource: 'stroke-analysis' // Mark source
+						};
+					});
+
+					// Update analysisElements only if stroke analysis is primary or sketch analysis failed
+					// And if shapes changed significantly or forced
+					if (/* condition to prioritize stroke results */ true) {
+						const hasSignificantChange = hasElementsChanged(analysisElements, shapesForElements);
+						if (hasSignificantChange || recogWasForced) {
+							isArtificialEvent = true;
+							analysisElements = shapesForElements;
+							console.log('Updated analysis elements based on stroke recognition.');
+							setTimeout(() => { isArtificialEvent = false; }, 50);
+						} else {
+							console.log('No significant changes in stroke shapes, maintaining current UI.');
+						}
+					}
+
+				} else if (result.analysis.type === 'text') {
+					recognitionSummary = `Detected handwritten text: ${result.analysis.content || ''}`;
+				}
+
+				strokeRecognition = recognitionSummary;
+
+			} catch (fetchError) {
+				clearTimeout(timeoutId);
+				if (fetchError.name === 'AbortError') throw new Error('Timeout');
+				if (retries > 0) {
+					console.log(`Stroke recognition failed, retrying (${retries} left)...`);
+					await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1s before retry
+					return await recognizeStrokes(retries - 1, timeout);
+				}
+				throw fetchError;
+			}
+		} catch (error) {
+			console.error('Error recognizing strokes:', error);
+			strokeRecognition = `Error recognizing shapes: ${error instanceof Error ? error.message : 'Unknown error'}`;
+			errorMessage = strokeRecognition;
+			setTimeout(() => { errorMessage = null; }, 5000);
+		} finally {
+			isRecognizingStrokes = false;
+			forceAnalysisFlag = false; // Ensure flag reset
+		}
+	}
+
+	// Function to clear the canvas (Updated for Fabric)
+	function clearCanvas() {
+		if (fabricCanvas) {
+			fabricCanvas.clear(); // Clears the canvas visual and removes objects
+			fabricCanvas.backgroundColor = '#f8f8f8'; // Reset background if needed
+			fabricCanvas.renderAll(); // Re-render the empty canvas
+			console.log('Fabric canvas cleared');
+		}
+
+		// Reset internal state
+		drawingContent.strokes = []; // Clear the analysis stroke array too
+		drawingContent = drawingContent; // Trigger reactivity
+		analysisElements = []; // Clear analysis elements
+		sketchAnalysis = "Draw something to see AI's interpretation";
+		strokeRecognition = "Draw something to see shapes recognized";
+		generatedImageUrl.set(null);
+		generatedByModel.set(null);
+		editedImageUrl.set(null); // Reset edited image too
+		editedByModel.set(null);
+		currentCanvasSnapshot = '';
+		imageData = captureCanvasSnapshot(); // Update preview to empty
+		lastAnalyzedStrokesHash = ''; // Reset hashes
+		lastStrokeAnalyzedHash = '';
+		pendingAnalysis = false; // Reset pending state
+	}
+
+	// Get current number of objects on Fabric canvas
+	function getFabricObjectCount(): number {
+		return fabricCanvas?.getObjects()?.length || 0;
+	}
+
+	// Function to generate image from drawing (Updated for Fabric)
+	async function generateImage() {
+		if (getFabricObjectCount() === 0) {
+			// Check Fabric objects instead of strokes array
+			errorMessage = 'Please draw something first!';
+			setTimeout(() => {
+				errorMessage = null;
+			}, 3000);
+			return;
+		}
+
+		console.log('Starting image generation with', getFabricObjectCount(), 'Fabric objects');
+		if (additionalContext) console.log('Additional context:', additionalContext);
+
+		// Capture the canvas snapshot using Fabric
+		imageData = captureCanvasSnapshot();
+		if (!imageData) {
+			errorMessage = 'Could not capture canvas image.';
+			setTimeout(() => {
+				errorMessage = null;
+			}, 3000);
+			return;
+		}
+		console.log('Fabric canvas image captured for preview');
+
+		try {
+			isGenerating.set(true);
+			isEditing.set(true); // Assume we always try both for now
+			errorMessage = null;
+			generatedByModel.set(null);
+			generatedImageUrl.set(null);
+			editedByModel.set(null);
+			editedImageUrl.set(null);
+			generatedImageAspectRatio = selectedAspectRatio;
+
+			// Use the Fabric canvas snapshot directly
+			const imageDataForApi = imageData;
+
+			// Prepare other data (analysis results, context, etc. - keep existing logic for now)
+			const currentPrompt = $gptImagePrompt;
+			const currentEditPrompt = $gptEditPrompt;
+
+			// Send analysis elements as detectedObjects
+			const enhancedObjects = analysisElements.map((obj) => ({
+				name: obj.name,
+				x: obj.x, // Normalized
+				y: obj.y, // Normalized
+				width: obj.width, // Normalized
+				height: obj.height, // Normalized
+				category: obj.category,
+				details: obj.details,
+				confidence: obj.confidence,
+				source: obj.detectionSource
+			}));
+
+			// Use strokes array for drawingContent temporarily, or consider sending Fabric JSON
+			// Sending Fabric JSON (canvas.toJSON()) might be better long-term but requires API changes
+			const drawingContentForApi = JSON.parse(JSON.stringify(drawingContent)); // Use strokes array for now
+
+			const requestPayload = {
+				// drawingContent: drawingContentForApi, // Needs API adjustment if using Fabric JSON
+				imageData: imageDataForApi, // Use Fabric snapshot
+				additionalContext,
+				aspectRatio: selectedAspectRatio,
+				sketchAnalysis,
+				strokeRecognition,
+				prompt: currentPrompt,
+				// structureData: {}, // Removed?
+				detectedObjects: enhancedObjects
+			};
+			const editRequestPayload = { ...requestPayload, prompt: currentEditPrompt };
+
+			console.log("Generate Payload:", requestPayload);
+			console.log("Edit Payload:", editRequestPayload);
+
+
+			// Call APIs (Keep existing parallel call logic)
+			const [standardResponse, editResponse] = await Promise.all([
+				fetch('/api/ai/generate-image', {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify(requestPayload)
+				}),
+				fetch('/api/ai/edit-image', {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify(editRequestPayload)
+				})
+			]);
+
+			// Handle responses (Keep existing logic)
+			let standardResult, editResult;
+			if (standardResponse.ok) {
+				standardResult = await standardResponse.json();
+				console.log('Standard generation result:', standardResult);
+				generatedImageUrl.set(standardResult.imageUrl);
+				generatedByModel.set(standardResult.modelUsed || 'gpt-image-1'); // Default if not provided
+			} else {
+				const errorText = await standardResponse.text();
+				console.error('Standard generation failed:', standardResponse.status, errorText);
+				// Don't throw yet, edit might succeed
+			}
+
+			if (editResponse.ok) {
+				editResult = await editResponse.json();
+				console.log('Edit generation result:', editResult);
+				editedImageUrl.set(editResult.imageUrl);
+				editedByModel.set(editResult.modelUsed || 'gpt-edit'); // Default if not provided
+			} else {
+				const errorText = await editResponse.text();
+				console.error('Edit generation failed:', editResponse.status, errorText);
+				// Don't throw yet, standard might have succeeded
+			}
+
+			if (!standardResponse.ok && !editResponse.ok) {
+				throw new Error('Failed to generate images from both endpoints');
+			}
+
+		} catch (error) {
+			console.error('Error generating images:', error);
+			errorMessage = error instanceof Error ? error.message : 'An unknown error occurred during image generation';
+			setTimeout(() => { errorMessage = null; }, 5000); // Show error for 5 seconds
+		} finally {
+			isGenerating.set(false);
+			isEditing.set(false);
+		}
+	}
+
+	// Helper functions (Keep as is for now, used by analysis)
+	function calculateElementWidth(element) {
+		/* ... */
+		return 120;
+	}
+	function calculateElementHeight(element) {
+		/* ... */
+		return 120;
+	}
+	function getColorForCategory(category) {
+		// Simple color mapping based on category name or hash
+		if (!category) return '#CCCCCC'; // Default grey
+		switch (category.toLowerCase()) {
+			case 'face': return '#FFC107'; // Amber
+			case 'person': return '#FF5722'; // Deep Orange
+			case 'animal': return '#4CAF50'; // Green
+			case 'building': return '#03A9F4'; // Light Blue
+			case 'vehicle': return '#E91E63'; // Pink
+			case 'object': return '#9C27B0'; // Purple
+			case 'text': return '#2196F3'; // Blue
+			case 'shape': return '#00BCD4'; // Cyan
+			default:
+				// Generate a color based on category name hash for consistency
+				let hash = 0;
+				for (let i = 0; i < category.length; i++) {
+					hash = category.charCodeAt(i) + ((hash << 5) - hash);
+					hash = hash & hash; // Convert to 32bit integer
+				}
+				const hue = hash % 360;
+				return `hsl(${hue}, 70%, 60%)`;
+		}
+	}
+	function updateAnalysisElements(analysisText) {
+		/* ... uses findRelatedStrokes(drawingContent.strokes) ... */
+		// This function is less reliable now, relies on text parsing and old strokes array
+		console.warn('updateAnalysisElements based on text is less reliable with Fabric.');
+	}
+	function getPositionFromText(position1, position2) {
+		/* ... */
+		return { x: 0.5, y: 0.5 };
+	}
+	function getCategoryFromObjectName(name) {
+		if (!name) return 'unknown';
+		const lowerName = name.toLowerCase();
+		if (lowerName.includes('face') || lowerName.includes('head')) return 'face';
+		if (lowerName.includes('person') || lowerName.includes('man') || lowerName.includes('woman') || lowerName.includes('child') || lowerName.includes('body')) return 'person';
+		if (lowerName.includes('cat') || lowerName.includes('dog') || lowerName.includes('bird') || lowerName.includes('animal')) return 'animal';
+		if (lowerName.includes('house') || lowerName.includes('building') || lowerName.includes('structure')) return 'building';
+		if (lowerName.includes('car') || lowerName.includes('vehicle') || lowerName.includes('boat') || lowerName.includes('plane')) return 'vehicle';
+		if (lowerName.includes('text') || lowerName.includes('word') || lowerName.includes('letter')) return 'text';
+		if (lowerName.includes('circle') || lowerName.includes('square') || lowerName.includes('triangle') || lowerName.includes('line') || lowerName.includes('shape')) return 'shape';
+		return 'object'; // Default category
+	}
+	function generateStrokesHash(strokes: any[]): string {
+		/* ... */
+		// Consider hashing Fabric JSON instead if analysis moves away from strokes array
+		try {
+			return JSON.stringify(strokes);
+		} catch (e) {
+			console.error("Failed to stringify strokes for hash:", e);
+			return `error-${Date.now()}`;
+		}
+	}
+
+	// Function to toggle visualization mode (Keep as is)
+	function toggleVisualizationMode() {
+		/* ... */
+	}
+	function handleGPTOverlayToggle() {
+		/* ... */
+	}
+	function handleTFOverlayToggle() {
+		/* ... */
+	}
+
+	// Separate TensorFlow/GPT objects (Keep as is, based on analysisElements)
+	$: {
+		tfObjects = (analysisElements || []).filter(
+			(obj) =>
+				(obj?.detectionSource || obj?.source || '').toLowerCase() === 'tensorflow' ||
+				(obj?.detectionSource || obj?.source || '').toLowerCase() === 'cnn'
+		);
+		gptObjects = (analysisElements || []).filter(
+			(obj) =>
+				(obj?.detectionSource || obj?.source || '').toLowerCase() !== 'tensorflow' &&
+				(obj?.detectionSource || obj?.source || '').toLowerCase() !== 'cnn'
+		);
+	}
+
+	// Function to track when a edit happens on the canvas (Less relevant now, handled by Fabric events)
+	// function onCanvasEdit(editType: string, data?: any) { /* ... */ }\n
+
+	// Function to capture the current canvas as an image (Updated for Fabric)
+	function captureCanvasSnapshot(): string {
+		if (!fabricCanvas || getFabricObjectCount() === 0) {
+			// console.log("Snapshot skipped: Canvas empty or not ready");
+			return ''; // Return empty string if canvas is empty or not ready
+		}
+		try {
+			// Ensure background color is included in the snapshot
+			// Use multiplier for higher resolution snapshot if needed, but impacts performance
+			return fabricCanvas.toDataURL({ format: 'png', quality: 0.9, multiplier: 1 });
+		} catch (error) {
+			console.error('Error capturing Fabric canvas snapshot:', error);
+			return '';
+		}
+	}
+
+	// Function to handle enhanced objects from AIOverlay (Keep as is, updates prompt)
+	function handleEnhancedObjects(event) {
+		if (event.detail?.objects) {
+			updatePromptWithObjects(event.detail.objects);
+		}
+	}
+	function updatePromptWithObjects(objects) {
+		if (!objects || objects.length === 0) {
+			detectedObjectsText = '';
+			return;
+		}
+		detectedObjectsText = objects
+			.map(
+				(obj) =>
+					`${obj.name}: x:${obj.x?.toFixed(3)}, y:${obj.y?.toFixed(3)} with width:${obj.width?.toFixed(3)}, height:${obj.height?.toFixed(3)} (Confidence: ${obj.confidence?.toFixed(2) || 'N/A'})`
+			)
+			.join('\n');
+		// Trigger prompt rebuild
+		gptImagePrompt.set(buildGptImagePrompt());
+		gptEditPrompt.set(buildGptEditPrompt());
+	}
+	let detectedObjectsText = ''; // Keep variable
+
+	// Function to handle objects detected by TensorFlow (Keep as is, updates prompt)
+	function handleTFObjects(event) {
+		if (event.detail?.objects) {
+			updateTFObjectsInPrompt(event.detail.objects);
+		}
+	}
+	function updateTFObjectsInPrompt(objects) {
+		if (!objects || objects.length === 0) {
+			tfDetectedObjectsText = '';
+			return;
+		}
+		tfDetectedObjectsText = objects
+			.map(
+				(obj) =>
+					`${obj.class}: x:${obj.bbox?.[0]?.toFixed(3)}, y:${obj.bbox?.[1]?.toFixed(3)} with width:${obj.bbox?.[2]?.toFixed(3)}, height:${obj.bbox?.[3]?.toFixed(3)} (Score: ${obj.score?.toFixed(2)})`
+			)
+			.join('\n');
+		// Trigger prompt rebuild
+		gptImagePrompt.set(buildGptImagePrompt());
+		gptEditPrompt.set(buildGptEditPrompt());
+	}
+	let tfDetectedObjectsText = ''; // Keep variable
+
+	// Add a handler for analysis options changes (Keep as is)
+	function handleAnalysisOptionsChanged(event) {
+		console.log('Analysis options changed:', event.detail);
+		// Update analysisOptions store or local variables if needed
+		// Re-run analysis if significant options changed
+		forceAnalysisFlag = true;
+		analyzeDrawing(); // Example: Trigger analysis on option change
+	}
+
+	// Modify the analyzeDrawing function (Keep as is, uses analyzeSketch/recognizeStrokes)
+	async function analyzeDrawing() {
+		console.log('Force analyzing drawing...');
+		forceAnalysisFlag = true; // Ensure flag is set before calls
+		await analyzeSketch();
+		await recognizeStrokes();
+		forceAnalysisFlag = false; // Reset after completion
+	}
+
+	// Function to build the prompt for GPT-Image-1 Edit (Keep as is)
+	function buildGptEditPrompt() {
+		let basePrompt = buildGptImagePrompt(); // Start with the generation prompt
+
+		// Modify for editing context
+		let editPrompt = basePrompt.replace(
+			'Complete this drawing.',
+			'Subtly enhance this drawing based on the user sketch.'
+		);
+		editPrompt = editPrompt.replace(
+			'simply add onto the existing drawing EXACTLY as it is.',
+			'preserve the core structure and elements while refining details like texture, lighting, and style.'
+		);
+		editPrompt = editPrompt.replace(
+			'Create a DIRECT, FRONT-FACING VIEW',
+			'Maintain the existing perspective and'
+		);
+		editPrompt +=
+			'\n\nEDITING FOCUS: Focus on improving realism, detail, and artistic quality without altering the fundamental composition or adding/removing major elements shown in the sketch.';
+
+		return editPrompt.length > 4000 ? editPrompt.substring(0, 3997) + '...' : editPrompt;
+	}
+
+	// Reactive updates for prompts (Keep as is)
+	$: {
+		const newEditPrompt = buildGptEditPrompt();
+		gptEditPrompt.set(newEditPrompt);
+	}
+	$: if (additionalContext !== undefined) {
+		const newEditPrompt = buildGptEditPrompt();
+		gptEditPrompt.set(newEditPrompt);
+	}
+	$: {
+		$strokeOptions;
+	} // Reactivity to store
+
+	// Function to check if the device is mobile (Keep as is)
+	let isMobile = false; // Keep track of mobile state
+	function mobileCheck() {
+		isMobile = window.innerWidth < 768; // Example breakpoint
+		console.log('Is mobile:', isMobile);
+		// Potentially adjust UI or behavior based on isMobile
+	}
+
+	// Function to capture the current canvas state (Replaced by captureCanvasSnapshot)
+	// function captureCanvas() { /* ... */ } // REMOVED
+
+	// Function to run analysis with specified options (Keep as is)
+	function runAnalysis(force = false) {
+		console.log(`Running analysis requested (force=${force})`);
+		if (force) {
+			forceAnalysisFlag = true;
+		}
+		analyzeDrawing(); // This now handles the force flag internally
+	}
+	function analyzeResults(result) {
+		/* ... */
+	} // Keep placeholder
+	function computeStrokesHash(strokes) {
+		/* ... */
+	} // Keep (used by analysis)
+
+	// State variables for Shape Recognition Dialog (Keep as is)
+	let showShapeRecognitionDialog = false;
+	let showAIDebugMode = false;
+	let buttonPosition = { right: '20px', bottom: '80px' }; // Adjusted default position
+	let shapeDialogPosition = { right: '20px', top: '80px' }; // Adjusted default position
+
+	// State for aspect ratio (Keep as is)
+	let selectedAspectRatio = '1:1';
+	const aspectRatios = ['1:1', 'portrait', 'landscape']; // Simpler array
+	let generatedImageAspectRatio = '1:1';
+	$: {
+		if (selectedAspectRatio && browser && fabricCanvas) {
+			generatedImageAspectRatio = selectedAspectRatio;
+			resizeCanvas();
+		}
+	} // Simplified reactivity
+
+	// Function to toggle Shape Recognition Dialog (Keep as is)
+	function toggleShapeRecognitionDialog() {
+		showShapeRecognitionDialog = !showShapeRecognitionDialog;
+		if (showShapeRecognitionDialog && getFabricObjectCount() > 0) {
+			currentCanvasSnapshot = captureCanvasSnapshot(); // Capture snapshot when opening dialog
+		}
+	}
+	function toggleDebugMode() {
+		showAIDebugMode = !showAIDebugMode;
+	}
+
+	// Function to select aspect ratio
+	function selectAspectRatio(ratio: string) {
+		if (aspectRatios.includes(ratio)) {
+			selectedAspectRatio = ratio;
+			// resizeCanvas will be triggered by the reactive block
+		}
+	}
+</script>
+
+<svelte:head>
+	<title>Daydream Canvas</title> <!-- Updated Title -->
+	<link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet" />
+	<link
+		href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"
+		rel="stylesheet"
+	/>
+</svelte:head>
+
+<div id="app">
+	<div class="draw-demo-container">
+		<header class="demo-header">
+			<!-- Header content (context input, generate button) remains the same -->
+			<div class="context-input-container">
+				<input
+					id="context-input"
+					type="text"
+					bind:value={additionalContext}
+					placeholder="Optional: Describe your drawing or desired style..."
+					class="context-input"
+				/>
+				<button
+					class="generate-button"
+					on:click={generateImage}
+					disabled={$isGenerating || getFabricObjectCount() === 0}
+					title="Generate image based on sketch"
+				>
+					<!-- Check Fabric object count -->
+					<span class="material-icons">auto_awesome</span>
+					{$isGenerating ? 'Creating...' : 'Create'}
+				</button>
+			</div>
+			<!-- Aspect Ratio Selector -->
+			<div class="aspect-ratio-selector">
+				{#each aspectRatios as ratio (ratio)}
+					<button
+						class="aspect-button"
+						class:active={selectedAspectRatio === ratio}
+						on:click={() => selectAspectRatio(ratio)}
+						title={`Set aspect ratio to ${ratio}`}
+					>
+						{#if ratio === '1:1'}
+							<span class="material-icons">crop_square</span>
+						{:else if ratio === 'portrait'}
+							<span class="material-icons">crop_portrait</span>
+						{:else if ratio === 'landscape'}
+							<span class="material-icons">crop_landscape</span>
+						{/if}
+					</button>
+				{/each}
+			</div>
+		</header>
+
+		<div class="canvas-container">
+			<div class="toolbars-wrapper">
+				<!-- Tool Selection Toolbar remains the same -->
+				<div class="vertical-toolbar tool-selector-toolbar">
+					<button
+						class="tool-button"
+						class:active={$selectedTool === 'pen'}
+						on:click={() => selectedTool.set('pen')}
+						title="Pen Tool"
+					>
+						<span class="material-icons">edit</span>
+					</button>
+					<button
+						class="tool-button"
+						class:active={$selectedTool === 'eraser'}
+						on:click={() => selectedTool.set('eraser')}
+						title="Eraser Tool"
+					>
+						<!-- Use a generic eraser icon -->
+						<i class="fas fa-eraser"></i>
+						<!-- <span class="material-icons">layers_clear</span> -->
+					</button>
+					<button
+						class="tool-button"
+						class:active={$selectedTool === 'select'}
+						on:click={() => selectedTool.set('select')}
+						title="Select Tool"
+					>
+						<span class="material-icons">touch_app</span>
+					</button>
+					<button class="tool-button" on:click={clearCanvas} title="Clear Canvas">
+						<span class="material-icons">delete_outline</span>
+					</button>
+				</div>
+
+				<!-- Stroke Options Toolbar remains the same (bindings update Fabric brush via reactive effect) -->
+				<div class="vertical-toolbar options-toolbar">
+					<div class="tools-group">
+						<div class="tool-group color-picker-group">
+							<label for="stroke-color" class="tool-label">Color</label>
+							<input
+								id="stroke-color"
+								type="color"
+								bind:value={strokeColor}
+								on:input={() => strokeOptions.update((opts) => ({ ...opts, color: strokeColor }))}
+								title="Stroke Color"
+							/>
+						</div>
+						<div class="tool-group">
+							<label class="tool-label">Size</label>
+							<VerticalSlider
+								min={1}
+								max={50}
+								step={0.5}
+								bind:value={strokeSize}
+								color={'#6355FF'}
+								height={'120px'}
+								onChange={() => strokeOptions.update((opts) => ({ ...opts, size: strokeSize }))}
+								showValue={true}
+								label="Pen Size"
+							/>
+						</div>
+						<div class="tool-group">
+							<label class="tool-label">Eraser</label>
+							<VerticalSlider
+								min={1}
+								max={100}
+								step={1}
+								bind:value={eraserSize}
+								color={'#CCCCCC'}
+								height={'80px'}
+								onChange={() => {
+									if (fabricCanvas && $selectedTool === 'eraser' && fabricCanvas.freeDrawingBrush) {
+										fabricCanvas.freeDrawingBrush.width = eraserSize;
+									}
+								}}
+								showValue={true}
+								label="Eraser Size"
+							/>
+						</div>
+						<!-- Opacity might need different handling with Fabric paths -->
+						<!-- <div class="tool-group">
+							<label class="tool-label">Opacity</label>
+							<VerticalSlider
+								min={0.1} max={1} step={0.1} bind:value={strokeOpacity} color="#6355FF" height="120px"
+								onChange={() => strokeOptions.update(opts => ({...opts, opacity: strokeOpacity}))}
+								showValue={true}
+								label="Opacity"
+							/>
+						</div> -->
+					</div>
+				</div>
+			</div>
+
+			<!-- Canvas Wrapper -->
+			<div
+				class="canvas-wrapper input-canvas"
+				class:ratio-1-1={selectedAspectRatio === '1:1'}
+				class:ratio-portrait={selectedAspectRatio === 'portrait'}
+				class:ratio-landscape={selectedAspectRatio === 'landscape'}
+			>
+				<!-- The actual canvas element Fabric will use -->
+				<canvas bind:this={htmlCanvasElement} id="fabric-canvas"></canvas>
+				<!-- Removed event listeners from element -->
+
+				<!-- Overlays are commented out for now -->
+				<!--
+				{#if showAnalysisView && (analysisElements.length > 0 || (drawingContent?.strokes?.length === 0 && !analysisElements.length))}
+					{#if showGPTOverlay}
+					<div class="ai-overlay-wrapper" style="...">
+						<AIOverlay ... />
+					</div>
+					{/if}
+					{#if showTFOverlay}
+					<TFOverlay ... />
+					{/if}
+				{/if}
+				{#if showStrokeOverlay && drawingContent.strokes.length > 0}
+					<StrokeOverlay ... />
+				{/if}
+				-->
+			</div>
+
+			<!-- Output Canvas Wrapper remains the same -->
+			<div
+				class="canvas-wrapper output-canvas"
+				class:ratio-1-1={generatedImageAspectRatio === '1:1'}
+				class:ratio-portrait={generatedImageAspectRatio === 'portrait'}
+				class:ratio-landscape={generatedImageAspectRatio === 'landscape'}
+			>
+				<div
+					class="output-display"
+					class:ratio-1-1={generatedImageAspectRatio === '1:1'}
+					class:ratio-portrait={generatedImageAspectRatio === 'portrait'}
+					class:ratio-landscape={generatedImageAspectRatio === 'landscape'}
+				>
+					{#if $isGenerating || $isEditing}
+						<!-- Loading/Generating State -->
+						<div class="ai-generating-overlay">
+							<div class="spinner"></div>
+							<p>Creating your image...</p>
+						</div>
+					{:else if $editedImageUrl}
+						<img src={$editedImageUrl} alt="AI edited image based on sketch" />
+						{#if $editedByModel}
+							<!-- Use editedByModel here -->
+							<div class="model-badge">Enhanced by {$editedByModel}</div>
+						{/if}
+					{:else if $generatedImageUrl}
+						<!-- Show standard generated image if edit failed or not available -->
+						<img src={$generatedImageUrl} alt="AI generated image based on sketch" />
+						{#if $generatedByModel}
+							<div class="model-badge">Created by {$generatedByModel}</div>
+						{/if}
+					{:else}
+						<!-- Show translucent preview of drawing canvas when no generated image -->
+						<div
+							class="drawing-preview"
+							style="aspect-ratio: {internalCanvasWidth || 1}/{internalCanvasHeight || 1}"
+						>
+							{#if imageData}
+								<img
+									src={imageData}
+									alt="Drawing preview"
+									class="drawing-preview-image"
+									style="width: 100%; height: 100%; object-fit: contain;"
+								/>
+							{:else}
+								<div class="placeholder-text">
+									<span class="material-icons">palette</span>
+									<p>Your generated image will appear here</p>
+								</div>
+							{/if}
+						</div>
+					{/if}
+
+					<!-- Output Overlays (Commented out) -->
+					<!--
+					<div class="output-overlay-container" style="...">
+					<AIOverlay ... />
+					</div>
+					-->
+				</div>
+			</div>
+		</div>
+
+		<!-- Action Area remains the same -->
+		<div class="action-area">
+			{#if errorMessage}
+				<div class="error-message" transition:fade={{ duration: 200 }}>
+					<span class="material-icons">error_outline</span>
+					{errorMessage}
+				</div>
+			{/if}
+
+			<!-- Shape Recognition remains the same (relies on analysisElements) -->
+			<ShapeRecognitionButton
+				position={buttonPosition}
+				active={showShapeRecognitionDialog}
+				objectCount={analysisElements.length}
+				isAnalyzing={isAnalyzing || isRecognizingStrokes}
+				hasTextAnalysis={
+					strokesAnalysisOutput?.analysis?.type === 'text' &&
+					strokesAnalysisOutput?.analysis?.content
+				}
+				hasStrokesAnalysis={strokesAnalysisOutput?.detectedShapes?.length > 0}
+				hasSketchAnalysis={sketchAnalysisOutput?.detectedObjects?.length > 0}
+				on:toggle={toggleShapeRecognitionDialog}
+			></ShapeRecognitionButton>
+			{#if showShapeRecognitionDialog}
+				<ShapeRecognitionDialog
+					show={showShapeRecognitionDialog}
+					position={shapeDialogPosition}
+					detectedObjects={analysisElements}
+					isAnalyzing={isAnalyzing || isRecognizingStrokes}
+					isAnalyzingText={isAnalyzing}
+					sketchAnalysis={sketchAnalysis}
+					strokeRecognition={strokeRecognition}
+					debugMode={showAIDebugMode}
+					on:close={() => (showShapeRecognitionDialog = false)}
+					on:toggleDebug={toggleDebugMode}
+					canvasSnapshot={currentCanvasSnapshot}
+					sketchAnalysisOutput={sketchAnalysisOutput}
+					strokesAnalysisOutput={strokesAnalysisOutput}
+					on:optionsChanged={handleAnalysisOptionsChanged}
+					on:refreshAnalysis={() => runAnalysis(true)}
+				/>
+			{/if}
+
+
+			<!-- Debug Pressure Overlay (Keep if needed, might need coordinate adjustment for Fabric zoom) -->
+			{#if showDebugPressure && drawingContent.strokes.length > 0}
+				<!-- ... overlay divs ... -->
+			{/if}
+		</div>
+	</div>
+</div>
+
+<style lang="scss">
+	// Keep existing SCSS, minor adjustments might be needed for Fabric container/canvas elements
+
+	#app {
+		display: flex;
+		justify-content: center;
+		align-items: flex-start; // Align top
+		padding: 1rem;
+		height: 100vh;
+		width: 100vw;
+		box-sizing: border-box;
+		background-color: #e8e8e8; // Slightly darker background
+		overflow: hidden; // Prevent scrollbars on the main app container
+	}
+
+	.draw-demo-container {
+		display: flex;
+		flex-direction: column;
+		width: 100%;
+		max-width: 1800px; // Max width for large screens
+		height: calc(100vh - 2rem); // Account for app padding
+		background-color: #f8f8f8; // Keep canvas area background light
+		border-radius: 12px;
+		box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+		overflow: hidden; // Prevent internal scrolling
+	}
+
+	.demo-header {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		padding: 0.75rem 1.5rem;
+		border-bottom: 1px solid #ddd;
+		background-color: #fff;
+		flex-shrink: 0; // Prevent header from shrinking
+	}
+
+	.context-input-container {
+		display: flex;
+		align-items: center;
+		flex-grow: 1;
+		margin-right: 1rem; // Space before aspect ratio buttons
+	}
+
+	.context-input {
+		flex-grow: 1;
+		padding: 0.6rem 1rem;
+		border: 1px solid #ccc;
+		border-radius: 6px;
+		font-size: 0.95rem;
+		margin-right: 0.75rem; // Space before generate button
+		&:focus {
+			outline: none;
+			border-color: #6355ff;
+			box-shadow: 0 0 0 2px rgba(99, 85, 255, 0.2);
+		}
+	}
+
+	.generate-button {
+		display: flex;
+		align-items: center;
+		padding: 0.6rem 1.2rem;
+		background-color: #6355ff;
+		color: white;
+		border: none;
+		border-radius: 6px;
+		cursor: pointer;
+		font-size: 0.95rem;
+		font-weight: 500;
+		transition: background-color 0.2s ease;
+
+		.material-icons {
+			margin-right: 0.4rem;
+			font-size: 1.2em;
+		}
+
+		&:hover:not(:disabled) {
+			background-color: #5346d8;
+		}
+
+		&:disabled {
+			background-color: #ccc;
+			cursor: not-allowed;
+		}
+	}
+
+	.aspect-ratio-selector {
+		display: flex;
+		gap: 0.5rem;
+	}
+
+	.aspect-button {
+		background: none;
+		border: 1px solid #ccc;
+		border-radius: 6px;
+		padding: 0.4rem;
+		cursor: pointer;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		color: #555;
+		transition: all 0.2s ease;
+
+		.material-icons {
+			font-size: 1.4rem;
+		}
+
+		&:hover {
+			background-color: #eee;
+			border-color: #bbb;
+		}
+
+		&.active {
+			background-color: #6355ff;
+			color: white;
+			border-color: #6355ff;
+		}
+	}
+
+
+	.canvas-container {
+		display: flex;
+		flex-grow: 1; // Allow canvas area to grow
+		overflow: hidden; // Prevent canvas area from causing scroll
+		position: relative; // For absolute positioning of toolbars
+		padding: 1rem; // Padding around the canvas area
+		gap: 1rem; // Gap between toolbars and canvases
+	}
+
+	.toolbars-wrapper {
+		display: flex;
+		flex-direction: column;
+		gap: 1rem;
+		flex-shrink: 0; // Prevent toolbars from shrinking
+	}
+
+	.vertical-toolbar {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		padding: 0.75rem 0.5rem;
+		background-color: #fff;
+		border-radius: 8px;
+		box-shadow: 0 2px 5px rgba(0, 0, 0, 0.08);
+		gap: 0.75rem; // Gap between buttons/groups
+	}
+
+	.tool-selector-toolbar {
+		// Specific styles if needed
+	}
+
+	.options-toolbar {
+		// Specific styles if needed
+	}
+
+	.tool-button {
+		background: none;
+		border: none;
+		border-radius: 6px;
+		padding: 0.6rem;
+		cursor: pointer;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		color: #555;
+		transition: background-color 0.2s ease, color 0.2s ease;
+
+		.material-icons, .fas {
+			font-size: 1.5rem; // Consistent icon size
+		}
+
+		&:hover {
+			background-color: #eee;
+		}
+
+		&.active {
+			background-color: #e0dfff;
+			color: #6355ff;
+		}
+	}
+
+	.tools-group {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 1.5rem; // More space between option groups
+		width: 100%;
+	}
+
+	.tool-group {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		width: 100%;
+		gap: 0.5rem; // Space between label and control
+	}
+
+	.tool-label {
+		font-size: 0.75rem;
+		color: #666;
+		margin-bottom: 0.25rem;
+	}
+
+	.color-picker-group {
+		label {
+			margin-bottom: 0.25rem; // Adjust spacing if needed
+		}
+	}
+
+
+	input[type='color'] {
+		-webkit-appearance: none;
+		-moz-appearance: none;
+		appearance: none;
+		width: 36px;
+		height: 36px;
+		background-color: transparent;
+		border: 1px solid #ccc;
+		border-radius: 50%; // Circular color picker
+		cursor: pointer;
+		padding: 0;
+		overflow: hidden; // Hide default browser chrome
+
+		&::-webkit-color-swatch-wrapper {
+			padding: 0;
+			border: none;
+		}
+		&::-webkit-color-swatch {
+			border: none;
+			border-radius: 50%;
+		}
+		&::-moz-color-swatch {
+			border: none;
+			border-radius: 50%;
+		}
+
+		&:hover {
+			border-color: #aaa;
+		}
+	}
+
+
+	.canvas-wrapper {
+		flex-grow: 1;
+		display: flex;
+		justify-content: center;
+		align-items: center;
+		background-color: #fff; // White background for the canvas area itself
+		border-radius: 8px;
+		overflow: hidden; // Clip canvas if it exceeds bounds
+		position: relative; // For potential overlays later
+		box-shadow: inset 0 0 10px rgba(0, 0, 0, 0.05); // Subtle inner shadow
+	}
+
+	.canvas-wrapper.input-canvas {
+		// Specific styles for input canvas wrapper
+	}
+
+	.canvas-wrapper.output-canvas {
+		// Specific styles for output canvas wrapper
+	}
+
+	// Style the Fabric canvas container dynamically created
+	// Use :global() if needed, but direct targeting should work
+	.canvas-wrapper :global(.canvas-container) {
+		// Target Fabric's generated container
+		// Fabric sets width/height inline, so we mainly control positioning/shadows here
+		// Ensure it doesn't exceed the wrapper
+		max-width: 100%;
+		max-height: 100%;
+		box-shadow: 0 0 8px rgba(0, 0, 0, 0.1); // Shadow for the canvas itself
+		border-radius: 4px; // Slight rounding for the canvas element
+		overflow: hidden; // Clip contents
+	}
+
+	// Ensure Fabric's canvases are block level and positioned correctly
+	.canvas-wrapper :global(.canvas-container canvas) {
+		display: block; // Prevent inline spacing issues
+		// Fabric typically positions these absolute itself
+	}
+
+	// Style the HTML canvas element we bind in Svelte (#fabric-canvas)
+	#fabric-canvas {
+		// This element is used by Fabric, but its display size is controlled by Fabric's container
+		// We just need to ensure it's present.
+		display: block; // Make sure it's block-level
+		max-width: 100%;
+		max-height: 100%;
+	}
+
+
+	.output-display {
+		width: 100%;
+		height: 100%;
+		display: flex;
+		justify-content: center;
+		align-items: center;
+		position: relative; // For model badge and loading overlay
+
+		img {
+			max-width: 100%;
+			max-height: 100%;
+			object-fit: contain; // Ensure image fits without distortion
+			border-radius: 4px; // Match canvas rounding
+		}
+
+		.drawing-preview {
+			width: 100%;
+			height: 100%;
+			display: flex;
+			justify-content: center;
+			align-items: center;
+			position: relative; // For placeholder/loading text
+			opacity: 0.6; // Make preview translucent
+
+			.drawing-preview-image {
+				filter: grayscale(50%); // Optional: make preview less vibrant
+			}
+
+			.placeholder-text {
+				display: flex;
+				flex-direction: column;
+				align-items: center;
+				color: #aaa;
+				text-align: center;
+				.material-icons {
+					font-size: 3rem;
+					margin-bottom: 0.5rem;
+				}
+				p {
+					margin: 0;
+					font-size: 0.9rem;
+				}
+			}
+		}
+
+		.model-badge {
+			position: absolute;
+			bottom: 8px;
+			right: 8px;
+			background-color: rgba(0, 0, 0, 0.6);
+			color: white;
+			padding: 3px 8px;
+			border-radius: 4px;
+			font-size: 0.7rem;
+			font-weight: 500;
+		}
+
+		.ai-generating-overlay {
+			position: absolute;
+			top: 0;
+			left: 0;
+			width: 100%;
+			height: 100%;
+			background-color: rgba(255, 255, 255, 0.8);
+			display: flex;
+			flex-direction: column;
+			justify-content: center;
+			align-items: center;
+			z-index: 10;
+			border-radius: 4px; // Match parent rounding
+
+			.spinner {
+				border: 4px solid rgba(0, 0, 0, 0.1);
+				width: 36px;
+				height: 36px;
+				border-radius: 50%;
+				border-left-color: #6355ff;
+				animation: spin 1s ease infinite;
+				margin-bottom: 1rem;
+			}
+
+			p {
+				color: #333;
+				font-weight: 500;
+			}
+		}
+	}
+
+
+	.action-area {
+		position: fixed; // Use fixed positioning relative to viewport
+		bottom: 1.5rem;
+		right: 1.5rem;
+		z-index: 100; // Ensure it's above canvas content
+		display: flex;
+		flex-direction: column;
+		align-items: flex-end;
+		gap: 1rem;
+	}
+
+	.error-message {
+		display: flex;
+		align-items: center;
+		background-color: #ffdddd;
+		color: #d8000c;
+		padding: 0.75rem 1.25rem;
+		border-radius: 6px;
+		border: 1px solid #ffaaaa;
+		font-size: 0.9rem;
+		font-weight: 500;
+		box-shadow: 0 2px 5px rgba(216, 0, 12, 0.2);
+
+		.material-icons {
+			margin-right: 0.5rem;
+		}
+	}
+
+	/* Aspect Ratio Styling for Canvas Wrappers */
+	/* These ensure the wrapper maintains aspect ratio, canvas inside fits */
+	.canvas-wrapper {
+		&.ratio-1-1 { aspect-ratio: 1 / 1; }
+		&.ratio-portrait { aspect-ratio: 1024 / 1792; }
+		&.ratio-landscape { aspect-ratio: 1792 / 1024; }
+	}
+
+	// Ensure the Fabric container *also* respects aspect ratio if needed,
+	// although setting it on the wrapper is usually sufficient.
+	// .canvas-wrapper.ratio-1-1 :global(.canvas-container) { aspect-ratio: 1/1; }
+	// etc.
+
+	@keyframes spin {
+		0% { transform: rotate(0deg); }
+		100% { transform: rotate(360deg); }
+	}
+
+</style>
