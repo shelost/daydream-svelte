@@ -2476,6 +2476,13 @@
         {$isGenerating ? 'Creating...' : 'Create'}
     </button>
     </div>
+
+    {#if errorMessage}
+    <div class="error-message" transition:fade={{ duration: 200 }}>
+      <span class="material-icons">error_outline</span>
+      {errorMessage}
+    </div>
+  {/if}
   </header>
 
   <div class="canvas-container">
@@ -2717,16 +2724,12 @@
   <div class="action-area">
 
 
-    {#if errorMessage}
-      <div class="error-message" transition:fade={{ duration: 200 }}>
-        <span class="material-icons">error_outline</span>
-        {errorMessage}
-      </div>
-    {/if}
+
 
 
 
     <!-- Shape Recognition Dialog and Button -->
+     <!--
     <ShapeRecognitionButton
       position={buttonPosition}
       active={showShapeRecognitionDialog}
@@ -2737,6 +2740,7 @@
       hasSketchAnalysis={analysisElements.length > 0}
       on:toggle={toggleShapeRecognitionDialog}
     ></ShapeRecognitionButton>
+    -->
 
     <!-- Component for displaying recognized shapes -->
     <ShapeRecognitionDialog
