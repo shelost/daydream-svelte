@@ -1,8 +1,10 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import type { DrawingContent } from '$lib/types';
-import { svgFromStrokes } from '$lib/utils/drawingUtils.js';
 import OpenAI from 'openai';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { File } from 'undici';
 
 export const POST: RequestHandler = async (event) => {
   try {
@@ -19,13 +21,17 @@ export const POST: RequestHandler = async (event) => {
       return json({ error: 'Drawing content and image data are required' }, { status: 400 });
     }
 
-    // Convert base64 data URL to base64 string
-    const base64Data = imageData.split(',')[1];
-    if (!base64Data) {
+    // Extract pure base64 string and get image type from data URL
+    const matches = imageData.match(/^data:(image\/\w+);base64,(.+)$/);
+    if (!matches || matches.length !== 3) {
       return json({ error: 'Invalid image data format' }, { status: 400 });
     }
 
-    // Get OpenAI API Key using dynamic import to avoid TypeScript errors
+    const imageType = matches[1]; // e.g. 'image/png'
+    const base64Data = matches[2];
+    const imgBuffer = Buffer.from(base64Data, 'base64');
+
+    // @ts-ignore - SvelteKit $env types resolved at build time
     const { OPENAI_API_KEY } = await import('$env/static/private');
 
     // Check if API key is available
@@ -36,7 +42,7 @@ export const POST: RequestHandler = async (event) => {
     // Create OpenAI instance
     const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
-    // Use the prompt provided by the client (from the store)
+    // Validate prompt
     if (!clientPrompt) {
       return json({ error: 'Prompt is required' }, { status: 400 });
     }
@@ -61,13 +67,20 @@ export const POST: RequestHandler = async (event) => {
     console.log('Using image size:', imageSize);
 
     try {
-      const response = await openai.images.generate({
-        model: "gpt-image-1",
+      // Create a File object with the proper MIME type
+      const extension = imageType.split('/')[1]; // Get 'png' from 'image/png'
+      const file = new File([imgBuffer], `image.${extension}`, { type: imageType });
+
+      // Call the OpenAI API with the File object
+      const response = await openai.images.edit({
+        model: 'gpt-image-1',
         prompt: clientPrompt,
+        image: file,
         n: 1,
         size: imageSize
       });
 
+      // Process the response
       if (response.data && response.data.length > 0) {
         const editedImage = response.data[0];
         if (editedImage.revised_prompt) {
@@ -89,6 +102,7 @@ export const POST: RequestHandler = async (event) => {
           });
         }
       }
+
       return json({ error: 'Failed to edit image - unexpected API response format' }, { status: 500 });
     } catch (error) {
       console.error('OpenAI API error:', error);

@@ -999,15 +999,18 @@
     max-height: 600px;
     background: rgba(rgb(19, 18, 24), .75);
     border-radius: 20px;
-    box-shadow: 0 20px 50px rgba(black, 0.5);
-    border: 1px solid rgba(white, 0.25);
+    box-shadow: 10px 30px 80px rgba(black, 0.5), inset 1px 1px 2px rgba(white, 0.25);
+    background-image: linear-gradient(-60deg, rgba(white, 0) 25%, rgba(white, 0.05) 50%, rgba(white, 0) 75%);
+    // /border: 1px solid rgba(white, 0.25);
     overflow: hidden;
     z-index: 1000;
     display: flex;
     flex-direction: column;
-    backdrop-filter: blur(50px);
+    backdrop-filter: blur(20px);
     color: white;
     transition: .2s ease;
+    box-sizing: border-box;
+    padding: 8px;
   }
 
   .dialog-header {

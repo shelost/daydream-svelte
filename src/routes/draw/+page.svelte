@@ -19,12 +19,15 @@
     editedImageUrl,
     editedByModel,
     isEditing,
-    analysisOptions
+    analysisOptions,
+    strokeOptions,
+    isApplePencilActive // Import the new store
   } from '$lib/stores/drawStore';
 
   // Interface extension for Stroke type with hasPressure property
   interface EnhancedStroke extends Stroke {
     hasPressure?: boolean;
+    hasHardwarePressure?: boolean; // Flag for true hardware pressure support
   }
 
   // Drawing content object with enhanced strokes
@@ -65,9 +68,23 @@
   let inputCtx: CanvasRenderingContext2D | null = null;
   let isDrawing = false;
   let currentStroke: EnhancedStroke | null = null;
-  let strokeColor = '#000000';
-  let strokeSize = 4;
-  let strokeOpacity = 0.8;
+  // Use the store values for reference but maintain local variables for reactivity
+  let strokeColor: string;
+  let strokeSize: number;
+  let strokeOpacity: number;
+
+  // Subscribe to store changes
+  strokeOptions.subscribe(options => {
+    strokeColor = options.color;
+    strokeSize = options.size;
+    strokeOpacity = options.opacity;
+
+    // Re-render strokes when stroke options change to apply taper settings
+    if (inputCanvas && inputCtx && drawingContent?.strokes?.length > 0) {
+      renderStrokes();
+    }
+  });
+
   let imageData: string | null = null;
   let pointTimes: number[] = []; // Track time for velocity-based pressure
   let errorMessage: string | null = null;
@@ -294,12 +311,12 @@
       console.log(`Canvas initialized with dimensions: ${canvasWidth}x${canvasHeight}`);
 
       // Set up canvas context
-      ctx = inputCanvas.getContext('2d');
-      if (ctx) {
-        ctx.lineCap = 'round';
-        ctx.lineJoin = 'round';
-        ctx.strokeStyle = strokeColor;
-        ctx.lineWidth = strokeSize;
+      inputCtx = inputCanvas.getContext('2d');
+      if (inputCtx) {
+        inputCtx.lineCap = 'round';
+        inputCtx.lineJoin = 'round';
+        inputCtx.strokeStyle = strokeColor;
+        inputCtx.lineWidth = strokeSize;
       }
 
       // Capture initial image data for output preview
@@ -460,7 +477,9 @@
     if (e.button !== 0) return; // Only draw on left click/touch
 
     isDrawing = true;
-    console.log('Drawing started');
+    const isPen = e.pointerType === 'pen';
+    isApplePencilActive.set(isPen);
+    console.log(`Drawing started. Pointer type: ${e.pointerType}, Pressure: ${e.pressure}`);
 
     // Get pointer position
     const point = getPointerPosition(e);
@@ -469,18 +488,26 @@
     const timestamp = Date.now();
     pointTimes = [timestamp];
 
-    // Check if pressure is supported by the device
-    const hasPressure = e.pressure !== 0 && e.pressure !== 0.5;
-    console.log(`Pressure supported: ${hasPressure}, value: ${e.pressure}`);
+    // Check if pressure is supported AND seems valid (not 0 or default 0.5)
+    // Some browsers/devices report 0.5 as default even for pens
+    const hasHardwarePressure = isPen && e.pressure > 0 && e.pressure !== 0.5;
+    console.log(`Hardware pressure detected: ${hasHardwarePressure}`);
 
-    // Create a new stroke
+    // Get current stroke options
+    let currentOptions;
+    const unsubscribe = strokeOptions.subscribe(options => {
+      currentOptions = options;
+    });
+    unsubscribe();
+
+    // Create a new stroke with store values
     currentStroke = {
       tool: 'pen',
       points: [point],
-      color: strokeColor,
-      size: strokeSize,
-      opacity: strokeOpacity,
-      hasPressure: hasPressure
+      color: currentOptions.color,
+      size: currentOptions.size,
+      opacity: currentOptions.opacity,
+      hasHardwarePressure: hasHardwarePressure // Set the flag here
     };
 
     // Capture pointer
@@ -498,19 +525,27 @@
     const timestamp = Date.now();
     pointTimes.push(timestamp);
 
-    // If the device doesn't support pressure, calculate it based on velocity
-    if (!currentStroke.hasPressure && currentStroke.points.length > 1) {
-      // Calculate pressure based on velocity between points
-      const calculatedPressure = calculatePressureFromVelocity(
-        currentStroke.points,
-        currentStroke.points.length - 1,
-        0.2, // velocityScale
-        true, // use time-based velocity
-        pointTimes
-      );
-
-      // Update pressure in the point
-      point.pressure = calculatedPressure;
+    // Use hardware pressure ONLY if the flag is set AND the pressure is not the default 0.5
+    // Otherwise, use velocity simulation
+    if (!currentStroke.hasHardwarePressure || (e.pointerType === 'pen' && e.pressure === 0.5)) {
+      if (currentStroke.points.length > 1) {
+        // Calculate pressure based on velocity between points
+        const calculatedPressure = calculatePressureFromVelocity(
+          currentStroke.points,
+          currentStroke.points.length - 1,
+          0.2, // velocityScale
+          true, // use time-based velocity
+          pointTimes
+        );
+        // Update pressure in the point
+        point.pressure = calculatedPressure;
+      } else {
+        point.pressure = 0.5; // Default pressure if not enough points for velocity calc
+      }
+    } else {
+      // Use hardware pressure directly (already set in getPointerPosition)
+      // No action needed here as point.pressure already holds the hardware value
+       console.log(`Using hardware pressure: ${point.pressure}`);
     }
 
     // Add point to current stroke
@@ -525,6 +560,7 @@
     if (!isDrawing || !currentStroke) return;
 
     console.log('Drawing ended');
+    isApplePencilActive.set(false); // Reset stylus state
 
     // Add the current stroke to strokes array
     drawingContent.strokes.push(currentStroke);
@@ -571,13 +607,14 @@
     const scaleY = inputCanvas.height / rect.height;
 
     // Check if the device provides pressure
-    const pressure = e.pressure !== 0 ? e.pressure : 0.5;
+    // Pass the raw pressure value directly. Handle 0 or 0.5 defaults in continueDrawing
+    const pressure = e.pressure;
 
     // Apply the scaling to get the correct position within the canvas
     return {
       x: (e.clientX - rect.left) * scaleX,
       y: (e.clientY - rect.top) * scaleY,
-      pressure: pressure
+      pressure: pressure // Pass raw pressure
     };
   }
 
@@ -592,34 +629,80 @@
     inputCtx.fillStyle = '#f8f8f8';
     inputCtx.fillRect(0, 0, inputCanvas.width, inputCanvas.height);
 
+    // Get current stroke options from store
+    let currentOptions;
+    const unsubscribe = strokeOptions.subscribe(options => {
+      currentOptions = options;
+    });
+    unsubscribe(); // Immediately unsubscribe to avoid memory leaks
+
     // Function to render a single stroke
     const renderStroke = (stroke: EnhancedStroke) => {
       if (stroke.points.length < 2) return;
 
-      // Generate perfect-freehand options
+      // Generate perfect-freehand options using values from the store
       const options = {
         size: stroke.size,
-        thinning: 0.5,     // How much to thin the stroke
-        smoothing: 0.5,    // How much to smooth the stroke
-        streamline: 0.5,   // How much to streamline the stroke
-        easing: (t: number) => t, // Linear easing
-        simulatePressure: !(stroke as EnhancedStroke).hasPressure, // Only simulate if hardware pressure not available
-        last: false,       // Whether this is the last point
+        thinning: currentOptions.thinning,     // Use store value
+        smoothing: currentOptions.smoothing,    // Use store value
+        streamline: currentOptions.streamline,  // Use store value
+        easing: currentOptions.easing,          // Use store value
+        simulatePressure: !(stroke as EnhancedStroke).hasHardwarePressure, // Correctly use the hasHardwarePressure flag
+        last: false,                            // Whether this is the last point
         start: {
-          cap: true,       // Cap at the start
-          taper: 0,        // No taper
-          easing: (t: number) => t, // Linear easing
+          cap: currentOptions.start.cap,        // Use store value
+          taper: currentOptions.start.taper,    // Use store value with increased taper
+          easing: currentOptions.start.easing,  // Use store value
         },
         end: {
-          cap: true,       // Cap at the end
-          taper: 0,        // No taper
-          easing: (t: number) => t, // Linear easing
+          cap: currentOptions.end.cap,          // Use store value
+          taper: currentOptions.end.taper,      // Use store value with increased taper
+          easing: currentOptions.end.easing,    // Use store value
         }
       };
 
+      // Create a dramatically responsive pressure curve with higher sensitivity to light pressure
+      const enhancedPoints = stroke.points.map(p => {
+        // Start with base pressure, default to middle value if not provided
+        let basePressure = p.pressure || 0.5;
+        // We'll modify this value based on intensity
+        let enhancedPressure = basePressure;
+
+        if (currentOptions.pressureIntensity !== 1.0) {
+          // Enhanced algorithm for more sensitivity at lower pressures
+
+          // Calculate intensity factor - higher values create more dramatic contrast
+          const intensityFactor = Math.max(1, currentOptions.pressureIntensity / 2);
+
+          // Set threshold to detect even lighter pressure changes (was 0.5)
+          const lightPressureThreshold = 0.35;
+
+          if (basePressure < lightPressureThreshold) {
+            // Light pressure: create a more dramatic curve to amplify subtle differences
+            // The cubic curve gives more visual difference at lower pressure values
+            const normalizedPressure = basePressure / lightPressureThreshold; // normalize to 0-1 range
+            const amplifiedPressure = Math.pow(normalizedPressure, 0.5); // sqrt curve for more sensitivity
+
+            // Scale to a range that gives visible but thin lines even at very light pressure
+            enhancedPressure = 0.1 + (0.3 * amplifiedPressure);
+          } else {
+            // Medium to heavy pressure: transition to thicker lines more quickly
+            const normalizedPressure = (basePressure - lightPressureThreshold) / (1 - lightPressureThreshold);
+
+            // This creates a faster ramp-up to thick lines after crossing the threshold
+            enhancedPressure = 0.4 + (0.6 * Math.pow(normalizedPressure, 1/intensityFactor));
+          }
+
+          // Ensure minimum visibility while allowing for dramatic range
+          enhancedPressure = Math.min(1.0, Math.max(0.1, enhancedPressure));
+        }
+
+        return [p.x, p.y, enhancedPressure];
+      });
+
       // Generate stroke with perfect-freehand
       const freehandStroke = getStroke(
-        stroke.points.map(p => [p.x, p.y, p.pressure || 0.5]),
+        enhancedPoints,
         options
       );
 
@@ -2092,7 +2175,7 @@
 
   // Function to build the prompt for GPT-Image-1 Edit (edit-image endpoint)
   function buildGptEditPrompt() {
-    let prompt = `Edit this drawing by completing or enhancing it. Do not create a new image or change the existing structure; simply add to or finish the current drawing as it is. The goal is to complete the user's intent while preserving all original elements and their positions.`;
+    let prompt = `Complete this drawing, in the exact same style and proportions as the original.`;
 
     // Content description from analysis
     const contentGuide = sketchAnalysis !== "Draw something to see AI's interpretation" ? sketchAnalysis : "A user's drawing.";
@@ -2118,18 +2201,108 @@
       prompt += `\n\nRECOGNIZED SHAPES: ${strokeRecognition}`;
     }
 
-    // Final instructions for perfect structural fidelity
-    prompt += `\n\nFINAL INSTRUCTIONS: Complete or enhance the image while maintaining the exact structure, positions, and proportions of all elements. Do not reposition, resize, or remove any part of the original sketch. Only add to or finish what is already present.`;
-
     // Trim to 4000 chars
     return prompt.length > 4000 ? prompt.substring(0, 3997) + '...' : prompt;
   }
 
-  // Reactive update for the GPT edit prompt store
+  // Reactive update for the GPT edit prompt store - explicit dependencies
   $: {
+    // Update the edit prompt when additionalContext, analysis results, or aspect ratio changes
     const newEditPrompt = buildGptEditPrompt();
     gptEditPrompt.set(newEditPrompt);
   }
+
+  // Make the edit prompt explicitly reactive to additionalContext
+  $: if (additionalContext !== undefined) {
+    const newEditPrompt = buildGptEditPrompt();
+    gptEditPrompt.set(newEditPrompt);
+  }
+
+  // Make the component reactive to changes in the strokeOptions store
+  $: {
+    // When strokeOptions updates, update our local variables
+    $strokeOptions; // Add reactivity by referencing the store value with $
+    // No need to do anything else as we've already set up the subscription
+    // to update local variables at component initialization
+  }
+
+  // Function to check if the device is mobile and adjust UI accordingly
+  function mobileCheck() {
+    // Simple mobile check based on screen width
+    const isMobile = window.innerWidth < 768;
+
+    // Adjust UI for mobile if needed
+    if (isMobile) {
+      console.log('Mobile device detected, adjusting UI');
+      // Mobile specific adjustments can be added here
+    }
+
+    // Trigger canvas resize to adjust for the device
+    if (inputCanvas) {
+      resizeCanvas();
+    }
+  }
+
+  // Function to capture the current canvas state
+  function captureCanvas() {
+    // Capture current canvas as image data
+    if (inputCanvas) {
+      imageData = inputCanvas.toDataURL('image/png');
+      return imageData;
+    }
+    return null;
+  }
+
+  // Function to run analysis with specified options
+  function runAnalysis(force = false) {
+    // Set force flag and run both analysis methods
+    forceAnalysisFlag = force;
+
+    // Run both analysis methods
+    analyzeSketch();
+    recognizeStrokes();
+  }
+
+  // Function to analyze results from the stroke analysis
+  function analyzeResults(result) {
+    if (!result) return;
+
+    // Process the analysis results
+    // This is a placeholder implementation
+    console.log('Processing analysis results', result);
+
+    // Update UI elements based on the results
+    if (result.analysis && result.analysis.content) {
+      strokeRecognition = result.analysis.content;
+    }
+
+    // Process detected shapes if available
+    if (result.detectedShapes && Array.isArray(result.detectedShapes)) {
+      // Code to process detected shapes would go here
+    }
+  }
+
+  // Function to generate a hash for the strokes
+  function computeStrokesHash(strokes) {
+    if (!strokes || !strokes.length) return '';
+
+    // Create a simplified representation for hashing
+    const simplifiedStrokes = strokes.map(stroke => {
+      return {
+        color: stroke.color,
+        size: stroke.size,
+        points: stroke.points.map(p => ({
+          x: Math.round(p.x),
+          y: Math.round(p.y)
+        }))
+      };
+    });
+
+    // Return a simple string representation as hash
+    return JSON.stringify(simplifiedStrokes);
+  }
+
+  // Taper is now set in the strokeOptions store
 </script>
 
 <svelte:head>
@@ -2149,6 +2322,14 @@
         placeholder="What are you drawing?"
         class="context-input"
       />
+      <button
+        class="generate-button"
+        on:click={generateImage}
+        disabled={$isGenerating || strokeCount === 0}
+      >
+        <span class="material-icons">arrow_forward</span>
+        {$isGenerating ? 'Creating...' : 'Create'}
+    </button>
     </div>
   </header>
 
@@ -2160,7 +2341,10 @@
             <input
               type="color"
               bind:value={strokeColor}
-              on:change={renderStrokes}
+              on:change={() => {
+                strokeOptions.update(opts => ({...opts, color: strokeColor}));
+                renderStrokes();
+              }}
             />
           </div>
 
@@ -2173,7 +2357,10 @@
               bind:value={strokeSize}
               color="#6355FF"
               height="100px"
-              onChange={() => renderStrokes()}
+              onChange={() => {
+                strokeOptions.update(opts => ({...opts, size: strokeSize}));
+                renderStrokes();
+              }}
               showValue={true}
             />
           </div>
@@ -2187,7 +2374,10 @@
               bind:value={strokeOpacity}
               color="#6355FF"
               height="100px"
-              onChange={() => renderStrokes()}
+              onChange={() => {
+                strokeOptions.update(opts => ({...opts, opacity: strokeOpacity}));
+                renderStrokes();
+              }}
               showValue={true}
             />
           </div>
@@ -2216,22 +2406,11 @@
             <span class="tool-label">AI Overlay</span>
           </div>
 
-          <div class="tool-group toggle-switch">
-            <span class="material-icons tool-icon-label">description</span>
-            <div class="switch">
-              <input
-                type="checkbox"
-                id="stroke-overlay-toggle"
-                bind:checked={showStrokeOverlay}
-              />
-              <label for="stroke-overlay-toggle"></label>
-            </div>
-            <span class="tool-label">Stroke Recognition</span>
-          </div>
-
           <button class="tool-button" on:click={clearCanvas}>
             <span class="material-icons">delete_outline</span>
           </button>
+
+
         </div>
     </div>
 
@@ -2359,14 +2538,7 @@
   </div>
 
   <div class="action-area">
-    <button
-      class="generate-button"
-      on:click={generateImage}
-      disabled={$isGenerating || strokeCount === 0}
-    >
-      <span class="material-icons">image</span>
-      {$isGenerating ? 'Generating...' : 'Generate Image'}
-    </button>
+
 
     {#if errorMessage}
       <div class="error-message" transition:fade={{ duration: 200 }}>
@@ -2474,34 +2646,30 @@
 
     .context-input-container {
       display: flex;
-      flex-direction: column;
       align-items: center;
+      justify-content: space-between;
       margin-top: 0.5rem;
+      width: 550px;
+      padding: 8px;
+      border: 1px solid rgba(white, 0.05);
+      background: rgba(white, .0);
+      border-radius: 32px;
 
-      width: 800px;
+      text-align: center;
 
-      label {
-        font-size: 0.9rem;
-        color: #666;
-        margin-bottom: 0.25rem;
-      }
+      box-shadow: -4px 16px 24px rgba(black, 0.2);
+      text-shadow: 0 4px 12px rgba(black, .1);
 
       .context-input {
         font-family: 'Newsreader', 'DM Sans', serif;
-        font-size: 20px;
+        font-size: 18px;
         font-weight: 600;
-
-        width: 100%;
-        max-width: 600px;
-        padding: 16px 16px 12px 16px;
-        border: 1px solid rgba(white, 0.05);
-        background: rgba(white, .0);
-        border-radius: 32px;
         letter-spacing: -.5px;
-          text-align: center;
-          color: white;
-        box-shadow: -4px 16px 24px rgba(black, 0.2);
-        text-shadow: 0 4px 12px rgba(black, .1);
+        color: white;
+        background: none;
+        border: none;
+        flex: 1;
+
 
         &::placeholder {
           color: rgba(white, .3);
@@ -2516,14 +2684,85 @@
     }
   }
 
+  .generate-button, .analyze-button {
+
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+      background: #635FFF;
+      border: none;
+      border-radius: 24px;
+      padding: 8px 16px 10px 12px;
+      font-size: 15px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.3s ease;
+      box-shadow: -4px 12px 16px rgba(black, .1);
+      position: relative;
+      overflow: hidden;
+
+     // width: 36px;
+     // height: 36px;
+
+      color: white;
+
+
+
+      span{
+        color: white;
+      }
+
+      &::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: linear-gradient(45deg, rgba(255,255,255,0.1), rgba(255,255,255,0));
+        opacity: 0;
+        transition: opacity 0.3s ease;
+      }
+
+      &:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 6px 15px rgba(156, 39, 176, 0.4);
+
+        &::before {
+          opacity: 1;
+        }
+      }
+
+      &:active {
+        transform: translateY(1px);
+        box-shadow: 0 2px 5px rgba(156, 39, 176, 0.4);
+      }
+
+      &:disabled {
+        background: linear-gradient(45deg, #9e9e9e, #bdbdbd);
+        cursor: not-allowed;
+        box-shadow: none;
+
+        &:hover {
+          transform: none;
+        }
+      }
+
+      .material-icons {
+        font-size: 18px;
+      }
+    }
+
   .canvas-container {
     display: flex;
     justify-content: center;
+    align-items: center;
     flex: 1;
     gap: 24px;
     margin: 12px 0;
     min-width: 400px;
-    width: 90vw;
+    width: 95vw;
     max-height: 85vh;
     position: relative;
 
@@ -2537,9 +2776,11 @@
   .vertical-toolbar {
     background: rgba(white, .1);
     border-radius: 8px;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-    padding: 0;
+    box-shadow: -4px 16px 24px rgba(black, 0.15);
+    padding: 12px 0;
+    box-sizing: border-box;
     width: 60px;
+    height: fit-content;
     display: flex;
     flex-direction: column;
     gap: 20px;
@@ -2654,7 +2895,7 @@
         max-width: 100%;
         max-height: 100%;
         width: auto;
-        height: auto;
+        height: fit-content;
         cursor: crosshair;
         object-fit: contain;
 
@@ -3000,10 +3241,6 @@
       transition: transform 0.3s ease;
       box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
       border-radius: 4px;
-
-      &:hover {
-        transform: scale(1.02);
-      }
     }
 
     .model-badge {
@@ -3028,64 +3265,7 @@
     max-width: 800px;
     margin: 0 auto;
 
-    .generate-button, .analyze-button {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 10px;
-      background: #635FFF;
-      color: white;
-      border: none;
-      border-radius: 8px;
-      padding: 10px 16px 12px 16px;
-      font-size: 15px;
-      font-weight: 500;
-      cursor: pointer;
-      transition: all 0.3s ease;
-      box-shadow: -4px 12px 16px rgba(black, .2);
-      position: relative;
-      overflow: hidden;
 
-      &::before {
-        content: '';
-        position: absolute;
-        top: 0;
-        left: 0;
-        width: 100%;
-        height: 100%;
-        background: linear-gradient(45deg, rgba(255,255,255,0.1), rgba(255,255,255,0));
-        opacity: 0;
-        transition: opacity 0.3s ease;
-      }
-
-      &:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 6px 15px rgba(156, 39, 176, 0.4);
-
-        &::before {
-          opacity: 1;
-        }
-      }
-
-      &:active {
-        transform: translateY(1px);
-        box-shadow: 0 2px 5px rgba(156, 39, 176, 0.4);
-      }
-
-      &:disabled {
-        background: linear-gradient(45deg, #9e9e9e, #bdbdbd);
-        cursor: not-allowed;
-        box-shadow: none;
-
-        &:hover {
-          transform: none;
-        }
-      }
-
-      .material-icons {
-        font-size: 18px;
-      }
-    }
 
     .analyze-button {
       background: linear-gradient(45deg, #1976d2, #2196f3);

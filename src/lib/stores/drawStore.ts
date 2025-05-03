@@ -28,3 +28,33 @@ export const analysisOptions = writable({
   useShapeRecognition: true, // Controls shape recognition algorithms
   useCNN: true               // Controls CNN-based recognition
 });
+
+// Add a store to track if Apple Pencil (or similar stylus) is active
+export const isApplePencilActive = writable<boolean>(false);
+
+// Store for PerfectFreehand stroke options
+export const strokeOptions = writable({
+  // Basic stroke appearance
+  color: '#000000',
+  size: 10,
+  opacity: 1,
+
+  // PerfectFreehand options
+  thinning: 0.7,            // Increased thinning for more pronounced pressure effect
+  smoothing: 0.5,           // How much to smooth the stroke
+  streamline: 0.5,          // How much to streamline the stroke
+  easing: (t: number) => t, // Linear easing
+  pressureIntensity: 10,   // Lower value with new algorithm for more sensitive pressure response
+
+  // Start and end settings
+  start: {
+    cap: true,              // Cap at the start
+    taper: 30,              // Increased taper at start (was 0)
+    easing: (t: number) => t, // Linear easing
+  },
+  end: {
+    cap: false,              // Cap at the end
+    taper: 30,              // Increased taper at end (was 0)
+    easing: (t: number) => t, // Linear easing
+  }
+});

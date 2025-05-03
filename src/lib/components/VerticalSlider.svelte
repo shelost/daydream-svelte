@@ -9,7 +9,7 @@
   export let label: string = '';
   export let showValue: boolean = false;
   export let color: string = '#9c27b0';
-  export let height: string = '120px';
+  export let height: string = '240px';
   export let width: string = '40px';
   export let onChange: ((value: number) => void) | null = null;
 
