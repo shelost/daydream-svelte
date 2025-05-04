@@ -21,3 +21,48 @@ The current server endpoint `src/routes/api/ai/edit-image/+server.ts` calls `ope
 
 This change ensures that we truly edit the user's drawing instead of generating an unrelated image, satisfying the OpenAI documentation requirements.
 
+# Instructions / Plan
+
+## Fabric.js Integration for `/canvas` Route
+
+**Goal:** Replace the basic HTML Canvas 2D implementation in `src/routes/(public)/canvas/+page.svelte` with Fabric.js to enable true vector erasing and better object management, while retaining Perfect Freehand for stroke generation aesthetics.
+
+**Steps:**
+
+1.  **Initialize Fabric Canvas:**
+    *   Add `id="fabric-canvas"` to the `<canvas>` element.
+    *   In `onMount`, initialize `new fabric.Canvas('fabric-canvas')`.
+    *   Remove `CanvasRenderingContext2D` usage (`inputCtx`).
+2.  **Integrate Perfect Freehand & Fabric Paths:**
+    *   Keep `drawingContent: EnhancedDrawingContent` state to store original point data for the `analyze-strokes` API.
+    *   In `endPenStroke`:
+        *   Continue adding stroke data to `drawingContent.strokes`.
+        *   Generate SVG path data using Perfect Freehand (`getStroke`, `getSvgPathFromStroke`).
+        *   Create `new fabric.Path(pathData, { ... })` with fill, opacity, etc.
+        *   Add a custom property `originalStrokeIndex` to the Fabric path.
+        *   Add the `fabric.Path` to the `fabricCanvas`.
+3.  **Implement Fabric Eraser:**
+    *   In `startEraserStroke`, set `fabricCanvas.isDrawingMode = true` and `fabricCanvas.freeDrawingBrush = new fabric.EraserBrush(...)` with appropriate width.
+    *   Remove logic creating background-colored strokes.
+    *   In `endEraserStroke`, set `fabricCanvas.isDrawingMode = false`.
+4.  **Implement Fabric Selection:**
+    *   Remove manual selection box drawing code.
+    *   Set `fabricCanvas.isDrawingMode = false` for the 'select' tool.
+    *   Listen to Fabric selection events (`selection:created`, `selection:updated`, `selection:cleared`).
+    *   Update `selectedStrokeIndices` based on the `originalStrokeIndex` of selected Fabric objects (`fabricCanvas.getActiveObjects()`).
+5.  **Refactor Rendering & Canvas Management:**
+    *   Replace `renderStrokes()` calls with `fabricCanvas.requestRenderAll()`. Remove `renderStrokes`'s internal logic.
+    *   Update `clearCanvas` to use `fabricCanvas.clear()` and clear `drawingContent.strokes`.
+    *   Update `resizeCanvas` to use `fabricCanvas.setDimensions()`, `fabricCanvas.renderAll()`.
+    *   Update `getPointerPosition` to use `fabricCanvas.getPointer(e)`.
+    *   Update `captureCanvasSnapshot` to use `fabricCanvas.toDataURL()`.
+6.  **Adapt Tool Switching & Options:**
+    *   Modify tool selection logic to manage `fabricCanvas.isDrawingMode` and `fabricCanvas.freeDrawingBrush`.
+    *   Apply stroke options (color, opacity) to `fabric.Path` on creation.
+    *   Apply eraser width to `EraserBrush`.
+7.  **Maintain AI Integration (Compromise):**
+    *   Keep AI analysis functions and UI components.
+    *   `analyzeSketch` uses Fabric canvas snapshot.
+    *   `recognizeStrokes` uses the (unerased) data from `drawingContent.strokes`. Overlays may have slight inaccuracies.
+8.  **Preserve Styles & Layout:** No changes to CSS or HTML structure (except canvas ID).
+

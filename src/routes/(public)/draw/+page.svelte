@@ -2267,6 +2267,7 @@
 
     let prompt = `Complete this drawing, in the exact same style and proportions as the original. DO NOT change the original image sketch at all; simply add onto the existing drawing EXACTLY as it is. CRITICAL STRUCTURE PRESERVATION: You MUST treat this sketch as an EXACT STRUCTURAL TEMPLATE. `;
 
+    let prompt2 = `Complete this drawing, in the exact same style and proportions as the original. DO NOT change the original image sketch at all; simply add onto the existing drawing EXACTLY as it is. CRITICAL STRUCTURE PRESERVATION: You MUST treat this sketch as an EXACT STRUCTURAL TEMPLATE. `;
 
     // Content description from analysis
     const contentGuide = sketchAnalysis !== "Draw something to see AI's interpretation" ? sketchAnalysis : "A user's drawing.";
@@ -2274,7 +2275,7 @@
 
     // User's additional context
     if (additionalContext) {
-      prompt += `\n\nUSER'S CONTEXT: \"${additionalContext}\"`;
+      prompt2 += `\n\nUSER'S CONTEXT: \"${additionalContext}\"`;
     }
 
     // Structural information if available
@@ -2293,7 +2294,7 @@
     }
 
     // Trim to 4000 chars
-    return prompt.length > 4000 ? prompt.substring(0, 3997) + '...' : prompt;
+    return prompt2.length > 4000 ? prompt2.substring(0, 3997) + '...' : prompt2;
   }
 
   // Reactive update for the GPT edit prompt store - explicit dependencies
@@ -4291,6 +4292,10 @@
     display: flex;
     justify-content: center;
     align-items: center;
+
+    h2{
+      color: white;
+    }
   }
 
 

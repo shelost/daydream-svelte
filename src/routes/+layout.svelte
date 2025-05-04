@@ -1,5 +1,23 @@
 <script>
   import '$lib/styles/global.scss';
+  import { onMount } from 'svelte';
+
+  function preventDefault(e){
+    e.preventDefault();
+}
+
+function disableScroll(){
+    document.body.addEventListener('touchmove', preventDefault, { passive: false });
+}
+function enableScroll(){
+    document.body.removeEventListener('touchmove', preventDefault);
+}
+
+onMount(() => {
+  disableScroll();
+});
+
+
 </script>
 
 <svelte:head>

@@ -52,6 +52,7 @@
 		"node-fetch": "^2.7.0",
 		"openai": "^4.96.0",
 		"perfect-freehand": "^1.2.2",
+		"replicate": "^1.0.1",
 		"sass": "^1.86.3",
 		"undici": "^6.21.2"
 	}
