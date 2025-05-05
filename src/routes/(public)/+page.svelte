@@ -79,9 +79,7 @@
 
 <main class="landing-page">
 
-  <div in:fly={{ y: 100, opacity: 0 }}>
-    <Header />
-  </div>
+
   <div class="hero-container">
     <img src="wing.png" alt="Arachne Logo" class="logo" />
     <h1 bind:this={mainHeading}>Daydream</h1>

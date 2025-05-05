@@ -3296,7 +3296,7 @@
               padding: 7px 12px 8px 10px;
               border-radius: 8px;
               font-size: 0.8rem;
-              backdrop-filter: blur(4px);
+              backdrop-filter: blur(8px);
             }
 
             .download-button {
