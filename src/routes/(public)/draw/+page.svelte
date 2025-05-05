@@ -2872,7 +2872,7 @@
   }
 
   .scanning-status{
-    display: flex;
+    display: none;
     align-items: flex-end;
     justify-content: center;
     gap: 6px;
@@ -3035,7 +3035,7 @@
       span{
         font-size: 14px !important;
         font-weight: 900;
-        color: #3d2fd5;
+        color: #6355FF;
         background: white;
         border-radius: 12px;
         padding: 2px;
