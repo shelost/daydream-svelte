@@ -39,7 +39,7 @@ export const selectedTool = writable<'pen' | 'eraser' | 'select'>('pen');
 export const strokeOptions = writable({
   // Basic stroke appearance
   color: '#000000',
-  size: 10,
+  size: 15,
   opacity: 1,
 
   // PerfectFreehand options

@@ -149,6 +149,7 @@
   />
 
   <!-- Custom visual slider implementation -->
+
   <div
     class="vertical-slider-track"
     class:disabled
@@ -158,7 +159,7 @@
   >
     <div
       class="vertical-slider-fill"
-      style="height: {percentage}%; background-color: {color};"
+      style="height: calc({percentage}% + 12px); background-color: {color};"
     ></div>
 
     <div
@@ -188,6 +189,7 @@
     justify-content: center;
     padding: 8px 0;
     width: 40px;
+    gap: 6px;
   }
 
   .slider-label {
@@ -211,9 +213,30 @@
     position: relative;
     height: 100%;
     width: 32px;
-    background-color: rgba(0, 0, 0, 0.1);
-    border-radius: 4px;
+    background-color: rgba(white, .08);
     cursor: pointer;
+
+    &::before{
+      content: '';
+      position: absolute;
+      top: -6px;
+      left: 0;
+      width: 100%;
+      height: 6px;
+      border-radius: 6px 6px 0 0;
+      background-color: rgba(white, .08);
+    }
+
+    &::after{
+      content: '';
+      position: absolute;
+      bottom: -6px;
+      left: 0;
+      width: 100%;
+      height: 6px;
+      border-radius: 0 0 6px 6px;
+      background-color: rgba(white, .08);
+    }
 
     &.disabled {
       opacity: 0.5;
@@ -223,11 +246,13 @@
 
   .vertical-slider-fill {
     position: absolute;
-    bottom: 0;
+    bottom: -6px;
     left: 0;
     width: 100%;
-    border-radius: 4px;
-    background-color: rgba(white, .25) !important;
+    border-radius: 6px;
+    z-index: 2;
+    box-shadow: inset -1px -2px 4px rgba(black, .15);
+    background-color: rgba(white, .2) !important;
   }
 
   .vertical-slider-thumb {
@@ -236,10 +261,10 @@
     transform: translate(-50%, 50%);
     width: 32px;
     height: 12px;
-    background-color: white;
+    background-color: rgba(white, 1);
     //border: 2px solid white !important;
     border-radius: 20px;
-    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+    box-shadow: 0 4px 8px rgba(black, 0.15), inset -1px -2px 2px rgba(black, .25);
     transition: transform 0.15s ease;
     z-index: 2;
 
@@ -265,8 +290,8 @@
     }
 
     &.active {
-      //transform: translate(-50%, 50%) scale(1.1);
-      box-shadow: 0 3px 8px rgba(0, 0, 0, 0.25);
+      transform: translate(-50%, 50%) scale(1.05);
+      box-shadow: 0 4px 8px rgba(black, 0.25), inset -1px -2px 2px rgba(black, .25);
 
       .thumb-highlight {
         opacity: 0.2;
