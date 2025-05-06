@@ -1,6 +1,7 @@
 <script>
   import '$lib/styles/global.scss';
   import { onMount } from 'svelte';
+  import { injectAnalytics } from '@vercel/analytics/sveltekit'
 
   function preventDefault(e){
     e.preventDefault();
