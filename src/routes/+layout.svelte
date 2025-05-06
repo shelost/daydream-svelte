@@ -3,6 +3,8 @@
   import { onMount } from 'svelte';
   import { injectAnalytics } from '@vercel/analytics/sveltekit'
 
+  injectAnalytics({ mode: dev ? 'development' : 'production' });
+
   function preventDefault(e){
     e.preventDefault();
 }
