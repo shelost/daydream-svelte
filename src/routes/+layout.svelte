@@ -3,23 +3,24 @@
   import { onMount } from 'svelte';
   import { injectAnalytics } from '@vercel/analytics/sveltekit'
 
-  injectAnalytics({ mode: 'production' });
+  // Only use production mode when in actual production environment
+  const isProd = import.meta.env.PROD;
+  injectAnalytics({ mode: isProd ? 'production' : 'development' });
 
   function preventDefault(e){
     e.preventDefault();
-}
+  }
 
-function disableScroll(){
-    document.body.addEventListener('touchmove', preventDefault, { passive: false });
-}
-function enableScroll(){
-    document.body.removeEventListener('touchmove', preventDefault);
-}
+  function disableScroll(){
+      document.body.addEventListener('touchmove', preventDefault, { passive: false });
+  }
+  function enableScroll(){
+      document.body.removeEventListener('touchmove', preventDefault);
+  }
 
-onMount(() => {
-  disableScroll();
-});
-
+  onMount(() => {
+    disableScroll();
+  });
 
 </script>
 

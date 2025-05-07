@@ -20,6 +20,9 @@ export const editedImageUrl = writable<string | null>(null);
 export const editedByModel = writable<string | null>(null);
 export const isEditing = writable<boolean>(false);
 
+// Store for selected model
+export const selectedModel = writable<string>('gpt-image-1');
+
 // Store for analysis technology options - controls which technologies are used
 export const analysisOptions = writable({
   useGPTVision: true,        // Controls GPT-4 Vision API usage (Sketch tab)
