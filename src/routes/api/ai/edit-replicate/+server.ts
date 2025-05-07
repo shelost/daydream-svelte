@@ -72,31 +72,51 @@ export const POST: RequestHandler = async (event) => {
         case 'controlnet-scribble':
           apiPrompt = `${baseInstruction} ${enhancedUserPrompt} Desired style: Clean, professional anime illustration, vibrant, aesthetically pleasing. Avoid a 'scribbled' or rough final look.`;
           prediction = await replicate.predictions.create({
-            version: "435061a1b5a4c1e26740464bf786efdfa9cb3a3ac488595a2de23e143fdb0117",
+            //version: "435061a1b5a4c1e26740464bf786efdfa9cb3a3ac488595a2de23e143fdb0117",
+            version: "aff48af9c68d162388d230a2ab003f68d2638d88307bdaf1c2f1ac95079c9613",
             input: {
               image: `data:${imageType};base64,${base64Data}`,
               prompt: apiPrompt,
               num_inference_steps: 40, // Increased
-              guidance_scale: 8.0, // Slightly adjusted
+              scale: 8.0, // Slightly adjusted
               negative_prompt: `${commonNegativePrompt}, childish, amateurish, rough sketch, pencil marks`, // Added
             },
           });
           break;
 
         case 'stable-diffusion':
-          apiPrompt = `${baseInstruction} Create an anime-style princess exactly following this sketch. CRITICAL: Maintain EXACT positions of eyes, face, crown, hair, and all other elements. The sketch shows the precise structure to follow. Detailed description: "${clientPrompt}". ${additionalContext && additionalContext.trim() !== "" ? `Additional context: "${additionalContext}".` : ''} High-quality anime illustration with perfect structural fidelity to the original sketch.`;
+          apiPrompt = `${baseInstruction} Create a completed version of this exact sketch. CRITICAL: Maintain EXACT positions of eyes, face, crown, hair, and all other elements. The sketch shows the precise structure to follow. Detailed description: "${clientPrompt}". ${additionalContext && additionalContext.trim() !== "" ? `Additional context: "${additionalContext}".` : ''} High-quality anime illustration with perfect structural fidelity to the original sketch.`;
           prediction = await replicate.predictions.create({
             version: "15a3689ee13b0d2616e98820eca31d4c3abcd36672df6afce5cb6feb1d66087d",
             input: {
               image: `data:${imageType};base64,${base64Data}`,
               prompt: apiPrompt,
               num_inference_steps: 50, // Increased for better detail
-              guidance_scale: 8.5, // Increased for better prompt adherence
-              strength: 0.45, // Significantly reduced to preserve original sketch structure
+              guidance_scale: 15, // Increased for better prompt adherence
+              prompt_strength: 0.5, // Significantly reduced to preserve original sketch structure
               negative_prompt: `${commonNegativePrompt}, chaotic, nonsensical elements, distorted proportions, misplaced features, deformed face, wrong position`, // Enhanced
             },
           });
           break;
+
+          case 'latent-consistency':
+            apiPrompt = `${baseInstruction} Create a high-quality completed version of this sketch. CRITICAL: Maintain EXACT positions and proportions of all elements. The sketch provides the precise structure to follow. Primary description: "${clientPrompt}". ${additionalContext && additionalContext.trim() !== "" ? `Additional context: "${additionalContext}".` : ''} Ensure perfect structural fidelity to the original sketch.`;
+            prediction = await replicate.predictions.create({
+              version: "683d19dc312f7a9f0428b04429a9ccefd28dbf7785fef083ad5cf991b65f406f",
+              input: {
+                prompt: apiPrompt,
+                image: `data:${imageType};base64,${base64Data}`,
+                num_inference_steps: 8, // LCM is optimized for fewer steps
+                guidance_scale: 8.0,
+                negative_prompt: `${commonNegativePrompt}, deformed, distorted, inaccurate placement, wrong position, bad anatomy`,
+                width: 1024, // Higher resolution
+                height: 1024,
+                num_images: 1,
+                scheduler: "dpm++", // Best scheduler for LCM
+                seed: Math.floor(Math.random() * 1000000), // Random seed
+              },
+            });
+            break;
 
         default:
           return json({ error: `Unsupported model: ${selectedModel}` }, { status: 400 });

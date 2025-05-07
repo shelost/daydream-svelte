@@ -1647,7 +1647,7 @@
         if (!standardResponse.ok && !editResponse.ok) {
           throw new Error('Failed to generate both standard and edited images');
         }
-      } else if ($selectedModel === 'flux-canny-pro' || $selectedModel === 'controlnet-scribble' || $selectedModel === 'stable-diffusion') {
+      } else if ($selectedModel === 'flux-canny-pro' || $selectedModel === 'controlnet-scribble' || $selectedModel === 'stable-diffusion' || $selectedModel === 'latent-consistency') {
         // Call the Replicate API for the selected model
         const replicateResponse = await fetch('/api/ai/edit-replicate', {
           method: 'POST',
@@ -2540,6 +2540,7 @@
             <option value="flux-canny-pro"> flux-canny-pro </option>
             <option value="controlnet-scribble"> controlnet-scribble </option>
             <option value="stable-diffusion"> stable-diffusion </option>
+            <option value="latent-consistency"> LCM (Fast) </option>
           </select>
           <span class="material-icons custom-caret">expand_more</span>
         </div>
@@ -3343,6 +3344,7 @@
             img {
               max-width: 100%;
               max-height: 100%;
+              width: 100%;
               object-fit: contain;
               transition: transform 0.3s ease;
               box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
