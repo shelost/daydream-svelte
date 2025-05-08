@@ -82,10 +82,7 @@
 
   <div class="hero-container">
     <img src="wing.png" alt="Arachne Logo" class="logo" />
-    <h1 bind:this={mainHeading}>Daydream</h1>
-    <p bind:this={subHeading}>
-      An easier way to interact with AI
-    </p>
+
 
     <div class="button-container">
       <!-- Use inline style for immediate visibility -->
