@@ -2561,6 +2561,7 @@
   <div class="canvas-container">
     <div class="toolbars-wrapper">
       <!-- New Tool Selection Toolbar -->
+
       <div class="vertical-toolbar tool-selector-toolbar" style="display: none">
         <button
           class="tool-button"
