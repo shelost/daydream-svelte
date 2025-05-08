@@ -81,8 +81,21 @@
 
 
   <div class="hero-container">
-    <img src="wing.png" alt="Arachne Logo" class="logo" />
+    <img src="wing-square.png" alt="Arachne Logo" class="logo" />
 
+    <div class = 'expo'>
+      <p>
+        Welcome!
+      </p>
+      <p>
+        This is a simple demo site, designed to experiment with AI-enhanced drawing.
+      </p>
+      <p>
+        More updates to come!
+      </p>
+
+
+    </div>
 
     <div class="button-container">
       <!-- Use inline style for immediate visibility -->
@@ -118,7 +131,9 @@
 <style lang="scss">
 
   .logo{
-    height: 160px;
+    height: 100px;
+    border-radius: 16px;
+    box-shadow: -4px 16px 24px rgba(black,0.3);
     //margin-bottom: 16px;
   }
 
@@ -127,7 +142,7 @@
     display: flex;
     justify-content: center;
     align-items: center;
-    background-color: $background-color;
+   // background-color: $background-color;
   }
 
   .hero-container {
@@ -146,12 +161,16 @@
     text-shadow: -4px 8px 12px rgba(black,0.05);
   }
 
-  p {
-    font-size: 18px;
-    font-weight: 500;
-    letter-spacing: -0.5px;
-    margin-bottom: 2.5rem;
-    color: rgba($text-color, 0.6);
+  .expo{
+    width: 360px;
+    margin: 36px 0 48px 0;
+    p {
+      font-size: 15px;
+      font-weight: 450;
+      letter-spacing: -0.25px;
+      color: white;
+      margin: 12px 0;
+    }
   }
 
   .button-container {
@@ -190,9 +209,15 @@
     transition: .2s ease;
     border-radius: $border-radius-lg;
 
-    padding: 11px 24px 12px 24px;
+    padding: 10px 18px 12px 18px;
 
-    box-shadow: 0 6px 12px rgba(black,0.1), inset 1px 2px 2px rgba(white,0.1), inset -1px -2px 4px rgba(black,0.1);
+    box-shadow: -4px 16px 18px rgba(black,0.1), inset 1px 2px 2px rgba(white,0.1), inset -1px -2px 4px rgba(black,0.1);
+
+
+    h2{
+      font-size: 16px;
+    }
+
 
     &::after {
       content: '';
@@ -210,7 +235,7 @@
       background-color: #5f3cf7;
      // opacity: 0.9;
       //transform: translateY(-2px);
-      box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+      // /box-shadow: 0 4px 8px rgba(0,0,0,0.1);
     }
   }
 
