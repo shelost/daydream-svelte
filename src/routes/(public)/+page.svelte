@@ -3,6 +3,7 @@
   import { gsap } from 'gsap';
   import { goto } from '$app/navigation';
   import { isLoggedIn } from '$lib/stores/appStore';
+  import { fly, scale, fade } from 'svelte/transition';
   import Header from '$lib/components/public/Header.svelte';
   let mainHeading: HTMLElement;
   let subHeading: HTMLElement;
@@ -11,7 +12,6 @@
   let demoButton: HTMLElement;
   let buttonsVisible = false;
 
-  import { fly } from 'svelte/transition';
 
   onMount(() => {
     console.log("Component mounted, buttons:", loginButton, signupButton, demoButton);
@@ -77,25 +77,20 @@
   <meta name="description" content="Create beautiful drawings and canvas compositions with Daydream" />
 </svelte:head>
 
-<main class="landing-page">
+<main class="landing-page" in:scale={{start: 0.95, opacity: 0.5}}>
 
 
   <div class="hero-container">
-    <img src="wing-square.png" alt="Arachne Logo" class="logo" />
+
+    <img src="wing-square.png" id = 'wing' alt="Arachne Logo" class="logo" />
 
     <div class = 'expo'>
       <p>
-        Welcome!
+        Copyright &copy; 2025 ahw. All rights reserved.
       </p>
-      <p>
-        This is a simple demo site, designed to experiment with AI-enhanced drawing.
-      </p>
-      <p>
-        More updates to come!
-      </p>
-
-
     </div>
+
+    <img src="ahnheewon4.png" id = 'ahw' alt="Arachne Logo" class="logo" />
 
     <div class="button-container">
       <!-- Use inline style for immediate visibility -->
@@ -116,6 +111,7 @@
         Sign Up
       </button>
       -->
+      <!--
       <button
         bind:this={demoButton}
         class="demo-button"
@@ -124,18 +120,12 @@
           Start Drawing
         </h2>
       </button>
+      -->
     </div>
   </div>
 </main>
 
 <style lang="scss">
-
-  .logo{
-    height: 100px;
-    border-radius: 16px;
-    box-shadow: -4px 16px 24px rgba(black,0.3);
-    //margin-bottom: 16px;
-  }
 
   .landing-page {
     height: 100vh;
@@ -150,6 +140,41 @@
     padding: 0;
     max-width: 800px;
     margin-bottom: 60px;
+
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+
+    #wing{
+      height: 120px;
+      border-radius: 18px;
+      border: 2px solid white;
+      box-shadow: -4px 16px 32px rgba(black, 0.5);
+    }
+
+    #ahw{
+      height: 20px;
+      border-radius: 0;
+      opacity: .2;
+    }
+
+    .expo{
+      width: 360px;
+      margin: 24px 0 32px 0;
+      h2{
+        font-size: 32px;
+        font-weight: 600;
+        letter-spacing: -.8px;
+        color: white;
+      }
+      p {
+        font-size: 14px;
+        font-weight: 400;
+        letter-spacing: -0.25px;
+        color: rgba(white, .7);
+        margin: 12px 0;
+      }
+    }
   }
 
   h1 {
@@ -159,18 +184,6 @@
     font-weight: 700;
     color: $text-color;
     text-shadow: -4px 8px 12px rgba(black,0.05);
-  }
-
-  .expo{
-    width: 360px;
-    margin: 36px 0 48px 0;
-    p {
-      font-size: 15px;
-      font-weight: 450;
-      letter-spacing: -0.25px;
-      color: white;
-      margin: 12px 0;
-    }
   }
 
   .button-container {

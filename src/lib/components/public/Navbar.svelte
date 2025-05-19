@@ -2,6 +2,7 @@
 	import { page } from '$app/stores';
 	import { onMount } from 'svelte';
 	import { afterNavigate } from '$app/navigation';
+    import { goto } from '$app/navigation';
 
 	let navElement; // bind:this to <nav>
 	let pillElement; // bind:this to the pill div
@@ -64,51 +65,49 @@
 <header>
     <div id = 'mast' class = 'corner'>
         <a href = '/'>
-            <img src = '/wing.png' alt = 'Daydream Logo' />
+            <img src = 'wing-square.png' alt = 'Daydream Logo' />
         </a>
     </div>
 
     <nav bind:this={navElement}>
         <div class="nav-pill" bind:this={pillElement}></div>
-        <a href = '/'>
-            <div class = 'navbtn' class:active={$page.url.pathname === '/'}>
-                <span class='material-icons'>
-                    home
-                </span>
-            </div>
-        </a>
-        <a href = '/draw'>
-            <div class = 'navbtn' class:active={$page.url.pathname === '/draw'} >
-                <span class='material-icons'>
-                    draw
-                </span>
-            </div>
-        </a>
-        <a href = '/canvas'>
-            <div class = 'navbtn' class:active={$page.url.pathname === '/canvas'} >
-                <span class='material-icons'>
-                    web_stories
-                </span>
-            </div>
-        </a>
-        <a href = '/flow'>
-            <div class = 'navbtn' class:active={$page.url.pathname === '/flow'} >
-                <span class='material-symbols-outlined'>
-                    automation
-                </span>
-            </div>
-        </a>
-        <a href = '/image'>
-            <div class = 'navbtn' class:active={$page.url.pathname === '/image'} >
-                <span class='material-icons'>
-                    image
-                </span>
-            </div>
-        </a>
+
+        <div class = 'navbtn' class:active={$page.url.pathname === '/'} on:click={() => {goto('/')}} >
+            <span class='material-icons'>
+                home
+            </span>
+        </div>
+
+        <!--
+        <div class = 'navbtn' class:active={$page.url.pathname === '/draw'} on:click={() => {goto('/draw')}} >
+            <span class='material-icons'>
+                draw
+            </span>
+        </div>
+        -->
+
+        <div class = 'navbtn' class:active={$page.url.pathname === '/canvas'} on:click={() => {goto('/canvas')}} >
+            <span class='material-icons'>
+                web_stories
+            </span>
+        </div>
+
+        <div class = 'navbtn' class:active={$page.url.pathname === '/flow'} on:click={() => {goto('/flow')}} >
+            <span class='material-symbols-outlined'>
+                automation
+            </span>
+        </div>
+
+        <!--
+        <div class = 'navbtn' class:active={$page.url.pathname === '/image'} on:click={() => {goto('/image')}} >
+            <span class='material-icons'>
+                image
+            </span>
+         </div>
+         -->
     </nav>
 
     <div id = 'menu' class = 'corner'>
-        <h2> Hello </h2>
     </div>
 
 </header>
@@ -117,16 +116,20 @@
 
     header{
         display: flex;
+        flex-direction: column;
         justify-content: space-between;
         align-items: center;
-        position: fixed;
+        //position: fixed;
         box-sizing: border-box;
-        padding: 0 16px;
-        bottom: 12px;
+        flex-shrink: 0;
+        flex-grow: 0;
+        padding: 12px 0;
+        top: 0;
         left: 0;
-        height: 44px;
-        width: 100vw;
+        height: 100vh;
+        width: 52px;
         z-index: 2;
+       // border-left: 1px solid rgba(white, .2);
     }
 
     #mast{
@@ -136,6 +139,8 @@
 
         img{
             height: 28px;
+            border: 1px solid white;
+            border-radius: 6px;
         }
 
         h1{
@@ -147,21 +152,24 @@
     nav{
         position: relative; // For pill positioning context
         display: flex;
+        flex-direction: column;
         align-items: center;
+        box-sizing: border-box;
         gap: 8px;
-        background: rgba(#e0e0e0, .7);
-        border: 1px solid rgba(white, .2);
-        backdrop-filter: blur(8px);
+        background: none;
+
+       // border: 1px solid rgba(white, .2);
+        box-shadow: 0 24px 48px rgba(black, .3);
         padding: 6px;
-        border-radius: 22px;
-        box-shadow: 0 24px 48px rgba(black, .8);
+        border-radius: 0 16px 16px 0;
+
 
         .nav-pill {
             position: absolute;
             left: 0;
             top: 0%;
-            background-color: white;
-            border-radius: 14px; // Half of height for perfect pill
+            background-color: rgba(white, .1);
+            border-radius: 10px; // Half of height for perfect pill
             box-shadow: -2px 4px 8px rgba(black, .2);
             border: none;
             //transform: translateY(-50%); // Vertically center
@@ -170,40 +178,37 @@
             transition: 0.2s cubic-bezier(0.65, 0, 0.35, 1);
         }
 
-        a {
-            text-decoration: none;
-            color: inherit; // Inherit color from parent or set specific
-            position: relative; // To ensure z-index stacking works
-            z-index: 1; // Above the pill
-
-            .navbtn{
-                width: 48px;
-                height: 40px;
+        .navbtn{
+            cursor: pointer;
+                width: 36px;
+                height: 36px;
                 display: flex;
                 align-items: center;
                 justify-content: center;
                 transition: .2s ease;
                 border: none;
+                transition: .2s ease;
                 h2{
                     font-size: 14px;
                     font-weight: 600;
                 }
                 span{
-                    font-size: 22px;
+                    font-size: 20px;
                     font-weight: 700;
                     line-height: 100%;
                     color: rgba(#030025, 1);
+                    color: rgba(white, .3);
                     text-align: center;
                     filter: drop-shadow(0 4px 8px rgba(black, .1));
                 }
                 &:hover{
-                    background: rgba(black, .12);
+                    background: rgba(white, .1);
                     border-radius: 12px;
                 }
                 &.active{
                     //background: rgba(#e0e0e0, .8);
                     span{
-                        color: #030025;
+                        color: rgba(white, 1);
                         filter: none;
                     }
                     &:hover{
@@ -211,13 +216,9 @@
                     }
                 }
             }
-        }
     }
 
-    .corner{
-        width: 200px;
-        opacity: 0;
-    }
+
 
     #menu{
         display: flex;

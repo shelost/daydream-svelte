@@ -38,6 +38,7 @@
 	"dependencies": {
 		"@magenta/image": "^0.2.1",
 		"@resvg/resvg-js": "^2.6.2",
+		"@runware/sdk-js": "^1.1.38",
 		"@supabase/ssr": "^0.6.1",
 		"@supabase/supabase-js": "^2.49.4",
 		"@sveltejs/kit": "^2.20.7",
@@ -56,6 +57,7 @@
 		"perfect-freehand": "^1.2.2",
 		"replicate": "^1.0.1",
 		"sass": "^1.86.3",
+		"svelte-rune-markdown": "^0.0.2",
 		"undici": "^6.21.2",
 		"uuid": "^11.1.0"
 	}

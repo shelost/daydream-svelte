@@ -1,34 +1,28 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import type { DrawingContent } from '$lib/types';
-import { svgFromStrokes } from '$lib/utils/drawingUtils.js';
-import { analyzeImageWithVision, generateImageDescription } from '$lib/services/googleVision';
 import OpenAI from 'openai';
 
 // Function to sanitize input text
-function sanitizeInput(text) {
+function sanitizeInput(text: any): string {
   if (!text) return '';
-  // Remove any potential HTML/script injection
-  return text.replace(/<[^>]*>/g, '').trim();
+  return String(text).replace(/<[^>]*>/g, '').trim();
 }
 
 // Helper function to trim the prompt to a specific character limit
-function trimPromptToLimit(prompt, limit = 4000) {
+function trimPromptToLimit(prompt: string | undefined, limit = 4000): string {
   if (!prompt) return '';
   if (prompt.length <= limit) return prompt;
 
-  // If we need to trim, try to do it at a paragraph break
   const lastBreakPoint = prompt.lastIndexOf('\n\n', limit - 100);
   if (lastBreakPoint > limit * 0.75) {
     return prompt.substring(0, lastBreakPoint) + '\n\n[Prompt truncated to fit size limits...]';
   }
-
   return prompt.substring(0, limit - 50) + '\n\n[Prompt truncated to fit size limits...]';
 }
 
 export const POST: RequestHandler = async (event) => {
   try {
-    console.log('Image generation API called');
+    console.log('OpenAI /generate-image API called');
     const requestData = await event.request.json();
     const {
       drawingContent,
@@ -38,227 +32,163 @@ export const POST: RequestHandler = async (event) => {
       sketchAnalysis,
       strokeRecognition,
       prompt: clientPrompt,
+      originalPrompt,
       structureData,
       detectedObjects: clientEnhancedObjects
     } = requestData;
 
-    if (!drawingContent || !imageData) {
-      return json({ error: 'Drawing content and image data are required' }, { status: 400 });
-    }
-
-    // Convert base64 data URL to base64 string
-    const base64Data = imageData.split(',')[1];
-    if (!base64Data) {
-      return json({ error: 'Invalid image data format' }, { status: 400 });
-    }
-
-    // Convert SVG strokes to paths for compatibility - fixed parameter passing
-    const svgResult = svgFromStrokes(
-      drawingContent.strokes,
-      drawingContent.bounds ? drawingContent.bounds.width : 800,
-      drawingContent.bounds ? drawingContent.bounds.height : 600,
-      '#ffffff'
-    );
-
-    // Get OpenAI API Key using dynamic import to avoid TypeScript errors
+    // @ts-ignore
     const { OPENAI_API_KEY } = await import('$env/static/private');
-
-    // Check if API key is available
     if (!OPENAI_API_KEY) {
       return json({ error: 'OpenAI API key is not configured' }, { status: 500 });
     }
-
-    // Create OpenAI instance
     const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
-    // First, use GPT-4o to analyze the content of the drawing for enhanced context
-    console.log('Analyzing drawing content...');
+    let finalPrompt: string;
+    let operationType: 'sketch-to-image' | 'text-to-image';
 
-    // Prepare compositional information based on aspect ratio
-    let compositionGuide = 'Focus on the direct, front-facing view.';
-    if (aspectRatio) {
-      if (aspectRatio === '4:5') {
-        compositionGuide = 'Maintain the portrait (4:5) composition with slightly more vertical space.';
-      } else if (aspectRatio === '1:1') {
-        compositionGuide = 'Maintain the perfect square (1:1) composition with equal horizontal and vertical space.';
-      } else if (aspectRatio === '9:16') {
-        compositionGuide = 'Maintain the tall portrait (9:16) composition with significantly more vertical space.';
-      }
-    }
+    if (drawingContent && imageData) {
+      operationType = 'sketch-to-image';
+      console.log('Processing sketch-to-image request for /generate-image');
 
-    // Extract structural information from the request if available
-    const structuralGuide = drawingContent?.strokes?.length
-      ? `The drawing consists of ${drawingContent.strokes.length} strokes forming a coherent sketch. Preserve the exact structure.`
-      : '';
-
-    // Process text extraction and object detection from client data
-    let extractedText = '';
-    let detectedObjects = '';
-
-    // Use the client-provided prompt if available, otherwise build one
-    let prompt;
-    if (clientPrompt) {
-      console.log('Using client-provided prompt');
-      prompt = clientPrompt;
-    } else {
-      console.log('Building server-side prompt (fallback)');
-
-      // Build a new prompt that focuses on structure preservation
-      prompt = `ENHANCEMENT MODE: You are ENHANCING a sketch, NOT CREATING a new image. You must follow the EXACT PIXEL-BY-PIXEL layout of the original sketch.
-
-CRITICAL STRUCTURE PRESERVATION: Treat this sketch as an EXACT STRUCTURAL TEMPLATE where each element MUST remain in its PRECISE position.
-
-ABSOLUTE RULES:
-1. PIXEL-PERFECT POSITIONING: Every element MUST stay in the EXACT same x,y coordinates as the original sketch
-2. PRESERVE ALL PROPORTIONS: Elements must maintain the EXACT same size relationships
-3. DIRECT FRONT-FACING VIEW: Maintain the straight-on view with NO perspective changes
-4. MATCH ORIGINAL SCALE: Keep elements at the EXACT same scale - do NOT make them larger or smaller relative to the canvas
-5. USE SKETCH AS OVERLAY: Imagine your task is to add color and texture to the original sketch, NOT create a new composition
-
-`;
-
-      // Include sketch analysis if available (as content description)
-      if (sketchAnalysis && sketchAnalysis !== "draw something to see ai's interpretation") {
-        prompt += `CONTENT DESCRIPTION: ${sketchAnalysis}\n\n`;
+      // For sketch-to-image, the /draw page sends a very specific, structured prompt as clientPrompt.
+      // We should prioritize that.
+      if (clientPrompt && typeof clientPrompt === 'string' && clientPrompt.trim() !== '') {
+        console.log('Using client-provided prompt for sketch enhancement.');
+        finalPrompt = clientPrompt;
       } else {
-        prompt += `CONTENT DESCRIPTION: A user's sketch that should be enhanced while preserving exact structure.\n\n`;
+        // Fallback: Build a server-side prompt for sketch enhancement if clientPrompt is missing/empty.
+        // This is less likely for the /draw page usage but provides a safeguard.
+        console.log('Warning: Client prompt for sketch enhancement was empty. Building server-side fallback.');
+        let promptBuilder = `ENHANCEMENT MODE: You are ENHANCING a sketch. Follow the EXACT layout of the original sketch.\n\nCRITICAL STRUCTURE PRESERVATION: Treat this sketch as an EXACT STRUCTURAL TEMPLATE.\n\nABSOLUTE RULES:\n1. PIXEL-PERFECT POSITIONING: Elements MUST stay in EXACT x,y coordinates.\n2. PRESERVE PROPORTIONS: Maintain EXACT size relationships.\n3. DIRECT FRONT-FACING VIEW: NO perspective changes.\n4. MATCH SCALE: Keep elements at EXACT same scale.\n5. SKETCH AS OVERLAY: Add color/texture, DO NOT change composition.\n\n`;
+        const currentSketchAnalysis = sketchAnalysis || "A user's sketch for enhancement.";
+        promptBuilder += `CONTENT DESCRIPTION: ${sanitizeInput(currentSketchAnalysis)}\n\n`;
+        if (drawingContent?.strokes?.length) {
+          promptBuilder += `STRUCTURAL GUIDE: ${drawingContent.strokes.length} strokes. Preserve structure.\n\n`;
+        }
+        const sanitizedContext = sanitizeInput(additionalContext);
+        if (sanitizedContext) {
+          promptBuilder += `USER'S CONTEXT: "${sanitizedContext}"\n\n`;
+        }
+        let currentAspectRatio = aspectRatio || '1:1';
+        let compositionGuide = 'Focus on the direct, front-facing view.';
+        if (currentAspectRatio === 'portrait') compositionGuide = 'Maintain portrait (e.g., 1024x1792) composition.';
+        else if (currentAspectRatio === 'landscape') compositionGuide = 'Maintain landscape (e.g., 1792x1024) composition.';
+        else if (currentAspectRatio === '1:1') compositionGuide = 'Maintain square (1:1) composition.';
+        promptBuilder += `COMPOSITION GUIDE: ${compositionGuide}\n\n`;
+        const sanitizedStrokeRec = sanitizeInput(strokeRecognition);
+        if (sanitizedStrokeRec && sanitizedStrokeRec !== "draw something to see shapes recognized") {
+          promptBuilder += `RECOGNIZED SHAPES: ${sanitizedStrokeRec}\n\n`;
+        }
+        if (clientEnhancedObjects && Array.isArray(clientEnhancedObjects) && clientEnhancedObjects.length > 0) {
+          const objectsDetails = clientEnhancedObjects.map((obj: any, index: number) => {
+            const label = sanitizeInput(obj.label || obj.name || `Object ${index + 1}`);
+            // Ensure obj.x, obj.y, obj.width, obj.height are fractions (0-1) before multiplying by 100
+            const xPercent = Math.round((obj.x || 0) * 100);
+            const yPercent = Math.round((obj.y || 0) * 100);
+            const wPercent = Math.round((obj.width || 0) * 100);
+            const hPercent = Math.round((obj.height || 0) * 100);
+            // centerX/Y should also be derived from fractional values if not directly provided as such
+            const cxPercent = obj.centerX ? Math.round(obj.centerX * 100) : Math.round(((obj.x || 0) + (obj.width || 0) / 2) * 100);
+            const cyPercent = obj.centerY ? Math.round(obj.centerY * 100) : Math.round(((obj.y || 0) + (obj.height || 0) / 2) * 100);
+            return `Object ${index + 1}: "${label}" - CENTER(${cxPercent}%, ${cyPercent}%), SIZE(${wPercent}%, ${hPercent}%)`;
+          }).join('\n');
+          promptBuilder += `DETECTED OBJECTS:\n${objectsDetails}\n\n`;
+        }
+        promptBuilder += `FINAL INSTRUCTIONS: PRESERVE EXACT STRUCTURE. Enhance sketch, DO NOT reposition/resize.`;
+        finalPrompt = promptBuilder;
       }
-
-      // Include structural guide if available
-      if (structuralGuide) {
-        prompt += `STRUCTURAL GUIDE: ${structuralGuide}\n\n`;
+    } else if (clientPrompt && typeof clientPrompt === 'string' && clientPrompt.trim() !== '') {
+      operationType = 'text-to-image';
+      console.log('Processing text-to-image request for /generate-image');
+      let textPromptBuilder = sanitizeInput(clientPrompt);
+      const sanitizedContext = sanitizeInput(additionalContext);
+      if (sanitizedContext) {
+        textPromptBuilder += ` Additional details: ${sanitizedContext}`;
       }
-
-    // Add user's additional context if provided (preserve this as high priority)
-    const sanitizedContext = sanitizeInput(additionalContext || '');
-    if (sanitizedContext) {
-      prompt += `USER'S CONTEXT: "${sanitizedContext}"\n\n`;
+      finalPrompt = textPromptBuilder;
+    } else {
+      return json({ error: 'Invalid request: Missing required fields for sketch or text mode.' }, { status: 400 });
     }
 
-    // Include the compositional analysis (reduced priority)
-    prompt += `COMPOSITION GUIDE: ${compositionGuide}\n\n`;
+    finalPrompt = trimPromptToLimit(finalPrompt, 4000);
+    console.log(`Final prompt for OpenAI (${operationType}, length: ${finalPrompt.length}): ${finalPrompt.substring(0, 200)}...`);
 
-    // Add stroke-based recognition if available
-    const sanitizedStrokeRecognition = sanitizeInput(strokeRecognition || '');
-    if (sanitizedStrokeRecognition && sanitizedStrokeRecognition !== "draw something to see shapes recognized") {
-      prompt += `RECOGNIZED SHAPES: ${sanitizedStrokeRecognition}\n\n`;
-    }
+    let imageSize: "1024x1024" | "1792x1024" | "1024x1792" = "1024x1024";
+    let finalAspectRatioString = aspectRatio || '1:1';
 
-      // Process detected objects if available
-      if (clientEnhancedObjects && Array.isArray(clientEnhancedObjects) && clientEnhancedObjects.length > 0) {
-        console.log(`Processing ${clientEnhancedObjects.length} enhanced objects for structural guidance`);
+    // Map descriptive aspect ratios to DALL-E 3 sizes
+    if (aspectRatio === 'portrait') finalAspectRatioString = "1024x1792";
+    else if (aspectRatio === 'landscape') finalAspectRatioString = "1792x1024";
+    else if (aspectRatio === '1:1') finalAspectRatioString = "1024x1024";
+    // If specific DALL-E 3 sizes are passed, use them directly
+    else if (aspectRatio === "1024x1792" || aspectRatio === "1792x1024" || aspectRatio === "1024x1024") finalAspectRatioString = aspectRatio;
+    // Default for any other string
+    else finalAspectRatioString = "1024x1024";
 
-        // Format the objects with precise coordinates
-        const objectsDetails = clientEnhancedObjects.map((obj, index) => {
-          const label = obj.label || obj.name || `Object ${index + 1}`;
-          const x = Math.round((obj.x || 0) * 100);
-          const y = Math.round((obj.y || 0) * 100);
-          const width = Math.round((obj.width || 0) * 100);
-          const height = Math.round((obj.height || 0) * 100);
-          const centerX = obj.centerX ? Math.round(obj.centerX * 100) : Math.round((x + width/2) * 100);
-          const centerY = obj.centerY ? Math.round(obj.centerY * 100) : Math.round((y + height/2) * 100);
+    imageSize = finalAspectRatioString as "1024x1024" | "1792x1024" | "1024x1792";
 
-          return `Object ${index + 1}: "${label}" - CENTER(${centerX}%, ${centerY}%), SIZE(${width}%, ${height}%)`;
-        }).join('\n');
-
-        // Add the formatted objects to the prompt
-        detectedObjects = objectsDetails;
-      }
-
-      // Add detected objects to the prompt if available
-    if (detectedObjects) {
-        prompt += `DETECTED OBJECTS WITH PRECISE COORDINATES:\n${detectedObjects}\n\n`;
-    }
-
-    if (extractedText) {
-      prompt += `TEXT ELEMENTS: ${extractedText}\n\n`;
-    }
-
-      // Final instructions for perfect structural fidelity
-      prompt += `FINAL INSTRUCTIONS: PRESERVE EXACT STRUCTURE. This is an ENHANCEMENT task - maintain the precise positions, sizes, and proportions of ALL elements in the original sketch. Add color and texture but DO NOT reposition or resize ANY elements from the sketch. The final image should look like a direct enhancement of the sketch, with the same spatial layout down to the pixel level.`;
-    }
-
-    // Trim the prompt to ensure it stays within API limits
-    prompt = trimPromptToLimit(prompt, 4000);
-
-    console.log('Generating image with GPT-Image-1, prompt length:', prompt.length);
-
-    // Determine image size based on aspect ratio
-    let imageSize: "1024x1024" | "1792x1024" | "1024x1792" = "1024x1024"; // Default square
-    if (aspectRatio) {
-      switch(aspectRatio) {
-        case '4:5':
-          imageSize = "1024x1024"; // For portrait 4:5 ratio, use the portrait option
-          break;
-        case '1:1':
-          imageSize = "1024x1024"; // Square
-          break;
-        case '9:16':
-          imageSize = "1024x1024"; // For tall portrait 9:16 ratio, also use portrait option
-          break;
-        default:
-          imageSize = "1024x1024"; // Default to square if unknown ratio
-      }
-    }
-    console.log('Using image size:', imageSize);
+    console.log(`Requesting image size from OpenAI: ${imageSize}`);
 
     try {
-      // Use GPT-Image-1 model with only supported parameters
-      const response = await openai.images.generate({
-        model: "gpt-image-1",
-        prompt: prompt,
+      const generationPayload: OpenAI.Images.ImageGenerateParams = {
+        model: "dall-e-3",
+        prompt: finalPrompt,
         n: 1,
-        size: imageSize
+        size: imageSize,
+        quality: "standard",
+      };
+
+      const response = await openai.images.generate(generationPayload);
+
+      // Enhanced logging for OpenAI response data
+      if (response && response.data && response.data.length > 0) {
+        console.log('OpenAI response.data[0]:', JSON.stringify(response.data[0], null, 2));
+      } else {
+        console.log('OpenAI response or response.data is empty or not as expected:', JSON.stringify(response, null, 2));
+      }
+
+      const imageUrl = response.data[0]?.url;
+      const revisedPrompt = response.data[0]?.revised_prompt;
+
+      if (!imageUrl) {
+        return json({ error: 'Failed to generate image, no URL returned by OpenAI' }, { status: 500 });
+      }
+
+      console.log('Image generated successfully by OpenAI:', imageUrl);
+      return json({
+        imageUrl: imageUrl,
+        url: imageUrl,
+        model: 'dall-e-3', // Consistent model name
+        prompt: originalPrompt || clientPrompt, // Return the original user prompt if available
+        modified_prompt: clientPrompt !== originalPrompt ? clientPrompt : undefined, // Return the modified prompt if it was changed
+        revised_prompt: revisedPrompt,
+        aspectRatio: finalAspectRatioString // Return the aspect ratio string that determined the size
       });
 
-      // Check if the response has the expected format
-      if (response.data && response.data.length > 0) {
-        const generatedImage = response.data[0];
-
-        // Log the revised prompt that GPT-Image-1 actually used (for debugging)
-        if (generatedImage.revised_prompt) {
-          console.log('GPT-Image-1 revised prompt:', generatedImage.revised_prompt);
-        }
-
-        if (generatedImage.url) {
-          return json({
-            imageUrl: generatedImage.url,
-            url: generatedImage.url,
-            model: "gpt-image-1",
-            aspectRatio: aspectRatio // Return the aspect ratio used
-          });
-        } else if (generatedImage.b64_json) {
-          return json({
-            imageUrl: `data:image/png;base64,${generatedImage.b64_json}`,
-            url: `data:image/png;base64,${generatedImage.b64_json}`,
-            model: "gpt-image-1",
-            aspectRatio: aspectRatio // Return the aspect ratio used
-          });
-        }
-      }
-
-      return json({ error: 'Failed to generate image - unexpected API response format' }, { status: 500 });
-    } catch (error) {
+    } catch (error: any) {
       console.error('OpenAI API error:', error);
-
-      // Check specifically for content filter errors
-      if (error instanceof Error) {
-        const errorMessage = error.message.toLowerCase();
-
-        if (errorMessage.includes('safety') ||
-            errorMessage.includes('content filter') ||
-            errorMessage.includes('policy violation') ||
-            errorMessage.includes('rejected')) {
-          return json({
-            error: 'Your drawing or description triggered OpenAI\'s content filter. Please modify your drawing or description to avoid sensitive content.'
-          }, { status: 400 });
-        }
+      let errorMessage = 'Error generating image with OpenAI';
+      let errorStatus = 500;
+      if (error.response) {
+        console.error('OpenAI Error Data:', error.response.data);
+        errorMessage = error.response.data?.error?.message || error.message || errorMessage;
+        errorStatus = error.response.status || errorStatus;
+      } else {
+        errorMessage = error.message || errorMessage;
       }
-
-      throw error; // Re-throw to be caught by the outer catch block
+      // Check for content policy violation
+      if (error.code === 'content_policy_violation' || (typeof errorMessage === 'string' && errorMessage.toLowerCase().includes('content policy'))) {
+          errorMessage = "Your prompt was rejected by OpenAI's content policy. Please modify your prompt.";
+          errorStatus = 400; // Bad Request due to content policy
+      }
+      return json({ error: errorMessage }, { status: errorStatus });
     }
-  } catch (error) {
-    console.error('Error generating image:', error);
+  } catch (error: any) {
+    console.error('Error in /api/ai/generate-image endpoint:', error);
     return json({ error: error.message || 'Internal server error' }, { status: 500 });
   }
 };
+
+// Removed getReplicateDimensions as it's not used in this file
+// It will be part of the generate-replicate endpoint.

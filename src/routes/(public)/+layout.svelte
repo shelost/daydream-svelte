@@ -1,5 +1,6 @@
 <script>
     import Header from '$lib/components/public/Header.svelte';
+    import Navbar from '$lib/components/public/Navbar.svelte';
 </script>
 
 <svelte:head>
@@ -8,13 +9,29 @@
 </svelte:head>
 
 <div class="layout">
-    <Header />
-    <slot />
+    <div class = 'app'>
+        <slot />
+    </div>
+    <Navbar />
 </div>
 
-<style>
+<style lang="scss">
     .layout {
         display: flex;
-        flex-direction: column;
+        width: 100vw;
+        height: 100vh;
+        overflow: hidden;
+        gap: 0;
+        flex-grow: 0;
+        background: rgb(17, 17, 19);
+    }
+    .app{
+        flex: 1;
+        box-sizing: border-box;
+        margin: 10px 4px 10px 10px;
+        border-radius: 8px;
+        //overflow: hidden;
+
+        background: var(--background-color);
     }
 </style>

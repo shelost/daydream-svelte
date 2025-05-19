@@ -54,13 +54,25 @@ export const strokeOptions = writable({
 
   // Start and end settings
   start: {
-    cap: true,              // Cap at the start
-    taper: 30,              // Increased taper at start (was 0)
+    cap: false,              // Cap at the start
+    taper: 10,              // Increased taper at start (was 0)
     easing: (t: number) => t, // Linear easing
   },
   end: {
     cap: false,              // Cap at the end
-    taper: 30,              // Increased taper at end (was 0)
+    taper: 10,              // Increased taper at end (was 0)
     easing: (t: number) => t, // Linear easing
   }
+});
+
+// Fabric.js specific stores
+export const fabricCanvas = writable<any>(null);
+export const currentFabricObject = writable<any>(null);
+export const fabricObjects = writable<any[]>([]);
+export const isEraserMode = writable<boolean>(false);
+export const fabricCanvasState = writable({
+  isDrawing: false,
+  isDragging: false,
+  lastPosX: 0,
+  lastPosY: 0
 });
