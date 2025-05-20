@@ -25,7 +25,7 @@
 
     const DEFAULT_NODE_WIDTH = 200;
     const DEFAULT_NODE_HEIGHT = 150;
-    const MAX_DIMENSION = 600; // Increased max dimension for flexibility with resizing
+    const MAX_DIMENSION = 200; // Increased max dimension for flexibility with resizing
     const MIN_DIMENSION = 50;
     const HOVER_BOUNDS_PADDING = 25; // Pixels for expanded hover area
     const NODE_BORDER_RADIUS = 6; // Pixels, to match SCSS .image-node-wrapper border-radius
@@ -258,7 +258,7 @@
     transition: box-shadow 0.2s ease, border-color 0.2s ease; /* Removed width/height transition here as Svelte Flow handles it */
     position: relative;
     background-color: #2a2a2a;
-    border: 1px solid transparent;
+
 
     &::before {
         content: '';
@@ -334,6 +334,7 @@
 .image-container {
     width: 100%;
     height: 100%;
+
     display: flex;
     justify-content: center;
     align-items: center;

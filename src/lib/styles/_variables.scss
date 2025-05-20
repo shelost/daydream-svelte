@@ -34,6 +34,9 @@ $dark-card-shadow: rgba(0, 0, 0, 0.3);
 $dark-hover-bg: rgba(255, 255, 255, 0.05);
 $dark-button-text: #f0f0f0;
 
+
+$highlight: #ff3974;
+
 // Default to light theme variables
 $primary-color: var(--primary-color, $light-primary-color);
 $secondary-color: var(--secondary-color, $light-secondary-color);

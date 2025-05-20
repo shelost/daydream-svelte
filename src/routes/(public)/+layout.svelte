@@ -23,13 +23,15 @@
         overflow: hidden;
         gap: 0;
         flex-grow: 0;
-        background: rgb(17, 17, 19);
+        background: rgb(18, 18, 19);
     }
     .app{
         flex: 1;
         box-sizing: border-box;
-        margin: 10px 4px 10px 10px;
-        border-radius: 8px;
+        margin: 12px 4px 12px 12px;
+        border-radius: 10px;
+        box-shadow: 0 0 72px rgba(black, 0.5);
+        position: relative;
         //overflow: hidden;
 
         background: var(--background-color);

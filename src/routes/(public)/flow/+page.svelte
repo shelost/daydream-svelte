@@ -36,7 +36,7 @@
 
     const edgeTypes = {
         gradient: GradientEdge,
-    };
+    } as any;
 
     const FLOW_NODES_STORAGE_KEY = 'flowPageNodesData_v1';
     const FLOW_EDGES_STORAGE_KEY = 'flowPageEdgesData_v1';
@@ -310,15 +310,14 @@
                 </linearGradient>
             </defs>
         </svg>
-      <div class="flow-controls-wrapper">
-        <Controls />
-        <button class="reset-flow-button" on:click={resetFlowCanvas} title="Reset Flow Canvas">
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
-            <span>Reset</span>
-        </button>
-      </div>
+
       <Background variant={BackgroundVariant.Dots} />
       <MiniMap />
+      <Controls />
+      <button class="reset-flow-button" on:click={resetFlowCanvas} title="Reset Flow Canvas">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+          <span>Reset</span>
+      </button>
     </SvelteFlow>
 </main>
 
@@ -345,7 +344,14 @@
         cursor: pointer;
         box-shadow: 0 1px 3px rgba(0,0,0,0.1);
         transition: background-color 0.2s, box-shadow 0.2s;
-        z-index: 3;
+        z-index: 10 !important;
+
+        width: fit-content;
+        height: fit-content;
+
+        position: absolute;
+        top: 8px;
+        left: 8px;
 
         svg {
             stroke: #555;
@@ -373,8 +379,8 @@
       bottom: 0;
       left: 0;
       padding: 4px 4px 8px 0px;
-
     }
+
 
     :global(.svelte-flow__controls-button) {
         background-color: hsla(0, 0%, 100%, 0.8);
@@ -395,7 +401,7 @@
           transform: none;
         }
         &:hover {
-            background: rgba(black, .6);
+            background: rgba(black, .2);
             color: white;
         }
     }

@@ -98,6 +98,19 @@
             </span>
         </div>
 
+        <div class = 'navbtn' class:active={$page.url.pathname === '/chat'} on:click={() => {goto('/chat')}} >
+            <span class='material-symbols-outlined'>
+                chat_bubble
+            </span>
+        </div>
+
+        <div class = 'navbtn' class:active={$page.url.pathname === '/profile'} on:click={() => {goto('/profile')}} >
+            <span class='material-symbols-outlined'>
+                person
+            </span>
+        </div>
+
+
         <!--
         <div class = 'navbtn' class:active={$page.url.pathname === '/image'} on:click={() => {goto('/image')}} >
             <span class='material-icons'>
@@ -108,6 +121,13 @@
     </nav>
 
     <div id = 'menu' class = 'corner'>
+
+        <div class = 'navbtn' class:active={$page.url.pathname === '/profile'} on:click={() => {goto('/profile')}} >
+            <span class='material-symbols-outlined'>
+                person
+            </span>
+        </div>
+
     </div>
 
 </header>
@@ -179,7 +199,7 @@
         }
 
         .navbtn{
-            cursor: pointer;
+                cursor: pointer;
                 width: 36px;
                 height: 36px;
                 display: flex;
@@ -196,7 +216,6 @@
                     font-size: 20px;
                     font-weight: 700;
                     line-height: 100%;
-                    color: rgba(#030025, 1);
                     color: rgba(white, .3);
                     text-align: center;
                     filter: drop-shadow(0 4px 8px rgba(black, .1));
@@ -219,11 +238,5 @@
     }
 
 
-
-    #menu{
-        display: flex;
-        align-items: center;
-        justify-content: right;
-    }
 
 </style>

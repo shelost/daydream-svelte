@@ -1292,3 +1292,211 @@ The canvas page already supports generating SVG output but only shows the render
 - [ ] Confirm PNG workflow unchanged.
 
 ---
+
+## Improve SVG Generation Quality (Dynamic Prompt + Optional Vision Input)
+
+### Problem
+Users receive low-quality or structurally incorrect SVGs when they request vector output without providing a sketch. The prompt we send to GPT-4o always enforces strict structure-preservation and we always attach a blank snapshot as an image input. This confuses the model and leads to minimal or meaningless SVG results (as seen with the "map of the United States" test).
+
+### Solution Outline
+1. Detect whether the user has actually drawn anything on the canvas (Fabric contains at least one object).
+2. Build two different prompt flavours:
+   • **With sketch** – keep the strict structure-preservation wording.
+   • **Without sketch** – ask for a clean, high-quality vector illustration purely based on the text prompt.
+3. Only capture and send the PNG snapshot when a sketch exists. If no sketch, omit `imageData` entirely so GPT-4o runs in pure-text mode.
+4. Update the `generate-svg` API endpoint to:
+   • Accept optional `imageData`.
+   • Choose an appropriate system prompt (conversion vs. illustration).
+   • Attach the image only if provided.
+   • Optimise the returned SVG with SVGO before responding.
+5. Add `svgo` as a dependency so the backend can optimise all SVGs (smaller, cleaner, easier for Fabric to parse).
+
+### Checklist
+- [x] Add `buildDynamicSvgPrompt()` in `+page.svelte`.
+- [x] Replace SVG branch inside `generateImage()` to use new prompt & conditional imageData.
+- [x] Update `src/routes/api/ai/generate-svg/+server.ts` to handle optional image, choose system prompt, and run SVGO optimisation.
+- [x] Add `svgo` dependency to `package.json`.
+- [ ] Verify no linter errors remain.
+- [ ] Run `npm install` to pull SVGO.
+
+---
+
+## GPTNode Timer, Gemini Fixes & Enhancements (Claude/Gemini Integration Follow-up)
+
+1.  **`GPTNode.svelte` Timer Precision:**
+    *   Modify `generationSeconds` to support floating-point numbers.
+    *   Update `setInterval` to increment by `0.1` every `100ms`.
+    *   Format the "Generating..." button display to show time with one decimal place (e.g., `10.7s`).
+2.  **`GPTNode.svelte` Add Gemini 2.5 Flash Model:**
+    *   Add `gemini-2.5-flash-preview-05-20` to the list of available models.
+3.  **`src/routes/api/ai/google/+server.ts` (Gemini Backend):**
+    *   **Fix `Part` Type Error:** Correct the `Part` type import from `@google/genai` to `@google/generative-ai` to resolve the API call failure.
+    *   **Implement Response Streaming:** Modify the endpoint to use `generateContentStream` to fetch the response from Google, then aggregate it before sending it as JSON. This should improve robustness.
+    *   Note: The `$env/static/private` linter error is likely an environment configuration issue.
+4.  **Review and Test:** Ensure all changes function as expected and check for new linter errors.
+
+## Plan for AppTable Component and Profile Page Refactor
+
+1.  **Create `src/lib/components/AppTable.svelte`**:
+    *   This component will be responsible for rendering a generic table with pagination.
+    *   It will accept the following props:
+        *   `data`: An array of objects, where each object represents a row.
+        *   `columns`: An array of column definition objects. Each object will specify:
+            *   `key`: The property name in the data object for that column.
+            *   `title`: The display name for the column header.
+            *   `formatter` (optional): A function `(value, row) => string` to format the cell's value.
+            *   `cellClass` (optional): A function `(value, row) => string` that returns a CSS class string for the cell `<td>`.
+        *   `maxLinesPerPage` (optional, default to 25): The maximum number of rows to display per page.
+    *   It will implement pagination logic:
+        *   Calculate total pages.
+        *   Display a slice of data based on the current page and `maxLinesPerPage`.
+        *   Provide "Previous" and "Next" buttons for navigation.
+        *   Display current page number and total pages.
+    *   Styles for the table and pagination controls will be included within this component.
+
+2.  **Refactor `src/routes/(public)/profile/+page.svelte`**:
+    *   Import the newly created `AppTable.svelte` component.
+    *   Remove the existing table HTML markup and associated JavaScript logic (like `formatTimestamp`, `formatCost`, `getStatusClass`).
+    *   Prepare the `columns` definition array specifically for the API log data. The formatting and class logic will be passed through these column definitions.
+    *   Use the `<AppTable>` component, passing the `logs` array as the `data` prop and the prepared `columns` definition.
+
+## Refactor: Ensure GPT-Image-1 Is Used for Image Generation (May 20 2025)
+
+### 1. Problem Statement
+The `/api/ai/generate-image` endpoint defaulted to the **DALL-E 3** model.  Consequently the Profile log table reported the provider model as "dall-e-3" even when the **Daydream** UI showed "GPT-Image-1" as the selected model.  We must guarantee that **GPT-Image-1** is _always_ used for first–party OpenAI image generation so behaviour and cost reporting remain consistent.
+
+### 2. Outline Solution
+1. Update `src/routes/api/ai/generate-image/+server.ts` so that:
+   • the default model is `gpt-image-1` (optionally overrides via `model` in the request body)
+   • every OpenAI Images `generate` call uses `gpt-image-1`
+   • pricing is calculated with the `gpt-image-1` key from `apiPricing.js`
+   • logging (`apiLogEntry.model`) reflects the chosen model
+2. Tweak the canvas page (`src/routes/(public)/canvas/+page.svelte`):
+   • remove legacy references to `dall-e-3`
+   • default fallback model names to `gpt-image-1` / `gpt-image-1-edit`
+   • narrow the condition that triggers OpenAI image generation to `gpt-image-1` only
+3. (Optional future work) consolidate all OpenAI image/edit calls into a unified `/api/ai/openai-image` endpoint that routes by `model` and `mode` (generate vs edit).
+
+### 3. Checklist
+- [x] Adjust server-side model selection & logging in `+server.ts` (generate-image).
+- [x] Update cost calculation call to use `gpt-image-1`.
+- [x] Preserve ability for client to specify an alternate OpenAI image model via `model` field.
+- [x] Remove `dall-e-3` references from canvas `+page.svelte` and fix fallbacks.
+- [x] Update instructions.md with this plan (you are here).
+- [x] Verify no remaining `dall-e-3` strings in updated files.
+
+Implementation completed  ✔︎
+
+## API Log Status Consistency Fix (May 21 2025)
+
+### 1. Problem Statement
+The Profile page's API log table was showing "Error" status (404) for some successful OpenAI image generation calls. This was because the `apiLogEntry` object sent from the server contained status codes that didn't match the actual HTTP response status code. This mismatch occurred when:
+* A server endpoint successfully generated content (HTTP 200)
+* But included an `apiLogEntry` with a non-200 status code
+* The log display in the Profile page interpreted this as an error
+
+### 2. Solution Implemented
+The `fetchAndLog` utility in `src/lib/utils/fetchAndLog.js` was modified to:
+1. **Always override the `status` property** in successful API log entries to match the actual HTTP response status. If `response.ok` is true (indicating HTTP 200-299 status), the log entry's status is set to `response.status`.
+2. **Clear any error message** in successful responses by setting `logEntry.error = null`.
+3. **Ensure error status codes are accurate** by setting the status to the actual HTTP error status code for error responses.
+4. **Populate error messages** from the response data if the log entry is missing them.
+
+This approach guarantees that a successful API call (HTTP 200-299) will never show as an error in the log table, regardless of what the server initially set in the log entry's status field.
+
+### 3. Root Cause Analysis
+In the OpenAI image generation endpoint, even successful operations were sometimes including non-200 status codes in the log entry. The `fetchAndLog` function was not validating or correcting these status codes before adding them to the log store.
+
+The fix maintains the original HTTP response state (successful vs. error) by using the actual HTTP status from the Response object rather than blindly trusting the status included in the API log entry.
+
+## Omnibar Component Refactoring Plan
+
+1.  **Goal:** Refactor the canvas input area in `src/routes/(public)/canvas/+page.svelte` into a reusable `Omnibar.svelte` component.
+2.  **Create `Omnibar.svelte`** (`src/lib/components/Omnibar.svelte`):
+    *   Move HTML markup of `.canvas-input-area`.
+    *   Move associated SCSS styles.
+3.  **Define `Omnibar.svelte` Props:**
+    *   `settingType: string` (e.g., 'image', 'text') - Controls toolbar content.
+    *   `bind:additionalContext: string` - For the textarea.
+    *   `bind:selectedFormat: string` - For image format selector (if `settingType === 'image'`).
+    *   `bind:currentSelectedModel: string` - For model selector.
+    *   `isGenerating: boolean` - For ongoing generation state.
+    *   `onSubmit: () => void` - Callback for form submission.
+    *   `parentDisabled: boolean` - Controls overall disabled state from parent.
+    *   `imageModels: Array<{ value: string, label: string }>` - Models for 'image' setting.
+    *   `textModels: Array<{ value: string, label: string }>` - Models for 'text' setting (future).
+4.  **Internal Logic for `Omnibar.svelte`:**
+    *   Include `autoResize` Svelte action for the textarea.
+    *   Implement `handleKeydown` to call `onSubmit` on Enter (if not disabled).
+    *   Conditionally render toolbar based on `settingType`.
+5.  **Update `src/routes/(public)/canvas/+page.svelte`:**
+    *   Import and use `<Omnibar />`.
+    *   Pass `settingType="image"`.
+    *   Bind `additionalContext`, `selectedFormat`.
+    *   Bind `currentSelectedModel` to `$selectedModel` store.
+    *   Pass `isGenerating={$isGenerating}`.
+    *   Pass `onSubmit={generateImage}`.
+    *   Define and pass `imageModels` array.
+    *   Define and pass `parentDisabled` reactive variable (`$: parentDisabled = $isGenerating || ((!fabricInstance || fabricInstance.getObjects().length === 0) && !additionalContext.trim());`).
+6.  **Verification:** Ensure all functionality of the input area remains intact on the canvas page.
+
+## Plan for Text Chat Application (`src/routes/(public)/chat/+page.svelte`)
+
+The goal is to transform `src/routes/(public)/chat/+page.svelte` from an image generation interface into a text-based chat application with model selection and streaming responses.
+
+*   **Phase 1: Frontend Refactoring (`src/routes/(public)/chat/+page.svelte`)**
+    *   **Component Integration:**
+        *   Import and integrate the `Omnibar.svelte` component.
+        *   Configure `Omnibar` for `settingType="text"`.
+        *   Populate `Omnibar` with a list of available text models (e.g., GPT-3.5 Turbo, GPT-4).
+    *   **State Management:**
+        *   Modify the `Message` interface: remove image-specific fields (`images`, `aspectRatioUsed`), add `isStreaming` (boolean) for assistant messages to indicate active text streaming, and `modelUsed` (string) to store which model generated the response.
+        *   Remove the `ImageResult` interface and related image-specific state variables (`modelsToQuery` for images, `selectedAspectRatio`).
+        *   Introduce `currentSelectedTextModel` state, bound to the `Omnibar`.
+        *   The user's prompt will come from `Omnibar`'s `additionalContext`, stored in a variable like `omnibarPrompt`.
+    *   **Core Logic (`handleSubmit`):**
+        *   Adapt the `handleSubmit` function (triggered by `Omnibar`) to:
+            *   Capture the text prompt (`omnibarPrompt`) and `currentSelectedTextModel`.
+            *   Add the user's message to the chat.
+            *   Add a placeholder for the assistant's response (e.g., `content: '', role: 'assistant', isLoading: true, isStreaming: true, modelUsed: currentSelectedTextModel`).
+            *   Make a `fetch` request to `/api/ai/chat` with the prompt and model.
+            *   Handle the streamed text response:
+                *   Use `response.body.getReader()` and `TextDecoder` to process incoming text chunks.
+                *   Append chunks to the assistant's message `content` in real-time.
+                *   Update the `messages` array reactively to show the streaming text.
+                *   Set `isLoading: false` and `isStreaming: false` on the assistant message when the stream ends or if an error occurs.
+    *   **UI Adjustments:**
+        *   Replace the existing `<textarea>` and associated controls with the `<Omnibar>` component in both the "start state" and "chat state" of the UI.
+        *   Remove UI elements specific to image generation: `images-grid`, image model icons, progress bars for individual images, aspect ratio selectors.
+        *   Ensure text messages (user and assistant) are displayed clearly. Display `modelUsed` discreetly for assistant messages.
+    *   **Lifecycle and Storage:**
+        *   Update `onMount` and `sessionStorage` logic to correctly save/load text-based chat history, including the new `Message` structure.
+        *   Modify `handleClearChat` for a text-based chat context, resetting with an initial assistant greeting.
+
+*   **Phase 2: Backend API Endpoint (`src/routes/api/ai/chat/+server.ts`)**
+    *   **Endpoint Creation:**
+        *   Create the file `src/routes/api/ai/chat/+server.ts`.
+    *   **Request Handling:**
+        *   Implement a `POST` handler that accepts `prompt` (string) and `model` (string, e.g., 'gpt-3.5-turbo') from the JSON request body.
+    *   **AI Integration:**
+        *   Import and use the `OpenAI` SDK. Access `OPENAI_API_KEY` from `$env/static/private`.
+    *   **Streaming Response:**
+        *   Make a streaming call to the OpenAI Chat Completions API (e.g., `openai.chat.completions.create({ stream: true, ... })`).
+        *   Create a `ReadableStream` to pipe the AI's response.
+            *   Inside the stream's `async start(controller)` method:
+                *   Iterate `for await (const chunk of streamFromOpenAI)`.
+                *   Get the text content from `chunk.choices[0]?.delta?.content`.
+                *   If content exists, `controller.enqueue(encoder.encode(content))`.
+                *   When the OpenAI stream finishes, `controller.close()`.
+                *   Handle potential errors from the OpenAI stream by calling `controller.error(err)`.
+        *   Return `new Response(readableStream, { headers: { 'Content-Type': 'text/plain; charset=utf-8' } })`.
+
+*   **Phase 3: Omnibar Configuration & Styling**
+    *   In `src/routes/(public)/chat/+page.svelte`, pass necessary props to `<Omnibar>`: `settingType="text"`, `textModels` (array of `{value: string, label: string}`), `bind:additionalContext`, `bind:currentSelectedModel`, `isGenerating`, `onSubmit`.
+    *   Ensure the page's SCSS accommodates the `Omnibar` and the text chat display without new styles, adapting existing ones. The overall layout (start state, chat messages, fixed input area) should feel consistent.
+
+*   **Phase 4: Testing and Refinement**
+    *   Thoroughly test chat functionality: sending messages, receiving streamed responses, model selection.
+    *   Verify error handling (API errors, network issues).
+    *   Check session storage persistence.
+    *   Ensure the UI is responsive and visually consistent with the application's style.

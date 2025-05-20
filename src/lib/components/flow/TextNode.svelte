@@ -7,7 +7,7 @@
     export let id: $$Props['id'];
     export let data: $$Props['data'];
 
-    const { updateNodeData } = useSvelteFlow();
+    const { updateNodeData, updateNode } = useSvelteFlow();
 
     let textarea: HTMLTextAreaElement | null = null;
     let isEditing = false;
@@ -38,10 +38,14 @@
 
     function handleFocus() {
         isEditing = true;
+        // Disable node dragging when the textarea is focused
+        updateNode(id, { draggable: false });
     }
 
     function handleBlur() {
         isEditing = false;
+        // Re-enable node dragging when the textarea loses focus
+        updateNode(id, { draggable: true });
     }
 
     // Prevent wheel events from bubbling when scrolling textarea
@@ -59,6 +63,12 @@
         if (event.code === 'Space' && isEditing) {
             event.stopPropagation();
         }
+    }
+
+    // Handle mousedown on textarea to prevent drag events from starting
+    function handleMouseDown(event: MouseEvent) {
+        // Stop propagation to prevent node dragging when clicking on the textarea
+        event.stopPropagation();
     }
 
     onMount(() => {
@@ -83,6 +93,7 @@
             on:blur={handleBlur}
             on:wheel={handleWheel}
             on:keydown={handleKeyDown}
+            on:mousedown={handleMouseDown}
         ></textarea>
         <Handle type="source" position={Position.Right} />
     </div>

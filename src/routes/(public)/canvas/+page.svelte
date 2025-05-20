@@ -1,10 +1,12 @@
 <script lang="ts">
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount, onDestroy, tick } from 'svelte'; // Added tick
   import { fade, scale } from 'svelte/transition';
   import type { Tool, Stroke, StrokePoint } from '$lib/types';
   import { getStroke } from 'perfect-freehand';
   import { getSvgPathFromStroke, calculatePressureFromVelocity, calculateMultiStrokeBoundingBox, findRelatedStrokes, normalizeBoundingBox } from '$lib/utils/drawingUtils.js';
   import VerticalSlider from '$lib/components/VerticalSlider.svelte';
+  import { fetchAndLog } from '$lib/utils/fetchAndLog.js'; // <-- ADD THIS IMPORT
+  import Omnibar from '$lib/components/Omnibar.svelte'; // <-- IMPORT Omnibar
   import {
     gptImagePrompt,
     gptEditPrompt,
@@ -20,6 +22,15 @@
     selectedTool,
     selectedModel
   } from '$lib/stores/canvasStore';
+
+  // Import Prism.js for syntax highlighting
+  import Prism from 'prismjs';
+  import 'prismjs/components/prism-markup.js'; // This already handles SVG (which is XML-based)
+  import 'prismjs/themes/prism-okaidia.css'; // A dark theme for Prism
+  // Import Prettier for code formatting
+  import prettier from 'prettier/standalone';
+  import * as parserHtml from 'prettier/parser-html';
+  const htmlParser = parserHtml?.default || parserHtml;
 
   // Session storage key for canvas data
   const CANVAS_STORAGE_KEY = 'canvasDrawingData';
@@ -112,6 +123,19 @@
   let additionalContext = "";
   let analysisElements: any[] = [];
   let canvasScale = 1; // Scale factor for canvas display relative to internal resolution
+
+  // Define imageModels for Omnibar
+  const imageGenerationModels = [
+    { value: 'gpt-image-1', label: 'OpenAI' },
+    { value: 'gpt-4o', label: 'GPT-4o' },
+    { value: 'flux-canny-pro', label: 'Flux Canny Pro' },
+    { value: 'controlnet-scribble', label: 'ControlNet Scribble' },
+    { value: 'stable-diffusion', label: 'Stable Diffusion' },
+    { value: 'latent-consistency', label: 'Latent Consistency' }
+  ];
+
+  // Reactive variable for Omnibar's parentDisabled prop
+  $: parentOmnibarDisabled = $isGenerating || ((!fabricInstance || fabricInstance.getObjects().length === 0) && !additionalContext.trim());
 
   // Drawing content with enhanced strokes - This might become less central with Fabric.js
   let drawingContent: EnhancedDrawingContent = {
@@ -1117,33 +1141,38 @@ Again, return ONLY the SVG code with no additional text.`;
 
   // Now update the SVG generation portion of the generateImage function
   async function generateImage() {
-    // Handle SVG generation separately before raster flow
+    // ... inside generateImage(), replace the SVG branch logic
     if (selectedFormat === 'svg') {
-      const hasContent = (fabricInstance && fabricInstance.getObjects().length > 0) || additionalContext.trim();
-      if (!hasContent) {
+      const hasSketch = fabricInstance && fabricInstance.getObjects().length > 0;
+      const hasText   = additionalContext.trim().length > 0;
+
+      if (!hasSketch && !hasText) {
         errorMessage = "Please draw something or provide context first!";
         setTimeout(() => { errorMessage = null; }, 3000);
         return;
       }
 
-      // Capture snapshot of current canvas as PNG for vision input
-      updateImageData();
+      // Only capture image data (PNG) when we actually have visible sketch content
+      let imageForPayload: string | null = null;
+      if (hasSketch) {
+        updateImageData();
+        imageForPayload = imageData;
+      }
 
       isGenerating.set(true);
       errorMessage = null;
 
       try {
-        // Use the SVG-specific prompt
-        const svgPrompt = buildSvgPrompt();
+        const svgPrompt = buildDynamicSvgPrompt(hasSketch, additionalContext);
 
-        const svgRes = await fetch('/api/ai/generate-svg', {
+        const svgRes = await fetchAndLog('/api/ai/generate-svg', { // <-- USE fetchAndLog
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            imageData,
+            imageData: imageForPayload, // may be null when no sketch
             prompt: svgPrompt,
             additionalContext,
-            model: $selectedModel // always gpt-4o when SVG is selected
+            model: $selectedModel // forced to gpt-4o elsewhere when SVG selected
           })
         });
 
@@ -1154,15 +1183,12 @@ Again, return ONLY the SVG code with no additional text.`;
 
         const data = await svgRes.json();
         if (data.svgCode) {
-          // Extract valid SVG from the response
-          let svgCode = extractValidSvg(data.svgCode);
-
-          if (!svgCode) {
+          const svgCode = extractValidSvg(data.svgCode) || data.svgCode;
+          if (!svgCode.startsWith('<svg')) {
             throw new Error('Could not extract valid SVG from response');
           }
 
           generatedSvgCode = svgCode;
-          // Show the rendered vector preview by default
           outputView = 'svg';
           await renderSvgToOutputCanvas(generatedSvgCode);
         } else {
@@ -1239,15 +1265,15 @@ Again, return ONLY the SVG code with no additional text.`;
     };
 
     try {
-      if ($selectedModel === 'gpt-image-1') {
+      if ($selectedModel === 'gpt-image-1') { // Only GPT-Image-1 handled here
         // Parallel requests: one for new image, one for strict edit
         const [standardRes, editRes] = await Promise.all([
-          fetch('/api/ai/generate-image', {
+          fetchAndLog('/api/ai/generate-image', { // <-- USE fetchAndLog
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(generatePayload)
           }),
-          fetch('/api/ai/edit-image', {
+          fetchAndLog('/api/ai/edit-image', { // <-- USE fetchAndLog (assuming edit-image endpoint will also be updated)
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(editPayload)
@@ -1259,7 +1285,7 @@ Again, return ONLY the SVG code with no additional text.`;
           const url = data.imageUrl || data.url;
           if (url) {
             generatedImageUrl.set(url);
-            generatedByModel.set(data.model || 'dall-e-3');
+            generatedByModel.set(data.model || 'gpt-image-1');
             if (data.aspectRatio) generatedImageAspectRatio = data.aspectRatio;
           }
         } else {
@@ -1271,18 +1297,19 @@ Again, return ONLY the SVG code with no additional text.`;
           const url = data.imageUrl || data.url;
           if (url) {
             editedImageUrl.set(url);
-            editedByModel.set(data.model || 'gpt-image-1-edit');
+            editedByModel.set(data.model || 'gpt-image-1-edit'); // Consistent fallback naming
           }
         } else {
           console.error('Edit generation failed', await editRes.text());
         }
 
         if (!standardRes.ok && !editRes.ok) {
-          throw new Error('Failed to generate image');
+          // If both failed, check their individual apiLogEntry (if any) already handled by fetchAndLog
+          throw new Error('Failed to generate image (both standard and edit failed)');
         }
       } else {
         // Replicate-based models
-        const repRes = await fetch('/api/ai/edit-replicate', {
+        const repRes = await fetchAndLog('/api/ai/edit-replicate', { // <-- USE fetchAndLog (assuming this endpoint will also be updated)
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ ...generatePayload, model: $selectedModel })
@@ -1304,7 +1331,11 @@ Again, return ONLY the SVG code with no additional text.`;
       }
     } catch (err) {
       console.error('Error generating image', err);
-      errorMessage = err instanceof Error ? err.message : 'Unknown error';
+      // Error message is set based on the actual error from fetchAndLog or here
+      // No need to set errorMessage if fetchAndLog already logged it via its own apiLogEntry
+      if (!(err.message && err.message.includes('apiLogEntry'))) { // Avoid double logging if error came with log
+          errorMessage = err instanceof Error ? err.message : 'Unknown error during image generation';
+      }
     } finally {
       isGenerating.set(false);
       isEditing.set(false);
@@ -1514,6 +1545,7 @@ Again, return ONLY the SVG code with no additional text.`;
   let shapeDropdownElement: HTMLElement;
   let shapeToolButtonElement: HTMLElement; // This is the group <div>
   let shapeDropdownTopPosition = '0px'; // For dynamic positioning
+  let shapeDropdownLeftPosition = '0px'; // For horizontal positioning
 
   $: currentShapeIcon = shapeOptionsList.find(s => s.type === shapeType)?.icon || 'check_box_outline_blank';
 
@@ -1522,7 +1554,10 @@ Again, return ONLY the SVG code with no additional text.`;
     const rect = shapeToolButtonElement.getBoundingClientRect();
     const toolbarRect = shapeToolButtonElement.closest('.tool-selector-toolbar')?.getBoundingClientRect();
     if (rect && toolbarRect) {
-      shapeDropdownTopPosition = `${rect.top - toolbarRect.top}px`;
+      // Position the dropdown above the button
+      const buttonCenter = rect.left + (rect.width / 2);
+      shapeDropdownLeftPosition = `${buttonCenter - 24}px`; // Center the 48px dropdown over the button
+      shapeDropdownTopPosition = `auto`; // Let bottom property handle vertical position
     }
   }
 
@@ -2257,30 +2292,132 @@ Again, return ONLY the SVG code with no additional text.`;
     selectedModel.set('gpt-4o');
   }
 
+  // Element for SVG code display (for Prism.js)
+  let svgCodeElement: HTMLElement;
+
   /**
    * Render provided SVG string onto a dedicated Fabric.js canvas inside the output pane.
    * The canvas is created (or recreated) each time a new SVG is generated.
    */
   async function renderSvgToOutputCanvas(svgString: string) {
     try {
-      if (!svgString) return;
+      if (!svgString) {
+        console.warn('renderSvgToOutputCanvas called with no svgString');
+        return;
+      }
+      console.log('Attempting to render SVG, length:', svgString.length);
+      // console.log('SVG string preview:', svgString.substring(0, 500) + '...');
 
-      // Ensure Fabric library is loaded
-      await loadFabricScript();
-
-      // Initialise / reset Fabric output canvas
-      if (fabricOutputInstance) {
-        fabricOutputInstance.dispose();
-        fabricOutputInstance = null;
+      // Pre-process the SVG string to ensure it's properly formatted
+      let processedSvg = extractValidSvg(svgString) || svgString; // Use extractValidSvg first
+      if (!processedSvg.trim().startsWith('<svg')) {
+        console.error('SVG content does not seem to start with an <svg> tag even after extraction.');
+        errorMessage = "Invalid SVG content: Missing <svg> tag.";
+        return;
       }
 
-      if (!fabricOutputCanvasHTML) return;
+      // Ensure the SVG has the required namespace
+      if (!processedSvg.includes('xmlns="http://www.w3.org/2000/svg"')) {
+        processedSvg = processedSvg.replace(/<svg/i, '<svg xmlns="http://www.w3.org/2000/svg"');
+        console.log('Added SVG namespace to the <svg> tag');
+      }
 
-      // IMPORTANT: Match internal resolution of the drawing canvas for consistent sizing
+      // Ensure viewBox is present (if not already there, try to create a sensible one)
+      if (!processedSvg.match(/viewBox=(?:'[^']+'|"[^"]+")/i)) {
+        const widthMatch = processedSvg.match(/width=(?:\'([^\']+)\'|\"([^\"]+)\")/i);
+        const heightMatch = processedSvg.match(/height=(?:\'([^\']+)\'|\"([^\"]+)\")/i);
+
+        let vbWidth = canvasWidth; // Default to current main canvas width
+        let vbHeight = canvasHeight; // Default to current main canvas height
+
+        if (widthMatch && (widthMatch[1] || widthMatch[2])) {
+            const parsedW = parseFloat(widthMatch[1] || widthMatch[2]);
+            if (!isNaN(parsedW) && parsedW > 0) vbWidth = parsedW;
+        }
+        if (heightMatch && (heightMatch[1] || heightMatch[2])) {
+            const parsedH = parseFloat(heightMatch[1] || heightMatch[2]);
+            if (!isNaN(parsedH) && parsedH > 0) vbHeight = parsedH;
+        }
+
+        processedSvg = processedSvg.replace(/<svg/i, `<svg viewBox="0 0 ${vbWidth} ${vbHeight}"`);
+        console.log(`Added default viewBox attribute to SVG: viewBox="0 0 ${vbWidth} ${vbHeight}"`);
+      }
+
+      // console.log('Processed SVG for rendering:', processedSvg.substring(0,500) + '...');
+
+      await loadFabricScript();
+
+      // Check if we need to make the SVG view visible to ensure proper rendering
+      const svgViewContainer = document.querySelector('.output-view.svg-view');
+      const wasHidden = svgViewContainer && window.getComputedStyle(svgViewContainer).display === 'none';
+      let originalDisplay = null;
+
+      // Temporarily make SVG view visible if it was hidden (we'll restore later)
+      if (wasHidden && svgViewContainer) {
+        originalDisplay = (svgViewContainer as HTMLElement).style.display;
+        (svgViewContainer as HTMLElement).style.display = 'block';
+        console.log('Temporarily making SVG view visible for rendering');
+      }
+
+      if (fabricOutputInstance) {
+        try {
+          // First, clear all objects from the canvas
+          fabricOutputInstance.clear();
+
+          // Then dispose of the canvas properly
+          fabricOutputInstance.dispose();
+
+          // Ensure null references to avoid stale references
+          fabricOutputInstance = null;
+
+          // Add a small delay to ensure DOM operations complete
+          await new Promise(resolve => setTimeout(resolve, 0));
+
+          console.log('Previous output canvas instance properly disposed');
+        } catch (disposeError) {
+          console.error('Error disposing previous canvas:', disposeError);
+          // Continue with new canvas creation even if disposal had issues
+        }
+      }
+
+      if (!fabricOutputCanvasHTML) {
+        console.error('fabricOutputCanvasHTML is not available');
+        // Restore original visibility before returning
+        if (wasHidden && svgViewContainer && originalDisplay !== null) {
+          (svgViewContainer as HTMLElement).style.display = originalDisplay;
+        }
+        return;
+      }
+
+      // Clean up any existing canvas wrappers from previous renders
+      const existingWrappers = document.querySelectorAll('.canvas-container');
+      existingWrappers.forEach(wrapper => {
+        // Only remove wrappers inside the output display area
+        const outputDisplay = document.querySelector('.output-display');
+        if (outputDisplay && outputDisplay.contains(wrapper)) {
+          try {
+            // Clone canvas element before removing wrapper
+            const originalCanvas = wrapper.querySelector('canvas');
+            if (originalCanvas) {
+              const parent = wrapper.parentElement;
+              if (parent) {
+                const clonedCanvas = fabricOutputCanvasHTML.cloneNode(false);
+                parent.replaceChild(clonedCanvas, wrapper);
+                fabricOutputCanvasHTML = clonedCanvas as HTMLCanvasElement;
+              }
+            } else {
+              wrapper.remove();
+            }
+          } catch (err) {
+            console.warn('Error cleaning up canvas wrapper:', err);
+          }
+        }
+      });
+
+      // Set dimensions before creating canvas instance
       fabricOutputCanvasHTML.width = canvasWidth;
       fabricOutputCanvasHTML.height = canvasHeight;
 
-      // Create output Fabric canvas with identical dimensions
       fabricOutputInstance = new fabric.Canvas(fabricOutputCanvasHTML, {
         backgroundColor: '#ffffff',
         renderOnAddRemove: true,
@@ -2288,50 +2425,69 @@ Again, return ONLY the SVG code with no additional text.`;
         height: canvasHeight,
         preserveObjectStacking: true
       });
+      console.log('Fabric output canvas initialized:', fabricOutputInstance.width, 'x', fabricOutputInstance.height);
 
-      // Match container CSS size to match the input canvas container's display size
       if (fabricOutputInstance.wrapperEl) {
         const inputContainer = document.querySelector('.canvas-container-overlay');
         if (inputContainer) {
-          // Get computed style of input container and apply to output wrapper
           const computedStyle = window.getComputedStyle(inputContainer);
           fabricOutputInstance.wrapperEl.style.width = computedStyle.width;
           fabricOutputInstance.wrapperEl.style.height = computedStyle.height;
-          // Position the wrapper correctly
           fabricOutputInstance.wrapperEl.style.position = 'absolute';
           fabricOutputInstance.wrapperEl.style.top = '0';
           fabricOutputInstance.wrapperEl.style.left = '0';
         }
       }
-
-      // Apply same styles to canvas elements
-      if (fabricOutputInstance.lowerCanvasEl) {
-        const inputCanvasStyles = window.getComputedStyle(inputCanvas);
-        fabricOutputInstance.lowerCanvasEl.style.width = inputCanvasStyles.width;
-        fabricOutputInstance.lowerCanvasEl.style.height = inputCanvasStyles.height;
+      if (fabricOutputInstance.lowerCanvasEl && inputCanvas) {
+        fabricOutputInstance.lowerCanvasEl.style.width = inputCanvas.style.width;
+        fabricOutputInstance.lowerCanvasEl.style.height = inputCanvas.style.height;
       }
 
-      try {
-        fabric.loadSVGFromString(svgString, (objects, options) => {
-          if (!objects || objects.length === 0) {
-            console.error('No SVG objects loaded from string');
-            errorMessage = 'Failed to render SVG - no valid elements found';
-            return;
+      // Centralized function to handle processing and rendering of fabric objects
+      const processAndRenderFabricObject = (objToRender, source) => {
+        try {
+          if (!objToRender) {
+            console.error(`processAndRenderFabricObject (${source}): No fabric object provided`);
+            errorMessage = 'Failed to render SVG - no object provided';
+            return false;
           }
 
-          let elementToAdd;
-          if (objects.length === 1) {
-            elementToAdd = objects[0];
-          } else {
-            elementToAdd = fabric.util.groupSVGElements(objects, options || {});
+          if (objToRender.type === 'group' && (!objToRender._objects || objToRender._objects.length === 0)) {
+            console.error(`processAndRenderFabricObject (${source}): Empty group received`, objToRender);
+            errorMessage = 'Failed to render SVG - empty group provided';
+            return false;
           }
 
-          // Center and scale SVG to fit the canvas properly
-          const scaleX = (fabricOutputInstance.width * 0.8) / elementToAdd.width;
-          const scaleY = (fabricOutputInstance.height * 0.8) / elementToAdd.height;
-          const scale = Math.min(scaleX, scaleY, 1); // Avoid scaling up beyond 1
+          console.log(`processAndRenderFabricObject (${source}): Object type:`, objToRender.type);
 
-          elementToAdd.set({
+          // Temporarily add to calculate bounds accurately
+          fabricOutputInstance.add(objToRender);
+          objToRender.setCoords(); // Update coordinates and dimensions
+
+          // Get object bounds - ensure we consider stroke width
+          const bounds = objToRender.getBoundingRect(true);
+          fabricOutputInstance.remove(objToRender); // Remove after getting bounds
+
+          console.log(`Calculated bounds:`, bounds);
+
+          if (!bounds || bounds.width === 0 || bounds.height === 0) {
+            console.error(`Invalid bounds (zero width/height):`, bounds);
+            errorMessage = 'Failed to render SVG - could not determine object dimensions';
+            return false;
+          }
+
+          // Calculate appropriate scaling
+          const canvasTargetWidth = fabricOutputInstance.width * 0.9;
+          const canvasTargetHeight = fabricOutputInstance.height * 0.9;
+
+          const scaleX = canvasTargetWidth / bounds.width;
+          const scaleY = canvasTargetHeight / bounds.height;
+          const scale = Math.min(scaleX, scaleY);
+
+          console.log(`Calculated scale: ${scale} (canvas: ${canvasTargetWidth}x${canvasTargetHeight}, bounds: ${bounds.width}x${bounds.height})`);
+
+          // Position object centered on canvas with appropriate scale
+          objToRender.set({
             left: fabricOutputInstance.width / 2,
             top: fabricOutputInstance.height / 2,
             originX: 'center',
@@ -2340,19 +2496,278 @@ Again, return ONLY the SVG code with no additional text.`;
             scaleY: scale
           });
 
-          fabricOutputInstance.add(elementToAdd);
+          objToRender.setCoords(); // Update coordinates after transform
+          fabricOutputInstance.add(objToRender);
+
+          // If the object is a group, ungroup it so that each SVG element becomes its own Fabric object
+          if (objToRender.type === 'group' && objToRender._objects && objToRender._objects.length > 0) {
+            // Restore child objects' absolute positions
+            objToRender._restoreObjectsState();
+            const items = objToRender._objects;
+            objToRender._objects = [];
+            fabricOutputInstance.remove(objToRender);
+            items.forEach(item => {
+              // Ensure items respect the same scaling/positioning already applied via group transform
+              item.setCoords();
+              fabricOutputInstance.add(item);
+            });
+            console.log(`Ungrouped ${items.length} SVG elements into individual Fabric objects.`);
+          }
+
           fabricOutputInstance.requestRenderAll();
+          console.log(`SVG rendered successfully from ${source}`);
+          errorMessage = null; // Clear any error messages
+          return true;
+        } catch (err) {
+          console.error(`Error in processAndRenderFabricObject (${source}):`, err);
+          errorMessage = `Error processing SVG elements: ${err.message || 'unknown error'}`;
+          return false;
+        }
+      };
+
+      // Try different parsing methods in sequence
+
+      // METHOD 1: Primary method - loadSVGFromString
+      let renderSuccess = false;
+      console.log('METHOD 1: Attempting primary SVG parsing with loadSVGFromString');
+      try {
+        fabric.loadSVGFromString(processedSvg, (objects, optionsFromLoadSvg) => { // Renamed options here
+          console.log('loadSVGFromString callback received', objects?.length || 0, 'objects');
+
+          if (objects && objects.length > 0) {
+            const validObjects = objects.filter(obj => obj && obj.type);
+            console.log(`Found ${validObjects.length} valid objects out of ${objects.length} total`);
+
+            if (validObjects.length > 0) {
+              let elementToAdd;
+
+              if (validObjects.length === 1) {
+                elementToAdd = validObjects[0];
+                console.log('Processing single SVG element');
+              } else {
+                console.log('Grouping multiple SVG elements');
+                elementToAdd = fabric.util.groupSVGElements(validObjects, optionsFromLoadSvg || {}); // Use optionsFromLoadSvg
+              }
+
+              if (elementToAdd) {
+                renderSuccess = processAndRenderFabricObject(elementToAdd, 'METHOD 1: loadSVGFromString');
+
+                // Add this new section to handle text elements
+                if (renderSuccess) {
+                  // After successful render, extract and render text elements separately
+                  const bounds = elementToAdd.getBoundingRect(true);
+                  const canvasTargetWidth = fabricOutputInstance.width * 0.9;
+                  const canvasTargetHeight = fabricOutputInstance.height * 0.9;
+                  const scaleX = canvasTargetWidth / bounds.width;
+                  const scaleY = canvasTargetHeight / bounds.height;
+                  const scale = Math.min(scaleX, scaleY);
+
+                  // Extract and render text elements with appropriate scaling
+                  extractAndRenderTextElements(processedSvg, bounds, scale);
+                }
+              }
+            }
+          }
+
+          // If method 1 failed, try the next method
+          if (!renderSuccess) {
+            tryMethod2();
+          } else {
+            // If successful, restore original visibility
+            restoreVisibility();
+          }
         });
-      } catch (svgParseError) {
-        console.error('Error parsing SVG:', svgParseError);
-        errorMessage = 'Invalid SVG format - could not parse';
-        throw svgParseError;
+      } catch (error) {
+        console.error('Error in METHOD 1:', error);
+        tryMethod2();
       }
+
+      // METHOD 2: Manual DOM parsing and fabric.parseSVGDocument
+      function tryMethod2() {
+        console.log('METHOD 2: Attempting DOM parsing with parseSVGDocument');
+        try {
+          const parser = new DOMParser();
+          const svgDoc = parser.parseFromString(processedSvg, 'image/svg+xml');
+
+          const parserError = svgDoc.querySelector('parsererror');
+          if (parserError) {
+            console.error('XML parsing error:', parserError.textContent);
+            const errorDetails = parserError.textContent || "Unknown XML parsing error";
+            errorMessage = `SVG Parsing Error (Method 2): ${errorDetails.substring(0, 100)}`;
+            tryMethod3();
+            return;
+          }
+
+          const svgElement = svgDoc.documentElement;
+          if (!svgElement || svgElement.nodeName.toLowerCase() !== 'svg') {
+            console.error('Not a valid SVG document element or svgElement is null/undefined');
+            errorMessage = 'Invalid SVG structure (Method 2): Missing <svg> root element.';
+            tryMethod3();
+            return;
+          }
+
+          let parsedViewBoxObj = null;
+          const viewBoxAttr = svgElement.getAttribute('viewBox');
+          if (viewBoxAttr) {
+            const parts = viewBoxAttr.split(/[\s,]+/).map(Number);
+            if (parts.length === 4 && parts.every(p => !isNaN(p))) {
+              parsedViewBoxObj = { x: parts[0], y: parts[1], width: parts[2], height: parts[3] };
+            }
+          }
+
+          // Initial options for parseSVGDocument, potentially including the viewBox from the SVG element itself.
+          const initialParseOptions = parsedViewBoxObj ? { viewBox: parsedViewBoxObj } : {};
+
+          fabric.parseSVGDocument(svgElement, (results, fabricOptionsFromParse) => {
+            // Combine initial options (like our parsed viewBox) with options returned by parseSVGDocument
+            const finalProcessingOptions = { ...initialParseOptions, ...(fabricOptionsFromParse || {}) };
+            console.log('parseSVGDocument returned', results?.length || 0, 'results. Options used for enliven/grouping:', finalProcessingOptions);
+
+            if (results && results.length > 0) {
+              fabric.util.enlivenObjects(results, (enlivenedObjects) => {
+                console.log('Enlivened', enlivenedObjects?.length || 0, 'objects');
+
+                if (enlivenedObjects && enlivenedObjects.length > 0) {
+                  let elementToAdd;
+
+                  if (enlivenedObjects.length === 1) {
+                    elementToAdd = enlivenedObjects[0];
+                  } else {
+                    // Pass the combined finalProcessingOptions to groupSVGElements
+                    elementToAdd = fabric.util.groupSVGElements(enlivenedObjects, finalProcessingOptions);
+                  }
+
+                  renderSuccess = processAndRenderFabricObject(elementToAdd, 'METHOD 2: parseSVGDocument');
+
+                  if (!renderSuccess) {
+                    tryMethod3();
+                  } else {
+                    // Add text element rendering for Method 2
+                    const bounds = elementToAdd.getBoundingRect(true);
+                    const canvasTargetWidth = fabricOutputInstance.width * 0.9;
+                    const canvasTargetHeight = fabricOutputInstance.height * 0.9;
+                    const scaleX = canvasTargetWidth / bounds.width;
+                    const scaleY = canvasTargetHeight / bounds.height;
+                    const scale = Math.min(scaleX, scaleY);
+
+                    // Extract and render text elements with appropriate scaling
+                    extractAndRenderTextElements(processedSvg, bounds, scale);
+                    restoreVisibility();
+                  }
+                } else {
+                  tryMethod3(); // No valid objects found
+                }
+              }, 'fabric');
+            } else {
+              tryMethod3(); // No results from parseSVGDocument
+            }
+          });
+        } catch (error) {
+          console.error('Error in METHOD 2:', error);
+          tryMethod3();
+        }
+      }
+
+      // METHOD 3: Direct path creation as a last resort
+      function tryMethod3() {
+        console.log('METHOD 3: Attempting direct path element creation');
+        try {
+          // Extract path elements directly from the SVG string
+          const pathRegex = /<path[^>]*d="([^"]*)"[^>]*>/gi;
+          const paths = [];
+          let match;
+
+          while ((match = pathRegex.exec(processedSvg)) !== null) {
+            // Extract other attributes for the path
+            const pathElement = match[0];
+            const pathData = match[1];
+
+            // Extract fill, stroke, stroke-width if available
+            const fillMatch = pathElement.match(/fill="([^"]*)"/);
+            const strokeMatch = pathElement.match(/stroke="([^"]*)"/);
+            const strokeWidthMatch = pathElement.match(/stroke-width="([^"]*)"/);
+
+            const fill = fillMatch ? fillMatch[1] : 'none';
+            const stroke = strokeMatch ? strokeMatch[1] : '#000000';
+            const strokeWidth = strokeWidthMatch ? parseFloat(strokeWidthMatch[1]) : 1;
+
+            if (pathData) {
+              console.log(`Creating path with data: ${pathData.substring(0, 30)}...`);
+              try {
+                const fabricPath = new fabric.Path(pathData, {
+                  fill: fill,
+                  stroke: stroke,
+                  strokeWidth: strokeWidth,
+                  objectCaching: false // Disable caching for more reliable rendering
+                });
+
+                if (fabricPath) {
+                  paths.push(fabricPath);
+                }
+              } catch (pathError) {
+                console.error('Error creating individual path:', pathError);
+              }
+            }
+          }
+
+          console.log(`METHOD 3: Extracted ${paths.length} paths from SVG string`);
+
+          if (paths.length > 0) {
+            let elementToAdd;
+
+            if (paths.length === 1) {
+              elementToAdd = paths[0];
+            } else {
+              elementToAdd = new fabric.Group(paths, {
+                objectCaching: false
+              });
+            }
+
+            renderSuccess = processAndRenderFabricObject(elementToAdd, 'METHOD 3: direct path creation');
+
+            if (!renderSuccess) {
+              showFinalError();
+            } else {
+              // Add text element rendering for Method 3
+              const bounds = elementToAdd.getBoundingRect(true);
+              const canvasTargetWidth = fabricOutputInstance.width * 0.9;
+              const canvasTargetHeight = fabricOutputInstance.height * 0.9;
+              const scaleX = canvasTargetWidth / bounds.width;
+              const scaleY = canvasTargetHeight / bounds.height;
+              const scale = Math.min(scaleX, scaleY);
+
+              extractAndRenderTextElements(processedSvg, bounds, scale);
+              restoreVisibility();
+            }
+          } else {
+            showFinalError();
+          }
+        } catch (error) {
+          console.error('Error in METHOD 3:', error);
+          showFinalError();
+        }
+      }
+
+      function showFinalError() {
+        console.error('All SVG parsing methods failed');
+        errorMessage = 'Failed to render SVG - no valid elements found after all parsing attempts.';
+        restoreVisibility();
+      }
+
+      // Helper function to restore original visibility state
+      function restoreVisibility() {
+        if (wasHidden && svgViewContainer && originalDisplay !== null) {
+          // Delay restoring display to ensure rendering is complete
+          setTimeout(() => {
+            (svgViewContainer as HTMLElement).style.display = originalDisplay;
+            console.log('Restored original visibility state of SVG view');
+          }, 100);
+        }
+      }
+
     } catch (err) {
-      console.error('Error rendering SVG to output canvas:', err);
-      if (!errorMessage) { // Don't override more specific error messages
-        errorMessage = 'Failed to render SVG to canvas';
-      }
+      console.error('Outer error in renderSvgToOutputCanvas:', err);
+      errorMessage = `Failed to render SVG: ${err.message || 'unexpected error'}`;
     }
   }
 
@@ -2360,11 +2775,77 @@ Again, return ONLY the SVG code with no additional text.`;
   // "svg" – the rendered preview on a Fabric canvas
   // "code" – raw SVG markup in a scrollable block
   let outputView: string = 'svg';
+  let lastFormattedAndHighlightedSvgCode: string | null = null;
+  let isHighlightingInProgress = false;
 
   // Whenever the generated SVG code is cleared (e.g. switching back to PNG mode)
   // make sure the viewer defaults to the preview tab.
   $: if (!generatedSvgCode) {
     outputView = 'svg';
+  }
+
+  // React to tab changes - ensure canvas is properly redrawn when returning to SVG view
+  // AND apply syntax highlighting when switching to "Code" view.
+  $: if (browser && svgCodeElement) {
+    if (outputView === 'code' && generatedSvgCode) {
+      // We are in code view and have SVG code
+      if (generatedSvgCode !== lastFormattedAndHighlightedSvgCode && !isHighlightingInProgress) {
+        // The code is new or different from what was last processed, and not already processing
+        const processCode = async () => {
+          isHighlightingInProgress = true;
+          try {
+            console.log('Formatting and highlighting new/changed SVG code...');
+            const formattedSvg = await prettier.format(generatedSvgCode, {
+              parser: 'html',
+              plugins: [htmlParser], // htmlParser defined earlier
+              printWidth: 80,
+              tabWidth: 2,
+              useTabs: false,
+              htmlWhitespaceSensitivity: 'ignore'
+            });
+            svgCodeElement.textContent = formattedSvg;
+            await tick();
+            Prism.highlightElement(svgCodeElement);
+            lastFormattedAndHighlightedSvgCode = generatedSvgCode; // Mark this version as processed
+            console.log('SVG code formatted with Prettier and highlighted with Prism.js');
+          } catch (error) {
+            console.error('Error formatting/highlighting SVG:', error, { parserHtml: htmlParser, generatedSvgCode });
+            svgCodeElement.textContent = generatedSvgCode; // Fallback
+            await tick();
+            Prism.highlightElement(svgCodeElement); // Try to highlight fallback
+            lastFormattedAndHighlightedSvgCode = generatedSvgCode; // Mark as processed even on error to prevent loop
+          } finally {
+            isHighlightingInProgress = false;
+          }
+        };
+        processCode();
+      } else if (generatedSvgCode === lastFormattedAndHighlightedSvgCode && !isHighlightingInProgress) {
+        // Code is the same as last processed.
+        // Ensure Prism highlighting is still applied if element was hidden/re-shown.
+        if (!svgCodeElement.querySelector('span.token')) { // Check if Prism's spans are missing
+            const reapplyHighlight = async () => {
+              isHighlightingInProgress = true;
+              try {
+                console.log('Re-applying Prism highlighting to existing code (no re-format).');
+                await tick(); // ensure textContent (already formatted) is in DOM
+                Prism.highlightElement(svgCodeElement);
+              } catch (e) {
+                console.error("Error re-applying highlight", e)
+              } finally {
+                isHighlightingInProgress = false;
+              }
+            }
+            reapplyHighlight();
+        } else {
+          // console.log('SVG code already formatted and highlighted, and visually appears so.');
+        }
+      }
+    } else if (outputView !== 'code') {
+      // When not in code view, clear the last processed code marker
+      lastFormattedAndHighlightedSvgCode = null;
+      // Optionally clear the content of svgCodeElement if it's not needed when hidden
+      // if (svgCodeElement) svgCodeElement.textContent = '';
+    }
   }
 
   // Add a helper function to extract valid SVG from a potentially messy response
@@ -2395,6 +2876,16 @@ Again, return ONLY the SVG code with no additional text.`;
   function resizeOutputCanvas() {
     if (!fabricOutputInstance || !fabricOutputCanvasHTML) return;
 
+    // Check if SVG view is visible - if not, save current state to apply later when visible
+    const svgViewContainer = document.querySelector('.output-view.svg-view');
+    const isVisible = !svgViewContainer || window.getComputedStyle(svgViewContainer).display !== 'none';
+
+    if (!isVisible) {
+      console.log('Skipping immediate resize for hidden SVG view - will be updated when shown');
+      // Set a flag to resize when the view becomes visible
+      return;
+    }
+
     // Match dimensions with input canvas
     fabricOutputInstance.setWidth(canvasWidth);
     fabricOutputInstance.setHeight(canvasHeight);
@@ -2421,7 +2912,192 @@ Again, return ONLY the SVG code with no additional text.`;
 
     fabricOutputInstance.calcOffset();
     fabricOutputInstance.requestRenderAll();
+
+    console.log('Output canvas resized to match input canvas dimensions');
   }
+
+  // Add the new dynamic prompt builder just before generateImage definition
+  function buildDynamicSvgPrompt(hasSketch: boolean, context: string) {
+    /*
+      Build an SVG-generation prompt that adapts to whether the user has supplied a sketch on the canvas.
+      When a sketch exists we preserve the strict structure-fidelity wording so GPT-4o respects the sketch layout.
+      When no sketch exists we instead ask for a clean, high-quality vector illustration solely from the text description.
+    */
+    const baseHeader = `IMPORTANT: Respond with ONLY valid standalone SVG markup – starting with <svg> and ending with </svg>. Do NOT wrap in Markdown, code fences, or add explanations.`;
+
+    // Use canvasWidth and canvasHeight for the viewBox to match input aspect ratio
+    const viewBoxInstruction = `Include xmlns="http://www.w3.org/2000/svg" and an appropriate viewBox attribute, for example: viewBox="0 0 ${canvasWidth} ${canvasHeight}". Adjust the x and y of the viewBox if necessary to encompass all drawn elements, but maintain the width and height based on the input canvas dimensions (${canvasWidth}x${canvasHeight}).`;
+
+    const textStyleInstruction = `For any text elements, use proper <text> tags with appropriate x, y positioning and text-anchor attributes.
+Ensure font sizes are legible, ideally aiming for a minimum effective size of 24px within the ${canvasWidth}x${canvasHeight} coordinate system.
+Place text thoughtfully so it is clearly visible and does not obstruct important visual elements.
+Use font-family: "Inter", sans-serif; for all text.`;
+
+    if (hasSketch) {
+      return `${baseHeader}
+
+Create an SVG vector image based on the supplied sketch image. The SVG must match the structure and layout of the sketch exactly – every element should align precisely. Preserve all proportions and positions while adding clean vector styling, colours and refinements.
+${context ? `\nContext: ${context}\n` : ''}
+Technical requirements:
+- ${viewBoxInstruction}
+- Use semantic vector elements (<path>, <rect>, <circle>, etc.).
+- ${textStyleInstruction}
+- Use fills and strokes appropriately.
+- Ensure the SVG is syntactically correct and renders without external assets.`;
+    }
+
+    // No sketch – free illustration based only on text
+    return `${baseHeader}
+
+Create a high-quality, accurate SVG illustration that fulfils the following description:\n"${context || 'Illustration'}"\n
+Guidelines:
+- Use clean, precise vector geometry and sufficient detail so the image is recognisable at any resolution.
+- ${viewBoxInstruction}
+- ${textStyleInstruction}
+- Prefer descriptive grouping and paths rather than raster images.
+- Ensure the SVG renders correctly with no external dependencies.`;
+  }
+
+  // -----------------------------------------------------------------------------
+  //  Modify the SVG branch inside generateImage to use the new prompt builder and
+  //  to omit image data when no sketch exists.
+  // -----------------------------------------------------------------------------
+
+  // ... locate the start of the SVG branch (selectedFormat === 'svg') inside
+  //     generateImage() and replace its initial logic up to the fetch call ...
+
+  // Function to extract and create text elements from SVG
+  function extractAndRenderTextElements(svgString, mainObjectBounds, scaleFactor) {
+    if (!fabricOutputInstance || !svgString) return;
+
+    try {
+      console.log('Extracting text elements from SVG...');
+      const parser = new DOMParser();
+      const svgDoc = parser.parseFromString(svgString, 'image/svg+xml');
+
+      const parseError = svgDoc.querySelector('parsererror');
+      if (parseError) {
+        console.error('SVG parsing error during text extraction:', parseError.textContent);
+        return;
+      }
+
+      const textNodes = svgDoc.querySelectorAll('text');
+      if (!textNodes || textNodes.length === 0) {
+        console.log('No text elements found in SVG for extraction.');
+        return;
+      }
+      console.log(`Found ${textNodes.length} text elements in SVG`);
+
+      const svgElement = svgDoc.querySelector('svg');
+      let viewBox = { x: 0, y: 0, width: canvasWidth, height: canvasHeight }; // Default to main canvas dimensions
+
+      if (svgElement && svgElement.getAttribute('viewBox')) {
+        const viewBoxString = svgElement.getAttribute('viewBox');
+        const viewBoxValues = viewBoxString.split(/[\s,]+/).map(Number);
+        if (viewBoxValues.length === 4 && viewBoxValues.every(v => !isNaN(v)) && viewBoxValues[2] > 0 && viewBoxValues[3] > 0) {
+          viewBox = {
+            x: viewBoxValues[0],
+            y: viewBoxValues[1],
+            width: viewBoxValues[2],
+            height: viewBoxValues[3]
+          };
+          console.log('Using viewBox for text elements:', viewBox);
+        } else {
+          console.warn('Invalid or zero-dimension viewBox attribute found for text extraction, using canvas defaults:', viewBoxString);
+        }
+      } else if (svgElement) {
+        const widthAttr = svgElement.getAttribute('width');
+        const heightAttr = svgElement.getAttribute('height');
+        const parsedW = parseFloat(widthAttr);
+        const parsedH = parseFloat(heightAttr);
+        if (!isNaN(parsedW) && parsedW > 0) viewBox.width = parsedW;
+        if (!isNaN(parsedH) && parsedH > 0) viewBox.height = parsedH;
+        console.log('No viewBox, using SVG width/height for text elements. Calculated viewBox:', viewBox);
+      } else {
+        console.warn('No <svg> element or viewBox found for text extraction, using canvas dimension defaults.');
+      }
+
+      const canvasCenterX = fabricOutputInstance.width / 2;
+      const canvasCenterY = fabricOutputInstance.height / 2;
+      const MIN_FONT_SIZE_PX = 12; // Minimum absolute font size on the output canvas
+
+      textNodes.forEach((textNode, index) => {
+        const content = textNode.textContent || '';
+        if (!content.trim()) return;
+
+        let x = parseFloat(textNode.getAttribute('x') || '0');
+        let y = parseFloat(textNode.getAttribute('y') || '0');
+
+        const rawFontSize = textNode.getAttribute('font-size') || window.getComputedStyle(textNode).fontSize || '24';
+        let fontSize = parseFloat(rawFontSize.replace('px', ''));
+        if (isNaN(fontSize) || fontSize <=0) fontSize = 24; // Default if parsing fails or invalid
+
+        let fill = textNode.getAttribute('fill') || window.getComputedStyle(textNode).fill || '#000000';
+        if (fill.toLowerCase() === 'none') fill = '#000000';
+
+        const textAnchor = textNode.getAttribute('text-anchor') || window.getComputedStyle(textNode).textAnchor || 'start';
+        let textAlign = 'left';
+        if (textAnchor === 'middle') textAlign = 'center';
+        else if (textAnchor === 'end') textAlign = 'right';
+
+        let fontFamily = textNode.getAttribute('font-family') || window.getComputedStyle(textNode).fontFamily || 'Inter, sans-serif';
+        if (!fontFamily.toLowerCase().includes('inter')) {
+          fontFamily = `"Inter", ${fontFamily}`;
+        }
+
+        // Convert SVG coordinates (relative to its viewBox) to fabricOutputInstance coordinates
+        // The mainObjectBounds and scaleFactor are for the entire SVG graphic group.
+        // We need to map text coords from SVG's internal viewBox to the scaled and centered graphic group.
+
+        const relativeXInViewBox = (x - viewBox.x) / viewBox.width;
+        const relativeYInViewBox = (y - viewBox.y) / viewBox.height;
+
+        // Position relative to the mainObjectBounds's top-left, then scaled and centered
+        const posXOnObject = mainObjectBounds.left + relativeXInViewBox * mainObjectBounds.width;
+        const posYOnObject = mainObjectBounds.top + relativeYInViewBox * mainObjectBounds.height;
+
+        // Font size scaling: AI gives font size relative to its viewBox.
+        // We need to scale this font size by the same overall scaleFactor applied to the main SVG group.
+        let finalFontSize = fontSize * scaleFactor;
+        // Enforce minimum practical font size on the output canvas
+        if (finalFontSize < MIN_FONT_SIZE_PX) {
+            console.warn(`Text "${content.substring(0,20)}..." scaled font size ${finalFontSize.toFixed(1)}px is too small. Boosting to ${MIN_FONT_SIZE_PX}px.`);
+            finalFontSize = MIN_FONT_SIZE_PX;
+        }
+
+        let originX = 'left';
+        if (textAlign === 'center') originX = 'center';
+        else if (textAlign === 'right') originX = 'right';
+
+        console.log(`Creating text "${content.substring(0,30)}..." at fabric(${posXOnObject.toFixed(1)}, ${posYOnObject.toFixed(1)}), finalFontSize: ${finalFontSize.toFixed(1)}px`);
+
+        const fabricText = new fabric.IText(content, {
+          left: posXOnObject,
+          top: posYOnObject,
+          originX: originX,
+          originY: 'top', // Consistent origin for y-coordinate interpretation
+          fontSize: finalFontSize,
+          fontFamily: fontFamily,
+          letterSpacing: 0,
+          fill: fill,
+          textAlign: textAlign,
+          selectable: true,
+          editable: true,
+          evented: true,
+          objectCaching: false
+        });
+
+        fabricOutputInstance.add(fabricText);
+      });
+
+      fabricOutputInstance.requestRenderAll();
+      console.log('Text elements processed and added to SVG output canvas');
+
+    } catch (err) {
+      console.error('Error processing SVG text elements:', err);
+    }
+  }
+
 </script>
 
 <svelte:head>
@@ -2430,6 +3106,9 @@ Again, return ONLY the SVG code with no additional text.`;
   <!-- Ensure this specific one for outlined symbols is present -->
   <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet" />
   <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet" />
+  <!-- Add Inter font from Google Fonts -->
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+
 </svelte:head>
 
 <div id = 'app' in:scale={{ start: .98, opacity: 0.5}}>
@@ -2664,6 +3343,7 @@ Again, return ONLY the SVG code with no additional text.`;
             <div
               class="shape-select-dropdown"
               bind:this={shapeDropdownElement}
+              style="left: {shapeDropdownLeftPosition}; bottom: calc(100% + 8px);"
               transition:fade={{duration: 150}}
             >
               {#each shapeOptionsList as shapeOpt}
@@ -2724,11 +3404,14 @@ Again, return ONLY the SVG code with no additional text.`;
                 </button>
               </div>
 
-              {#if outputView === 'svg'}
+              <!-- Keep both views in the DOM and toggle visibility instead -->
+              <div class="output-view svg-view" style="display: {outputView === 'svg' ? 'block' : 'none'}; width: 100%; height: 100%; position: relative;">
                 <canvas class="output-svg-canvas" bind:this={fabricOutputCanvasHTML}></canvas>
-              {:else}
-                <pre class="svg-code-display">{generatedSvgCode}</pre>
-              {/if}
+              </div>
+              <div class="output-view code-view" style="display: {outputView === 'code' ? 'block' : 'none'}; width: 100%; height: 100%;">
+                <!-- Modified for correct Prism.js syntax highlighting -->
+                <pre class="svg-code-display language-markup"><code bind:this={svgCodeElement} class="language-markup"></code></pre>
+              </div>
 
               {#if $isGenerating}
                 <div class="ai-scanning-animation">
@@ -2778,80 +3461,22 @@ Again, return ONLY the SVG code with no additional text.`;
       </div>
     </div>
 
-    <header class="demo-header">
-      <!-- New Canvas Input Area -->
-      <div class="canvas-input-area">
-        <form on:submit|preventDefault={generateImage} class="input-form">
-          <textarea
-            class="text-input-area-canvas"
-            bind:value={additionalContext}
-            placeholder="What are you drawing? Add details, style, or context here..."
-            use:autoResize
-            on:keydown={handleCanvasInputKeydown}
-          ></textarea>
-          <div class="input-controls-row">
-
-            <div class = 'select-row'>
-
-              <div class="select-wrapper format-select-wrapper-canvas">
-                <select id="format-selector-canvas" bind:value={selectedFormat}>
-                  <option value="png">PNG</option>
-                  <option value="svg">SVG</option>
-                </select>
-                <span class="material-icons custom-caret">expand_more</span>
-              </div>
-
-              <div class="select-wrapper model-select-wrapper-canvas">
-                <select id="model-selector-canvas" bind:value={$selectedModel} disabled={selectedFormat === 'svg'}>
-                  <option value="gpt-image-1" selected> OpenAI </option>
-                  <option value="gpt-4o">gpt-4o</option>
-                  <option value="flux-canny-pro"> Flux Canny Pro </option>
-                  <option value="controlnet-scribble"> ControlNet Scribble </option>
-                  <option value="stable-diffusion"> Stable Diffusion </option>
-                  <option value="latent-consistency"> Latent Consistency</option>
-                </select>
-                <span class="material-icons custom-caret">expand_more</span>
-              </div>
-
-            </div>
-            <button
-              type="submit"
-              class="submit-button-canvas"
-              disabled={$isGenerating || ((!fabricInstance || fabricInstance.getObjects().length === 0) && !additionalContext.trim())}
-              title={$isGenerating ? 'Generating...' : 'Generate Image'}
-            >
-              {#if $isGenerating}
-                <div class="mini-spinner-canvas"></div>
-              {:else}
-                <span class="material-symbols-outlined">arrow_upward</span>
-              {/if}
-            </button>
-          </div>
-        </form>
-      </div>
-
-      {#if errorMessage}
-      <div class="error-message" transition:fade={{ duration: 200 }}>
-        <span class="material-icons">error_outline</span>
-        {errorMessage}
-        <button on:click={() => window.location.reload()} class="reload-button">
-          <span class="material-icons">refresh</span> Reload
-        </button>
-      </div>
-    {/if}
-
-    {#if fabricErrorMessage}
-      <div class="error-message" transition:fade={{ duration: 200 }}>
-        <span class="material-icons">error_outline</span>
-        {fabricErrorMessage}
-        <button on:click={() => window.location.reload()} class="reload-button">
-          <span class="material-icons">refresh</span> Reload
-        </button>
-      </div>
-    {/if}
-    </header>
   </div>
+
+  <Omnibar
+    settingType="image"
+    bind:additionalContext
+    bind:selectedFormat
+    bind:currentSelectedModel={$selectedModel}
+    isGenerating={$isGenerating}
+    onSubmit={generateImage}
+    parentDisabled={parentOmnibarDisabled}
+    imageModels={imageGenerationModels}
+  />
+
 </div>
+
+
 
 <style lang="scss">
 // Styles are unchanged as per instructions.
@@ -4122,13 +4747,11 @@ Again, return ONLY the SVG code with no additional text.`;
 
   .shape-select-dropdown {
     position: absolute;
-    left: 40px;
-    bottom: 10px;
-    // top: 0; // Dynamic top position will be set by style attribute
+    // Remove left and bottom values as they will be dynamic now
     background: rgba(black, .45);
     backdrop-filter: blur(12px);
     border-radius: 8px;
-    box-shadow: -4px 12px 24px rgba(black, 0.3);
+    box-shadow: 0 -4px 12px rgba(black, 0.3);
     padding: 6px;
     display: flex;
     flex-direction: column;
@@ -4149,10 +4772,9 @@ Again, return ONLY the SVG code with no additional text.`;
     width: 550px;
     max-width: 90vw;
     padding: 0; // Removed padding as it's on the form now
-    position: absolute;
-    bottom: 8px;
-    left: 50%;
-    transform: translateX(-50%);
+    position: fixed;
+    bottom: 18px;
+    left: calc(50% - 275px);
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -4178,12 +4800,12 @@ Again, return ONLY the SVG code with no additional text.`;
       flex-grow: 1;
       background: transparent;
       border: none;
-      color: #e0e0e0;
-      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
-      font-size: 14px;
+      color: white;
+      font-family: "ivypresto-headline", serif;
+      font-size: 20px;
       font-weight: 500;
       line-height: 130%;
-      letter-spacing: -0.2px;
+      letter-spacing: .4px;
       padding: 10px 12px;
       border-radius: 12px; // Slightly smaller radius than form
       resize: none;
@@ -4191,11 +4813,13 @@ Again, return ONLY the SVG code with no additional text.`;
       min-height: 2g0px; // Corresponds to single line of text
       max-height: 160px; // Max height before scrolling
       transition: background-color 0.2s ease, box-shadow 0.2s ease;
+      text-shadow: -.25px 0px 0px rgba(white, 0.9);
       scrollbar-width: thin;
       scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
 
       &::placeholder {
-        color: rgba(255, 255, 255, 0.4);
+        color: #999;
+        text-shadow: -.2px 0px 0px #999;
       }
 
       &:focus {
@@ -4269,7 +4893,7 @@ Again, return ONLY the SVG code with no additional text.`;
       height: 30px;
       padding: 0;
       border-radius: 24px;
-      background: #ff3974;
+      background: var(--highlight);
       color: white;
       border: none;
       display: flex;
@@ -4345,10 +4969,15 @@ Again, return ONLY the SVG code with no additional text.`;
     box-sizing: border-box;
     font-family: monospace;
     font-size: 12px;
-    color: #ddd;
-    background: rgba(0, 0, 0, 0.9);
+    line-height: 150%;
+    color: #ddd; /* Fallback color if theme doesn't cover everything */
+    background: #272822; /* Default background for Okaidia theme */
     overflow: auto;
+    border: none;
     border-radius: 4px;
+    resize: none; /* Textarea specific, pre doesn't need this */
+    white-space: pre-wrap; /* Ensure long lines wrap */
+    word-wrap: break-word; /* Break long words if necessary */
   }
 
   .output-svg-canvas {

@@ -85,12 +85,16 @@
     <img src="wing-square.png" id = 'wing' alt="Arachne Logo" class="logo" />
 
     <div class = 'expo'>
+      <h1>
+        Your AI Creative Studio.
+      </h1>
+      <h2>
+        Confused by AI? We are too.
+      </h2>
       <p>
         Copyright &copy; 2025 ahw. All rights reserved.
       </p>
     </div>
-
-    <img src="ahnheewon4.png" id = 'ahw' alt="Arachne Logo" class="logo" />
 
     <div class="button-container">
       <!-- Use inline style for immediate visibility -->
@@ -159,13 +163,21 @@
     }
 
     .expo{
-      width: 360px;
       margin: 24px 0 32px 0;
-      h2{
-        font-size: 32px;
-        font-weight: 600;
-        letter-spacing: -.8px;
+      color: white;
+      h1{
+        font-family: "ivypresto-headline", serif;
+        font-size: 72px;
+        font-weight: 500;
+        letter-spacing: -.5px;
         color: white;
+        margin-bottom: 24px;
+      }
+      h2{
+        font-size: 18px;
+        font-weight: 400;
+        letter-spacing: -.5px;
+        color: rgba(white, .5);
       }
       p {
         font-size: 14px;
@@ -173,6 +185,7 @@
         letter-spacing: -0.25px;
         color: rgba(white, .7);
         margin: 12px 0;
+        display: none;
       }
     }
   }

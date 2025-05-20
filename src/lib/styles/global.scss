@@ -21,6 +21,8 @@
   --tool-active-bg: rgba(66, 133, 244, 0.1);
   --tool-active-color: #4285f4;
   --tool-hover-bg: rgba(0, 0, 0, 0.05);
+
+  --highlight: #{$highlight};
 }
 
 // Dark Theme
@@ -179,7 +181,6 @@ input, textarea, select {
 
   &:focus {
     outline: none;
-    border-color: $primary-color;
   }
 }
 
@@ -433,6 +434,9 @@ input[type="range"] {
 
 
 .svelte-flow__node{
+
+  transition: .2s ease;
+
   label{
     color: rgba(white, .6);
     font-size: 11px;
@@ -452,29 +456,42 @@ input[type="range"] {
 
   &.selected{
     .node{
-      border: .5px solid rgba(white, .3);
+      border: .5px solid rgba(white, .15);
+      box-shadow: -8px 16px 40px rgba(black, .35);
+    }
+  }
+
+  &:hover{
+    .node{
+      transform: translateY(-.5px);
     }
   }
 }
 
 .node{
-  padding: 8px;
+  padding: 8px 6px;
   background: rgba(black, .3);
   background-image: linear-gradient(-20deg, rgba(white, 0) 25%, rgba(white, .02) 50%, rgba(white, 0) 75%);
-  border: .5px solid rgba(white, .2);
+  border: .5px solid rgba(white, .1);
   border-radius: 12px;
   backdrop-filter: blur(20px);
-  box-shadow: -12px 24px 36px rgba(black, .2);
+
   color: white;
   transition: .2s ease;
 
-  input{
+  box-shadow: -8px 16px 40px rgba(black, .3);
+
+  textarea {
+   // font-family: "ivypresto-headline", "Inter", sans-serif !important;
     font-size: 12px;
     font-weight: 500;
     letter-spacing: -0.25px;
     color: white;
-    background: rgba(black, 0.2);
+    background: none;
     border-radius: 4px;
-    border: none;
+    border: none !important;
+
+    width: 100% !important;
+    box-sizing: border-box;
   }
 }
