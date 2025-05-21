@@ -79,6 +79,11 @@
             formatter: (value) => formatTimestamp(value)
         },
         {
+            key: 'page',
+            title: 'Page',
+            formatter: (value) => value || 'Unknown'
+        },
+        {
             key: 'apiProvider',
             title: 'Provider',
             formatter: (value) => value ? getProviderLogo(value) : 'N/A'
@@ -105,8 +110,18 @@
         },
         {
             key: 'cost',
-            title: 'Cost',
-            formatter: (value) => formatCost(value)
+            title: 'Cost/Tokens',
+            formatter: (value, row) => {
+                if (typeof value === 'number' && value > 0) {
+                    return formatCost(value);
+                } else if (row.inputTokens || row.outputTokens) {
+                    const input = row.inputTokens || 0;
+                    const output = row.outputTokens || 0;
+                    return `${input + output} tokens (${input} in, ${output} out)`;
+                } else {
+                    return '—';
+                }
+            }
         },
         /*
         {

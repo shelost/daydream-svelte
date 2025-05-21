@@ -83,7 +83,7 @@
         <textarea
             bind:this={textarea}
             bind:value={data.text}
-            style="width:200px; max-height:500px; resize:none;"
+            style="width:400px; max-height:500px; resize:none;"
             rows="1"
             on:input={(evt) => {
                 autoResize();
@@ -103,13 +103,15 @@
     .node {
         display: flex;
         gap: 8px;
+        width: 300px;
+        max-width: 100%;
     }
 
     textarea {
         font: inherit;
         padding: 6px 6px;
         border-radius: 4px;
-        width: 200px;
+        width: 100%;
         border: none;
         background: none;
         box-sizing: border-box;

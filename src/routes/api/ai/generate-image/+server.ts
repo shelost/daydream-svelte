@@ -171,11 +171,23 @@ export const POST: RequestHandler = async (event) => {
         console.log('OpenAI response or response.data is empty or not as expected:', JSON.stringify(response, null, 2));
       }
 
-      const imageUrl = response.data[0]?.url;
-      const revisedPrompt = response.data[0]?.revised_prompt;
+      // Extract image information in a more robust way
+      let imageUrl: string | undefined = undefined;
+      const firstItem: any = response.data[0];
+      const revisedPrompt = firstItem?.revised_prompt;
+
+      if (firstItem?.url && typeof firstItem.url === 'string') {
+        imageUrl = firstItem.url;
+      } else if (firstItem?.b64_json && typeof firstItem.b64_json === 'string') {
+        // Construct a data URL from base64 JSON string
+        imageUrl = `data:image/png;base64,${firstItem.b64_json}`;
+      } else if (firstItem?.image && typeof firstItem.image === 'string') {
+        // Some experimental formats might return an `image` field containing a data URL or base64
+        imageUrl = firstItem.image.startsWith('data:') ? firstItem.image : `data:image/png;base64,${firstItem.image}`;
+      }
 
       if (!imageUrl) {
-        apiLogEntry.error = 'Failed to generate image, no URL returned by OpenAI';
+        apiLogEntry.error = 'Failed to generate image, no usable image data returned by OpenAI';
         apiLogEntry.status = 500;
         return json({ error: apiLogEntry.error, apiLogEntry }, { status: 500 });
       }
@@ -187,7 +199,7 @@ export const POST: RequestHandler = async (event) => {
       };
       apiLogEntry.cost = calculateCost('OpenAI', chosenModel, usageDetails);
 
-      console.log('Image generated successfully:', imageUrl);
+      console.log('Image generated successfully.');
       return json({
         imageUrl,
         url: imageUrl,

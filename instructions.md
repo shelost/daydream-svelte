@@ -1500,3 +1500,55 @@ The goal is to transform `src/routes/(public)/chat/+page.svelte` from an image g
     *   Verify error handling (API errors, network issues).
     *   Check session storage persistence.
     *   Ensure the UI is responsive and visually consistent with the application's style.
+
+## Feature: View Source Modal for Svelte Flow State (Public Flow Page)
+
+**Date:** 2024-08-01
+
+**Objective:** Allow users to inspect the raw JSON data of the Svelte Flow state (nodes and edges) as it's persisted in `localStorage` via a modal dialog.
+
+**Plan:**
+
+1.  **Explain Storage Format:** Clarify that Svelte Flow nodes and edges are stored as separate JSON strings in `localStorage`.
+2.  **Create `src/lib/components/shared/AppModal.svelte`:**
+    *   A general-purpose modal component.
+    *   Props:
+        *   `show`: Boolean, to control visibility.
+        *   `title`: String, for the modal header.
+    *   Slot for modal content.
+    *   Features:
+        *   Close button.
+        *   Escape key listener to close.
+        *   Emits a `close` event.
+    *   Styling: Minimal and clean.
+3.  **Update `src/routes/(public)/flow/+page.svelte`:**
+    *   Import `AppModal.svelte`.
+    *   Add state variables:
+        *   `showSourceModal`: Boolean, for modal visibility.
+        *   `flowSourceData`: String, to hold the pretty-printed JSON.
+    *   Add a "View Source" button next to the save status indicator.
+    *   Implement `openSourceModal()` function:
+        *   Retrieves current nodes from `$nodes` store.
+        *   Retrieves current edges from `$edges` store.
+        *   Constructs a combined object: `{ nodes: currentNodes, edges: currentEdges }`.
+        *   Pretty-prints this object using `JSON.stringify(data, null, 2)`.
+        *   Updates `flowSourceData` and sets `showSourceModal = true`.
+    *   Integrate `<AppModal>` component in the template:
+        *   Bind `show` to `showSourceModal`.
+        *   Set `title` (e.g., "Svelte Flow State").
+        *   Handle `close` event to set `showSourceModal = false`.
+        *   Display `flowSourceData` in a scrollable `<pre><code>` block within the modal's slot.
+
+## Plan for Chat Refresh Button
+
+1.  **Modify `src/routes/(public)/chat/+page.svelte`:**
+    *   Introduce a new function, `clearChatAndStorage`. This function will:
+        *   First, call the existing `handleClearChat()` to reset the UI state (messages, `isStartState`, etc.).
+        *   Then, explicitly remove the chat history from `sessionStorage` using `sessionStorage.removeItem(SESSION_STORAGE_KEY)`.
+    *   Add a new button element to the HTML structure. This button will be:
+        *   Positioned in a corner of the chat page (e.g., top-right).
+        *   Styled with an appropriate icon (e.g., a refresh icon).
+        *   Disabled when `isOverallLoading` is `true` to prevent actions during an API call.
+        *   Call `clearChatAndStorage` on click.
+2.  **Update Styles:**
+    *   Add SCSS rules in the `<style lang="scss">` block of `src/routes/(public)/chat/+page.svelte` to position and style the new refresh button.

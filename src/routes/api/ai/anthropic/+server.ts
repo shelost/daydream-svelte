@@ -20,11 +20,39 @@ export const POST: RequestHandler = async (event) => {
 
         if (!ANTHROPIC_API_KEY) {
             console.error('Anthropic API Key is missing.');
-            return json({ error: 'API key not configured.' }, { status: 500 });
+            return json({
+                error: 'API key not configured.',
+                apiLogEntry: {
+                    id: `anthropic-${Date.now()}`,
+                    timestamp: new Date().toISOString(),
+                    apiProvider: 'Anthropic',
+                    model: model,
+                    endpoint: '/messages',
+                    cost: 0,
+                    status: 500,
+                    durationMs: Date.now() - startTime,
+                    error: 'API key not configured.',
+                    page: 'Chat'
+                }
+            }, { status: 500 });
         }
 
         if (!prompt || typeof prompt !== 'string' || prompt.trim().length === 0) {
-            return json({ error: 'Prompt is required.' }, { status: 400 });
+            return json({
+                error: 'Prompt is required.',
+                apiLogEntry: {
+                    id: `anthropic-${Date.now()}`,
+                    timestamp: new Date().toISOString(),
+                    apiProvider: 'Anthropic',
+                    model: model,
+                    endpoint: '/messages',
+                    cost: 0,
+                    status: 400,
+                    durationMs: Date.now() - startTime,
+                    error: 'Prompt is required.',
+                    page: 'Chat'
+                }
+            }, { status: 400 });
         }
 
         const anthropic = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
@@ -95,6 +123,10 @@ export const POST: RequestHandler = async (event) => {
 
             clearTimeout(timeoutId);
 
+            // Variables to track token usage - Anthropic provides this in the response
+            let inputTokens = 0;
+            let outputTokens = 0;
+
             // Create a readable stream to send to the client
             const responseStream = new ReadableStream({
                 async start(controller) {
@@ -106,7 +138,38 @@ export const POST: RequestHandler = async (event) => {
                                 // Send text content directly to the client
                                 controller.enqueue(encoder.encode(chunk.delta.text));
                             }
+
+                            // Track token usage if available
+                            if (chunk.usage) {
+                                if (chunk.usage.input_tokens) inputTokens = chunk.usage.input_tokens;
+                                if (chunk.usage.output_tokens) outputTokens = chunk.usage.output_tokens;
+                            }
                         }
+
+                        // After the stream is done, append the API log entry as a special JSON chunk
+                        const ratePerInputToken = 0.000025; // Simplified cost for Claude models (adjust as needed)
+                        const ratePerOutputToken = 0.000075; // Simplified cost for Claude models (adjust as needed)
+                        const estimatedCost = (inputTokens * ratePerInputToken) + (outputTokens * ratePerOutputToken);
+
+                        // Send API log as a final chunk
+                        const apiLogEntry = {
+                            id: `anthropic-${Date.now()}`,
+                            timestamp: new Date().toISOString(),
+                            apiProvider: 'Anthropic',
+                            model: model,
+                            endpoint: '/messages',
+                            cost: estimatedCost,
+                            status: 200,
+                            durationMs: Date.now() - startTime,
+                            inputTokens: inputTokens,
+                            outputTokens: outputTokens,
+                            page: 'Chat'
+                        };
+
+                        controller.enqueue(encoder.encode(`\n\n{
+                          "apiLogEntry": ${JSON.stringify(apiLogEntry)}
+                        }`));
+
                         controller.close();
                     } catch (error) {
                         console.error("Stream processing error:", error);
@@ -124,14 +187,59 @@ export const POST: RequestHandler = async (event) => {
 
         } catch (error: any) {
             if (error.name === 'AbortError' || error.message?.includes('timed out')) {
-                return json({ error: 'Request to Anthropic timed out.', durationMs: Date.now() - startTime }, { status: 504 });
+                return json({
+                    error: 'Request to Anthropic timed out.',
+                    durationMs: Date.now() - startTime,
+                    apiLogEntry: {
+                        id: `anthropic-${Date.now()}`,
+                        timestamp: new Date().toISOString(),
+                        apiProvider: 'Anthropic',
+                        model: model,
+                        endpoint: '/messages',
+                        cost: 0,
+                        status: 504,
+                        durationMs: Date.now() - startTime,
+                        error: 'Request to Anthropic timed out.',
+                        page: 'Chat'
+                    }
+                }, { status: 504 });
             }
             console.error('Anthropic API error:', error);
-            return json({ error: error.message || 'Anthropic API error.', durationMs: Date.now() - startTime }, { status: error.status || 500 });
+            return json({
+                error: error.message || 'Anthropic API error.',
+                durationMs: Date.now() - startTime,
+                apiLogEntry: {
+                    id: `anthropic-${Date.now()}`,
+                    timestamp: new Date().toISOString(),
+                    apiProvider: 'Anthropic',
+                    model: model,
+                    endpoint: '/messages',
+                    cost: 0,
+                    status: error.status || 500,
+                    durationMs: Date.now() - startTime,
+                    error: error.message || 'Anthropic API error.',
+                    page: 'Chat'
+                }
+            }, { status: error.status || 500 });
         }
 
     } catch (err: any) {
         console.error('Anthropic endpoint error:', err);
-        return json({ error: err.message || 'Internal server error.', durationMs: Date.now() - startTime }, { status: 500 });
+        return json({
+            error: err.message || 'Internal server error.',
+            durationMs: Date.now() - startTime,
+            apiLogEntry: {
+                id: `anthropic-error-${Date.now()}`,
+                timestamp: new Date().toISOString(),
+                apiProvider: 'Anthropic',
+                model: 'unknown',
+                endpoint: '/messages',
+                cost: 0,
+                status: 500,
+                durationMs: Date.now() - startTime,
+                error: err.message || 'Internal server error.',
+                page: 'Chat'
+            }
+        }, { status: 500 });
     }
 };

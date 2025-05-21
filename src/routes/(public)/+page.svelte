@@ -79,14 +79,13 @@
 
 <main class="landing-page" in:scale={{start: 0.95, opacity: 0.5}}>
 
-
   <div class="hero-container">
 
     <img src="wing-square.png" id = 'wing' alt="Arachne Logo" class="logo" />
 
-    <div class = 'expo'>
+    <div class = 'mast'>
       <h1>
-        Your AI Creative Studio.
+        AI More Naturally.
       </h1>
       <h2>
         Confused by AI? We are too.
@@ -95,6 +94,55 @@
         Copyright &copy; 2025 ahw. All rights reserved.
       </p>
     </div>
+
+
+
+    <div class = 'sec'>
+      <div class = 'header'>
+        <h1> Your Favorite Ways to Interact </h1>
+        <p> We support all the popular models! </p>
+      </div>
+
+      <div class = 'features'>
+        <div class = 'feature'>
+          <div class = 'expo'>
+            <h2> Draw </h2>
+            <p> Sketch, paint, and draw with your imagination. </p>
+          </div>
+        </div>
+
+        <div class = 'feature'>
+          <div class = 'expo'>
+            <h2> Diagram </h2>
+            <p> Create diagrams, charts, and graphs with ease. </p>
+          </div>
+        </div>
+
+        <div class = 'feature'>
+          <div class = 'expo'>
+            <h2> Flow </h2>
+            <p> Build complex flowcharts and logic. </p>
+          </div>
+        </div>
+
+        <div class = 'feature'>
+          <div class = 'expo'>
+            <h2> Chat </h2>
+            <p> Don't worry — you can still chat normally! </p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+
+    <div class = 'sec'>
+      <div class = 'header'>
+        <h1> All Your Favorite Models </h1>
+        <p> We support all the popular models! </p>
+      </div>
+    </div>
+
+
 
     <div class="button-container">
       <!-- Use inline style for immediate visibility -->
@@ -132,10 +180,8 @@
 <style lang="scss">
 
   .landing-page {
-    height: 100vh;
-    display: flex;
-    justify-content: center;
-    align-items: center;
+    height: 100%;
+    overflow-y: scroll;
    // background-color: $background-color;
   }
 
@@ -143,7 +189,8 @@
     text-align: center;
     padding: 0;
     max-width: 800px;
-    margin-bottom: 60px;
+    margin: 80px auto;
+
 
     display: flex;
     flex-direction: column;
@@ -162,12 +209,12 @@
       opacity: .2;
     }
 
-    .expo{
+    .mast{
       margin: 24px 0 32px 0;
       color: white;
       h1{
         font-family: "ivypresto-headline", serif;
-        font-size: 72px;
+        font-size: 84px;
         font-weight: 500;
         letter-spacing: -.5px;
         color: white;
@@ -190,14 +237,59 @@
     }
   }
 
-  h1 {
-    font-size: 72px;
-    letter-spacing: -3.6px;
-    margin-bottom: 4px;
-    font-weight: 700;
-    color: $text-color;
-    text-shadow: -4px 8px 12px rgba(black,0.05);
+  .header{
+    h1{
+      font-family: "ivypresto-headline", serif;
+      font-size: 32px;
+      font-weight: 500;
+      letter-spacing: -.5px;
+      color: white;
+      margin-bottom: 12px;
+    }
+   p{
+      font-size: 14px;
+      font-weight: 400;
+      letter-spacing: -.1px;
+      color: rgba(white, .5);
+    }
   }
+
+  .features{
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 24px;
+    margin: 40px 0;
+
+    .feature{
+      background: rgba(black, .5);
+      border-radius: 12px;
+      padding: 24px;
+      box-shadow: -4px 16px 32px rgba(black, 0.3);
+
+      .expo{
+        text-align: left;
+
+        h2{
+          font-family: "ivypresto-headline", serif;
+          font-size: 32px;
+          font-weight: 500;
+          letter-spacing: 0px;
+          color: rgba(white, .6);
+          margin-bottom: 8px;
+        }
+
+        p{
+          font-size: 14px;
+          font-weight: 400;
+          letter-spacing: -.1px;
+          color: rgba(white, .8);
+        }
+
+      }
+    }
+  }
+
+
 
   .button-container {
     display: flex;

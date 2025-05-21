@@ -470,16 +470,16 @@ input[type="range"] {
 
 .node{
   padding: 8px 6px;
-  background: rgba(black, .3);
-  background-image: linear-gradient(-20deg, rgba(white, 0) 25%, rgba(white, .02) 50%, rgba(white, 0) 75%);
-  border: .5px solid rgba(white, .1);
+  background: rgba(black, .5);
+  background-image: linear-gradient(-20deg, rgba(white, 0) 25%, rgba(white, .01) 50%, rgba(white, 0) 75%);
+  border: .5px solid rgba(white, .05);
   border-radius: 12px;
   backdrop-filter: blur(20px);
+  transition: none;
 
   color: white;
-  transition: .2s ease;
 
-  box-shadow: -8px 16px 40px rgba(black, .3);
+  box-shadow: -8px 16px 32px rgba(black, .3);
 
   textarea {
    // font-family: "ivypresto-headline", "Inter", sans-serif !important;
