@@ -24,10 +24,35 @@
     selectedModel
   } from '$lib/stores/canvasStore';
 
-  // Import Prism.js for syntax highlighting
-  import Prism from 'prismjs';
-  import 'prismjs/components/prism-markup.js'; // This already handles SVG (which is XML-based)
-  import 'prismjs/themes/prism-okaidia.css'; // A dark theme for Prism
+  // Import Prism.js for syntax highlighting - make it conditional for production builds
+  let Prism;
+  let PrismLoaded = false;
+
+  // Dynamically import Prism.js to avoid SSR issues
+  onMount(async () => {
+    try {
+      if (typeof window !== 'undefined') {
+        // Dynamic import for better production compatibility
+        const prismModule = await import('prismjs');
+        await import('prismjs/components/prism-markup.js');
+
+        Prism = prismModule.default || prismModule;
+        PrismLoaded = true;
+
+        // Load CSS dynamically
+        if (!document.querySelector('link[href*="prism-okaidia"]')) {
+          const link = document.createElement('link');
+          link.rel = 'stylesheet';
+          link.href = 'https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-okaidia.min.css';
+          document.head.appendChild(link);
+        }
+      }
+    } catch (error) {
+      console.warn('Failed to load Prism.js:', error);
+      PrismLoaded = false;
+    }
+  });
+
   // Import Prettier for code formatting
   import prettier from 'prettier/standalone';
   import * as parserHtml from 'prettier/parser-html';
@@ -2946,14 +2971,26 @@ Again, return ONLY the SVG code with no additional text.`;
             });
             svgCodeElement.textContent = formattedSvg;
             await tick();
-            Prism.highlightElement(svgCodeElement);
+
+            // Only highlight if Prism is loaded
+            if (PrismLoaded && Prism && typeof Prism.highlightElement === 'function') {
+              Prism.highlightElement(svgCodeElement);
+              console.log('SVG code formatted with Prettier and highlighted with Prism.js');
+            } else {
+              console.log('SVG code formatted with Prettier (Prism.js not available)');
+            }
+
             lastFormattedAndHighlightedSvgCode = generatedSvgCode; // Mark this version as processed
-            console.log('SVG code formatted with Prettier and highlighted with Prism.js');
           } catch (error) {
             console.error('Error formatting/highlighting SVG:', error, { parserHtml: htmlParser, generatedSvgCode });
             svgCodeElement.textContent = generatedSvgCode; // Fallback
             await tick();
-            Prism.highlightElement(svgCodeElement); // Try to highlight fallback
+
+            // Try to highlight fallback only if Prism is available
+            if (PrismLoaded && Prism && typeof Prism.highlightElement === 'function') {
+              Prism.highlightElement(svgCodeElement);
+            }
+
             lastFormattedAndHighlightedSvgCode = generatedSvgCode; // Mark as processed even on error to prevent loop
           } finally {
             isHighlightingInProgress = false;
@@ -2963,13 +3000,15 @@ Again, return ONLY the SVG code with no additional text.`;
       } else if (generatedSvgCode === lastFormattedAndHighlightedSvgCode && !isHighlightingInProgress) {
         // Code is the same as last processed.
         // Ensure Prism highlighting is still applied if element was hidden/re-shown.
-        if (!svgCodeElement.querySelector('span.token')) { // Check if Prism's spans are missing
+        if (PrismLoaded && Prism && !svgCodeElement.querySelector('span.token')) { // Check if Prism's spans are missing
             const reapplyHighlight = async () => {
               isHighlightingInProgress = true;
               try {
                 console.log('Re-applying Prism highlighting to existing code (no re-format).');
                 await tick(); // ensure textContent (already formatted) is in DOM
-                Prism.highlightElement(svgCodeElement);
+                if (typeof Prism.highlightElement === 'function') {
+                  Prism.highlightElement(svgCodeElement);
+                }
               } catch (e) {
                 console.error("Error re-applying highlight", e)
               } finally {
