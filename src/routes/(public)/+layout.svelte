@@ -40,6 +40,8 @@
     @media screen and (max-width: 800px) {
         .layout{
             flex-direction: column;
+            width: 100%;
+            height: 100%;
         }
 
         .app{
