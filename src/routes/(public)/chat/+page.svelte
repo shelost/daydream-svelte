@@ -6,18 +6,9 @@
   import { Markdown } from 'svelte-rune-markdown'; // Add this line to import the Markdown component
   import { fetchAndLog } from '$lib/utils/fetchAndLog'; // Import fetchAndLog for API logging
 
-  // Import Prism.js for syntax highlighting
-  import Prism from 'prismjs';
-  import 'prismjs/components/prism-markup.js';
-  import 'prismjs/components/prism-javascript.js';
-  import 'prismjs/components/prism-typescript.js';
-  import 'prismjs/components/prism-css.js';
-  import 'prismjs/components/prism-scss.js';
-  import 'prismjs/components/prism-python.js';
-  import 'prismjs/components/prism-json.js';
-  import 'prismjs/components/prism-bash.js';
-  import 'prismjs/components/prism-markdown.js';
-  import 'prismjs/themes/prism-okaidia.css'; // A dark theme for Prism
+  // Import Prism.js for syntax highlighting - make it conditional for production builds
+  let Prism: any = null; // Keep at top-level, initialize to null
+  let PrismLoaded: boolean = false; // Keep at top-level
 
   interface Message {
     id: string;
@@ -118,8 +109,10 @@
       pre.style.position = 'relative';
     }
 
-    // Apply syntax highlighting
-    Prism.highlightElement(codeBlock);
+    // Apply syntax highlighting only if Prism is loaded
+    if (PrismLoaded && Prism && typeof Prism.highlightElement === 'function') {
+      Prism.highlightElement(codeBlock);
+    }
   }
 
   // Create a mutation observer to detect new code blocks during streaming
@@ -488,6 +481,46 @@
   onMount(() => {
     const browser = typeof window !== 'undefined';
     if (browser) {
+        // Dynamically import Prism.js to avoid SSR issues
+        const loadPrism = async () => {
+          try {
+            if (typeof window !== 'undefined') {
+              const prismModule = await import('prismjs');
+              await import('prismjs/components/prism-markup.js');
+              await import('prismjs/components/prism-javascript.js');
+              await import('prismjs/components/prism-typescript.js');
+              await import('prismjs/components/prism-css.js');
+              await import('prismjs/components/prism-scss.js');
+              await import('prismjs/components/prism-python.js');
+              await import('prismjs/components/prism-json.js');
+              await import('prismjs/components/prism-bash.js');
+              await import('prismjs/components/prism-markdown.js');
+
+              const prismInstance = prismModule.default || prismModule;
+
+              if (prismInstance && typeof prismInstance.highlightElement === 'function') {
+                Prism = prismInstance; // Assign to top-level Prism
+                PrismLoaded = true;    // Assign to top-level PrismLoaded
+                console.log('Prism.js loaded successfully for chat page.');
+
+                // Load CSS dynamically
+                if (!document.querySelector('link[href*="prism-okaidia"]')) {
+                  const link = document.createElement('link');
+                  link.rel = 'stylesheet';
+                  link.href = 'https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-okaidia.min.css';
+                  document.head.appendChild(link);
+                }
+              } else {
+                console.warn('Prism.js loaded but highlightElement method not available.');
+              }
+            }
+          } catch (error) {
+            console.error('Failed to load Prism.js:', error);
+          }
+        };
+
+        loadPrism();
+
         const storedMessages = sessionStorage.getItem(SESSION_STORAGE_KEY);
         let loadedSuccessfully = false;
         if (storedMessages) {
