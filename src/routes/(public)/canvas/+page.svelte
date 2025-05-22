@@ -413,18 +413,144 @@
         // Add Alt/Option + Drag to Duplicate functionality
         fabricInstance.on('mouse:down', function(opt) {
           if (opt.e.altKey && opt.target && opt.target.selectable) {
-            opt.target.clone(function(clonedObj) {
-              fabricInstance.discardActiveObject(); // Clear previous selection
-              clonedObj.set({
-                left: clonedObj.left + 10,
-                top: clonedObj.top + 10,
+            // Store original values
+            const originalObj = opt.target;
+            const originalLeft = originalObj.left;
+            const originalTop = originalObj.top;
+
+            // Get current pointer position
+            const pointer = fabricInstance.getPointer(opt.e);
+
+            // Prevent default to avoid original object movement
+            opt.e.preventDefault();
+            opt.e.stopPropagation();
+
+            // Clear any existing selection
+            fabricInstance.discardActiveObject();
+
+            // Clone original object
+            originalObj.clone(function(cloned) {
+              // Position at exact same coordinates
+              cloned.set({
+                left: originalLeft,
+                top: originalTop,
+                evented: true
               });
-              fabricInstance.add(clonedObj);
-              fabricInstance.setActiveObject(clonedObj);
+
+              // Add to canvas
+              fabricInstance.add(cloned);
+
+              // Set as active object (important for controls)
+              fabricInstance.setActiveObject(cloned);
+              cloned.setCoords();
+
+              // Calculate offset from object center to cursor position
+              const offsetX = pointer.x - originalLeft;
+              const offsetY = pointer.y - originalTop;
+
+              // Create a transform object to simulate dragging state
+              fabricInstance._currentTransform = {
+                target: cloned,
+                action: 'drag',
+                corner: 0,
+                scaleX: cloned.scaleX,
+                scaleY: cloned.scaleY,
+                skewX: cloned.skewX,
+                skewY: cloned.skewY,
+                offsetX: offsetX,
+                offsetY: offsetY,
+                originX: cloned.originX,
+                originY: cloned.originY,
+                ex: pointer.x,
+                ey: pointer.y,
+                left: cloned.left,
+                top: cloned.top,
+                theta: cloned.angle * Math.PI / 180,
+                width: cloned.width * cloned.scaleX,
+                height: cloned.height * cloned.scaleY,
+                mouseXSign: 1,
+                mouseYSign: 1,
+                actionHandler: fabricInstance._getActionFromCorner.bind(fabricInstance, cloned, 0, opt.e) || fabricInstance._actionHandler
+              };
+
+              // Set the action handler for dragging
+              fabricInstance._currentTransform.actionHandler = function(eventData, transform, x, y) {
+                const target = transform.target;
+                const newLeft = x - transform.offsetX;
+                const newTop = y - transform.offsetY;
+
+                target.set({
+                  left: newLeft,
+                  top: newTop
+                });
+
+                return true;
+              };
+
+              // Ensure original stays in place
+              originalObj.set({
+                left: originalLeft,
+                top: originalTop
+              });
+              originalObj.setCoords();
+
+              // Set canvas state to indicate we're transforming
+              fabricInstance._isCurrentlyDrawing = true;
+
+              // Save canvas state after the operation completes
+              saveCanvasState();
+
+              // Force canvas to render
               fabricInstance.requestRenderAll();
-              // recordHistory() is called by 'object:added' listener
-              saveCanvasState(); // Save state after duplication
             });
+
+            // Prevent event propagation
+            return false;
+          }
+        });
+
+        // Enhanced mouse:move handler to handle our custom transform
+        fabricInstance.on('mouse:move', function(opt) {
+          if (fabricInstance._currentTransform && fabricInstance._currentTransform.action === 'drag') {
+            const pointer = fabricInstance.getPointer(opt.e);
+            const transform = fabricInstance._currentTransform;
+
+            if (transform.actionHandler) {
+              transform.actionHandler(opt.e, transform, pointer.x, pointer.y);
+              transform.target.setCoords();
+              fabricInstance.requestRenderAll();
+            }
+          }
+        });
+
+        // Enhanced mouse:up handler to complete the transform
+        fabricInstance.on('mouse:up', function(opt) {
+          if (fabricInstance._currentTransform) {
+            const target = fabricInstance._currentTransform.target;
+
+            // Clear the transform state
+            fabricInstance._currentTransform = null;
+            fabricInstance._isCurrentlyDrawing = false;
+
+            // Ensure the object remains active and visible
+            if (target) {
+              fabricInstance.setActiveObject(target);
+              target.setCoords();
+              target.fire('modified');
+              fabricInstance.fire('object:modified', { target: target });
+              fabricInstance.requestRenderAll();
+            }
+          }
+        });
+
+        // Ensure selection is preserved after mouse:up
+        fabricInstance.on('mouse:up', function(opt) {
+          // If an object was being transformed, make sure it stays active
+          if (fabricInstance._currentTransform && fabricInstance._currentTransform.target) {
+            const target = fabricInstance._currentTransform.target;
+            fabricInstance.setActiveObject(target);
+            target.setCoords();
+            fabricInstance.requestRenderAll();
           }
         });
 
@@ -3765,7 +3891,7 @@ Guidelines:
                 border-radius: 20px;
                 cursor: pointer;
                 overflow: hidden;
-                margin-bottom: 12px;
+                margin-bottom: 4px;
                 position: relative;
                 box-shadow: -2px 8px 12px rgba(black, .5);
 
@@ -3778,7 +3904,7 @@ Guidelines:
                   height: 100%;
                   background: none;
                   border-radius: 20px;
-                  border: 1.5px solid rgba(white, .3);
+                  border: 0px solid rgba(white, 0);
                   box-shadow: inset 1px 2px 3px rgba(white, .25), inset -1px -2px 3px rgba(black, .25);
                 }
 
