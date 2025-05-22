@@ -739,7 +739,7 @@
   // Minimal changes below, mostly to adapt or slightly adjust for text chat.
 
   :global(html) {
-    height: 100vh;
+    height: 100%;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
   }
   :global(body) {
