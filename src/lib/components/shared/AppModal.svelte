@@ -31,7 +31,7 @@
 {#if show}
   <div
     class="modal-overlay"
-    transition:fade={{ duration: 200 }}
+    transition:fade={{ duration: 0 }}
     on:click={closeModal}
     role="dialog"
     aria-modal="true"
@@ -39,7 +39,7 @@
   >
     <div
       class="modal-content"
-      transition:fly={{ y: -30, duration: 250, opacity: 0 }}
+      transition:fly={{ y: 30, duration: 200, opacity: 0 }}
       on:click|stopPropagation
     >
       <header class="modal-header">
@@ -65,20 +65,23 @@
     left: 0;
     width: 100%;
     height: 100%;
-    background-color: rgba(0, 0, 0, 0.6);
+
     display: flex;
     justify-content: center;
     align-items: center;
-    z-index: 10000; // Ensure it's on top
-    backdrop-filter: blur(3px);
+    z-index: 100; // Ensure it's on top
+
+   background-color: rgba(0, 0, 0, 0.4);
+   // backdrop-filter: blur(0px);
   }
 
   .modal-content {
-    background-color: #2c2c2e; // Dark background
+    background-color: rgba(black, .75);
+    backdrop-filter: blur(40px);
     color: #f2f2f7; // Light text
     padding: 20px;
     border-radius: 12px;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+    box-shadow: 0 16px 48px rgba(black, 0.5);
     width: 80%;
     max-width: 700px;
     max-height: 85vh;

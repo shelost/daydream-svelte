@@ -7,6 +7,7 @@
   import VerticalSlider from '$lib/components/VerticalSlider.svelte';
   import { fetchAndLog } from '$lib/utils/fetchAndLog.js'; // <-- ADD THIS IMPORT
   import Omnibar from '$lib/components/Omnibar.svelte'; // <-- IMPORT Omnibar
+  import CanvasToolbar from '$lib/components/CanvasToolbar.svelte'; // <-- IMPORT CanvasToolbar
   import {
     gptImagePrompt,
     gptEditPrompt,
@@ -31,6 +32,9 @@
   import prettier from 'prettier/standalone';
   import * as parserHtml from 'prettier/parser-html';
   const htmlParser = parserHtml?.default || parserHtml;
+
+  // Shape type variable for binding to CanvasToolbar
+  let shapeType: string = 'rectangle';
 
   // Session storage key for canvas data
   const CANVAS_STORAGE_KEY = 'canvasDrawingData';
@@ -126,7 +130,7 @@
 
   // Define imageModels for Omnibar
   const imageGenerationModels = [
-    { value: 'gpt-image-1', label: 'OpenAI' },
+    { value: 'gpt-image-1', label: 'GPT-Image-1' },
     { value: 'gpt-4o', label: 'GPT-4o' },
     { value: 'flux-canny-pro', label: 'Flux Canny Pro' },
     { value: 'controlnet-scribble', label: 'ControlNet Scribble' },
@@ -1533,33 +1537,29 @@ Again, return ONLY the SVG code with no additional text.`;
   let shapeFillColor: string = '#cccccc';
   let shapeStrokeColor: string = '#000000';
   let shapeStrokeWidth: number = 2;
-  let shapeType: string = 'rectangle'; // Default shape
+  // Remove duplicate shapeType declaration
+  // let shapeType: string = 'rectangle'; // Default shape
 
   // For shape selection dropdown
-  const shapeOptionsList = [
-    { type: 'rectangle', icon: 'check_box_outline_blank' },
-    { type: 'circle',    icon: 'circle' }, // Using 'circle' material icon
-    { type: 'triangle',  icon: 'change_history' }
-  ];
-  let showShapeDropdown: boolean = false;
-  let shapeDropdownElement: HTMLElement;
-  let shapeToolButtonElement: HTMLElement; // This is the group <div>
-  let shapeDropdownTopPosition = '0px'; // For dynamic positioning
-  let shapeDropdownLeftPosition = '0px'; // For horizontal positioning
+  // const shapeOptionsList = [
+  //   { type: 'rectangle', icon: 'check_box_outline_blank' },
+  //   { type: 'circle',    icon: 'circle' }, // Using 'circle' material icon
+  //   { type: 'triangle',  icon: 'change_history' }
+  // ];
 
-  $: currentShapeIcon = shapeOptionsList.find(s => s.type === shapeType)?.icon || 'check_box_outline_blank';
+  // $: currentShapeIcon = shapeOptionsList.find(s => s.type === shapeType)?.icon || 'check_box_outline_blank';
 
   // Reactive update for dropdown position
-  $: if (browser && showShapeDropdown && shapeToolButtonElement) {
-    const rect = shapeToolButtonElement.getBoundingClientRect();
-    const toolbarRect = shapeToolButtonElement.closest('.tool-selector-toolbar')?.getBoundingClientRect();
-    if (rect && toolbarRect) {
-      // Position the dropdown above the button
-      const buttonCenter = rect.left + (rect.width / 2);
-      shapeDropdownLeftPosition = `${buttonCenter - 24}px`; // Center the 48px dropdown over the button
-      shapeDropdownTopPosition = `auto`; // Let bottom property handle vertical position
-    }
-  }
+  // $: if (browser && showShapeDropdown && shapeToolButtonElement) {
+  //   const rect = shapeToolButtonElement.getBoundingClientRect();
+  //   const toolbarRect = shapeToolButtonElement.closest('.tool-selector-toolbar')?.getBoundingClientRect();
+  //   if (rect && toolbarRect) {
+  //     // Position the dropdown above the button
+  //     const buttonCenter = rect.left + (rect.width / 2);
+  //     shapeDropdownLeftPosition = `${buttonCenter - 24}px`; // Center the 48px dropdown over the button
+  //     shapeDropdownTopPosition = `auto`; // Let bottom property handle vertical position
+  //   }
+  // }
 
   // For dynamic toolbar when a shape is selected
   let activeFabricObject: any | null = null;
@@ -2258,23 +2258,23 @@ Again, return ONLY the SVG code with no additional text.`;
   }
 
   // Click outside to close shape dropdown
-  function handleClickOutside(event: MouseEvent) {
-    if (showShapeDropdown && shapeDropdownElement && !shapeDropdownElement.contains(event.target as Node) && shapeToolButtonElement && !shapeToolButtonElement.contains(event.target as Node)) {
-      showShapeDropdown = false;
-    }
-  }
+  // function handleClickOutside(event: MouseEvent) {
+  //   if (showShapeDropdown && shapeDropdownElement && !shapeDropdownElement.contains(event.target as Node) && shapeToolButtonElement && !shapeToolButtonElement.contains(event.target as Node)) {
+  //     showShapeDropdown = false;
+  //   }
+  // }
 
-  onMount(() => {
-    console.log('Canvas component mounting...');
-    // ... other onMount logic ...
-    window.addEventListener('click', handleClickOutside);
-  });
+  // onMount(() => {
+  //   console.log('Canvas component mounting...');
+  //   // ... other onMount logic ...
+  //   window.addEventListener('click', handleClickOutside);
+  // });
 
-  onDestroy(() => {
-    // ... other onDestroy logic ...
-    window.removeEventListener('click', handleClickOutside);
-    window.removeEventListener('keydown', handleGlobalKeyDown); // Ensure this is also cleaned up
-  });
+  // onDestroy(() => {
+  //   // ... other onDestroy logic ...
+  //   window.removeEventListener('click', handleClickOutside);
+  //   window.removeEventListener('keydown', handleGlobalKeyDown); // Ensure this is also cleaned up
+  // });
 
   // --- NEW: Format selection & SVG output support ---
   // User-selected output format: 'png' (default raster) or 'svg' (vector)
@@ -3270,114 +3270,11 @@ Guidelines:
           </div>
         </div>
 
-        <div class="toolbar tool-selector-toolbar">
-
-          <button
-              class="tool-button"
-              class:active={$selectedTool === 'select'}
-              on:click={() => selectedTool.set('select')}
-              title="Select Tool"
-            >
-            <span class="material-symbols-outlined">
-                arrow_selector_tool
-            </span>
-          </button>
-          <button
-            class="tool-button"
-            class:active={$selectedTool === 'pen'}
-            on:click={() => selectedTool.set('pen')}
-            title="Pen Tool"
-          >
-            <span class="material-symbols-outlined">
-              edit
-            </span>
-          </button>
-          <button
-            class="tool-button"
-            class:active={$selectedTool === 'eraser'}
-            on:click={() => selectedTool.set('eraser')}
-            title="Eraser Tool"
-          >
-            <span class="material-symbols-outlined">
-              ink_eraser
-            </span>
-          </button>
-          <button
-            class="tool-button"
-            class:active={$selectedTool === 'text'}
-            on:click={() => selectedTool.set('text')}
-            title="Text Tool"
-          >
-            <span class="material-symbols-outlined">
-              title
-            </span>
-          </button>
-
-          <!-- MODIFIED SHAPE TOOL BUTTON -->
-          <div class="tool-button-group" bind:this={shapeToolButtonElement}>
-            <button
-              class="tool-button main-shape-button"
-              class:active={$selectedTool === 'shape'}
-              on:click={() => {
-                selectedTool.set('shape');
-                showShapeDropdown = false; // Close dropdown if open
-              }}
-              title="Shape Tool ({shapeType})"
-            >
-              <span class="material-symbols-outlined">
-                {currentShapeIcon}
-              </span>
-            </button>
-            <button
-              class="tool-button shape-dropdown-trigger"
-              on:click|stopPropagation={() => showShapeDropdown = !showShapeDropdown}
-              title="Select Shape"
-            >
-              <span class="material-symbols-outlined">
-                {showShapeDropdown ? 'chevron_left' : 'chevron_right'}
-              </span>
-            </button>
-          </div>
-
-          {#if showShapeDropdown}
-            <div
-              class="shape-select-dropdown"
-              bind:this={shapeDropdownElement}
-              style="left: {shapeDropdownLeftPosition}; bottom: calc(100% + 8px);"
-              transition:fade={{duration: 150}}
-            >
-              {#each shapeOptionsList as shapeOpt}
-                <button
-                  class="tool-button dropdown-item"
-                  class:active={shapeType === shapeOpt.type && $selectedTool === 'shape'}
-                  on:click={() => {
-                    shapeType = shapeOpt.type;
-                    selectedTool.set('shape');
-                    showShapeDropdown = false;
-                  }}
-                  title="{shapeOpt.type.charAt(0).toUpperCase() + shapeOpt.type.slice(1)}"
-                >
-                  <span class="material-symbols-outlined">{shapeOpt.icon}</span>
-                </button>
-              {/each}
-            </div>
-          {/if}
-
-          <button
-            class="tool-button"
-            class:active={$selectedTool === 'image'}
-            on:click={() => {
-              selectedTool.set('image');
-              activateImageUpload();
-            }}
-            title="Image Upload Tool"
-          >
-            <span class="material-symbols-outlined">
-              upload
-            </span>
-          </button>
-        </div>
-
+        <!-- Replace the toolbar with the CanvasToolbar component -->
+        <CanvasToolbar
+          bind:shapeType={shapeType}
+          activateImageUpload={activateImageUpload}
+        />
       </div>
 
 
@@ -3800,20 +3697,6 @@ Guidelines:
         //box-shadow: -4px 16px 24px rgba(black, 0.25);
       }
 
-
-      .toolbar{
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        width: fit-content;
-        height: 48px;
-        padding: 0 8px;
-        gap: 8px;
-        margin: 0;
-        margin-top: 12px;
-        background: rgba(black, .35);
-        border-radius: 12px;
-      }
 
       // New wrapper for toolbars
       .toolbars-wrapper {

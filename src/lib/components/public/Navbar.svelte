@@ -92,7 +92,7 @@
             </span>
         </div>
 
-        <div class = 'navbtn' class:active={$page.url.pathname === '/flow'} on:click={() => {goto('/flow')}} >
+        <div class = 'navbtn disabled' class:active={$page.url.pathname === '/flow'} on:click={() => {goto('/flow')}} >
             <span class='material-symbols-outlined'>
                 automation
             </span>
@@ -104,7 +104,7 @@
             </span>
         </div>
 
-        <div class = 'navbtn' class:active={$page.url.pathname === '/profile'} on:click={() => {goto('/profile')}} >
+        <div class = 'navbtn disabled' class:active={$page.url.pathname === '/profile'} on:click={() => {goto('/profile')}} >
             <span class='material-symbols-outlined'>
                 person
             </span>
@@ -122,11 +122,7 @@
 
     <div id = 'menu' class = 'corner'>
 
-        <div class = 'navbtn' class:active={$page.url.pathname === '/profile'} on:click={() => {goto('/profile')}} >
-            <span class='material-symbols-outlined'>
-                person
-            </span>
-        </div>
+
 
     </div>
 
@@ -223,6 +219,9 @@
                 &:hover{
                     background: rgba(white, .1);
                     border-radius: 12px;
+                }
+                &.disabled{
+                    display: none;
                 }
                 &.active{
                     //background: rgba(#e0e0e0, .8);

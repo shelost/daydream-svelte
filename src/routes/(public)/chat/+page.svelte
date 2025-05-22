@@ -775,9 +775,10 @@
     text-align: center;
     margin-bottom: 20px; // Reduced margin
     h2 {
-      font-family: 'Newsreader', serif;
-      font-size: 36px; // Slightly smaller
-      font-weight: 600;
+      font-family: "ivypresto-headline", 'Newsreader', serif;
+      font-size: 64px; // Slightly smaller
+      font-weight: 500;
+      letter-spacing: -.4px;
       margin: 0 0 8px 0;
       color: #fff;
     }

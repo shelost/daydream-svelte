@@ -586,6 +586,7 @@
     }
 
     .result-text {
+        display: none;
         width: 100%; /* Full width */
         max-height: 200px; /* Add max-height constraint */
         overflow-y: auto; /* Enable scrolling */
@@ -613,7 +614,7 @@
     }
 
     .input-summary {
-        display: flex;
+        display: none;
         align-items: center;
         gap: 4px;
         background-color: rgba(0, 0, 0, 0.2);

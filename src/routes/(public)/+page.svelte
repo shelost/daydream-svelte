@@ -85,17 +85,15 @@
 
     <div class = 'mast'>
       <h1>
-        AI More Naturally.
+        Daydream
       </h1>
-      <h2>
-        Confused by AI? We are too.
-      </h2>
       <p>
         Copyright &copy; 2025 ahw. All rights reserved.
       </p>
     </div>
 
 
+    </div>
 
     <div class = 'sec'>
       <div class = 'header'>
@@ -174,7 +172,6 @@
       </button>
       -->
     </div>
-  </div>
 </main>
 
 <style lang="scss">
@@ -189,11 +186,14 @@
     text-align: center;
     padding: 0;
     max-width: 800px;
-    margin: 80px auto;
+    margin: 0 auto;
+
+    height: 100%;
 
 
     display: flex;
     flex-direction: column;
+    justify-content: center;
     align-items: center;
 
     #wing{
@@ -210,7 +210,7 @@
     }
 
     .mast{
-      margin: 24px 0 32px 0;
+      margin: 24px 0 48px 0;
       color: white;
       h1{
         font-family: "ivypresto-headline", serif;
@@ -306,6 +306,10 @@
     &:hover {
       background-color: rgba($primary-color, 0.05);
     }
+  }
+
+  .sec{
+    display: none;
   }
 
   .signup-button {

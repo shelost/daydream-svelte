@@ -14,10 +14,14 @@
       MarkerType
     } from '@xyflow/svelte';
     import '@xyflow/svelte/dist/style.css';
+    import 'prismjs/themes/prism-okaidia.css';
 
     import { fly, scale, fade } from 'svelte/transition';
-    import { onMount, onDestroy } from 'svelte';
+    import { onMount, onDestroy, tick } from 'svelte';
     import { beforeNavigate } from '$app/navigation';
+
+    import Prism from 'prismjs';
+    import 'prismjs/components/prism-json';
 
     import TextNode from '$lib/components/flow/TextNode.svelte';
     import UppercaseNode from '$lib/components/flow/UppercaseNode.svelte';
@@ -40,28 +44,29 @@
 
     const edgeTypes = {
         gradient: GradientEdge
-    } as any;  // Type casting is needed due to TypeScript edge component compatibility
+    } as any;
 
     const FLOW_NODES_STORAGE_KEY = 'flowPageNodesData_v1';
     const FLOW_EDGES_STORAGE_KEY = 'flowPageEdgesData_v1';
 
-    // Save status indicator
-    const saveStatus = writable('idle'); // 'idle', 'saving', 'saved', 'error'
+    const saveStatus = writable('idle');
     let saveDebounceTimeout: ReturnType<typeof setTimeout>;
-    const SAVE_DEBOUNCE_MS = 1000; // Debounce time in milliseconds
+    const SAVE_DEBOUNCE_MS = 1000;
 
     let enableSnapToGrid = false;
     const gridSnapValues: [number, number] = [15, 15];
-
-    // Toolbar position state
     let toolbarPosition = { x: 10, y: 60 };
-
-    // Flow instance - will be set when the component is mounted
     let flowInstance;
 
-    // Modal state
     let showSourceModal = false;
     let flowSourceData = '';
+    let sourceCodeElement: HTMLElement;
+
+    $: if (showSourceModal && flowSourceData && sourceCodeElement) {
+      tick().then(() => {
+        Prism.highlightElement(sourceCodeElement);
+      });
+    }
 
     const defaultNodes: Node[] = [
       {
@@ -268,7 +273,6 @@
     const nodes = writable<Node[]>(initialNodes);
     const edges = writable<Edge[]>(initialEdges);
 
-    // Set up reactivity for autosaving when nodes or edges change
     $: {
         if (typeof window !== 'undefined' && ($nodes || $edges)) {
             triggerAutoSave();
@@ -276,15 +280,10 @@
     }
 
     function triggerAutoSave() {
-        // Cancel any pending save operations
         if (saveDebounceTimeout) {
             clearTimeout(saveDebounceTimeout);
         }
-
-        // Set status to saving
         $saveStatus = 'saving';
-
-        // Debounce the save operation to prevent excessive saves during rapid changes
         saveDebounceTimeout = setTimeout(() => {
             saveFlowState();
         }, SAVE_DEBOUNCE_MS);
@@ -293,21 +292,15 @@
     const isSpacebarPressed = writable(false);
 
     function handleKeyDown(event: KeyboardEvent) {
-        // Don't handle spacebar if a textarea is focused
         if (event.code === 'Space' && !(event.target instanceof HTMLTextAreaElement)) {
             event.preventDefault();
             isSpacebarPressed.set(true);
         }
-
-        // Handle Delete key for selected edges
         if ((event.key === 'Backspace' || event.key === 'Delete') && !(event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLInputElement)) {
-            // Find any edges with the 'selected' class
             const selectedEdgeIds = $edges
                 .filter(edge => edge.class && edge.class.includes('selected'))
                 .map(edge => edge.id);
-
             if (selectedEdgeIds.length > 0) {
-                // Remove the selected edges
                 $edges = $edges.filter(edge => !selectedEdgeIds.includes(edge.id));
                 console.log(`Deleted ${selectedEdgeIds.length} edge(s):`, selectedEdgeIds);
             }
@@ -320,26 +313,16 @@
         }
     }
 
-    // Flow wheel event handling - check if we should let the scroll event go through
     function handleFlowWheel(e: CustomEvent<WheelEvent>) {
-        // Extract the original wheel event
         const event = e.detail as WheelEvent;
-
-        // Check if we're over a scrollable container that should handle the event
         const scrollableSelectors = ['.markdown-container', '.result-text'];
         const target = event.target as HTMLElement;
-
-        // See if the event target is or is inside a scrollable component
         for (const selector of scrollableSelectors) {
             const scrollContainer = target.closest(selector);
             if (scrollContainer) {
-                // The wheel event is happening over a scrollable container
-                // Individual nodes should handle stopping propagation as needed
                 return;
             }
         }
-
-        // Default flow behavior (zoom) can proceed for non-scrollable areas
     }
 
     function saveFlowState() {
@@ -378,15 +361,10 @@
         }
     }
 
-    // Function to add a new node from the toolbar
     function handleAddNode(event) {
         const { type, data } = event.detail;
         const id = `${type}-${Date.now()}`;
-
-        // Default position for new nodes
         let position = { x: 0, y: 0 };
-
-        // If flowInstance is available, use the viewport center
         if (flowInstance && typeof flowInstance.getViewport === 'function') {
             try {
                 const { x, y, zoom } = flowInstance.getViewport();
@@ -398,26 +376,18 @@
                 console.error("Error getting viewport:", error);
             }
         }
-
         const newNode = {
             id,
             type,
             data,
             position
         };
-
-        // Add the new node
         $nodes = [...$nodes, newNode];
-
         console.log(`Added new ${type} node with id: ${id}`);
     }
 
-    // Handle edge selection changes
     function handleSelectionChange({ detail }) {
-        // This is called when node or edge selection changes
         const { edges: selectedEdges, nodes: selectedNodes } = detail;
-
-        // Update the edges with the selected state
         if (selectedEdges && selectedEdges.length > 0) {
             $edges = $edges.map(edge => {
                 const isSelected = selectedEdges.some(selectedEdge => selectedEdge.id === edge.id);
@@ -427,7 +397,6 @@
                 };
             });
         } else {
-            // Reset selection if nothing is selected
             $edges = $edges.map(edge => ({
                 ...edge,
                 class: 'flow-edge'
@@ -435,15 +404,11 @@
         }
     }
 
-    // Handle edge connections
     function handleConnect(event) {
         const { source, target } = event.detail;
         const id = `e${source}-${target}`;
-
-        // Check if this connection already exists
         const connectionExists = $edges.some(edge =>
             edge.source === source && edge.target === target);
-
         if (!connectionExists && source !== target) {
             const newEdge: Edge = {
                 id,
@@ -454,29 +419,26 @@
                 selectable: true,
                 class: 'flow-edge'
             };
-
             $edges = [...$edges, newEdge];
         }
     }
 
     function openSourceModal() {
-        const currentNodes = $nodes; // Get the current state from the store
-        const currentEdges = $edges; // Get the current state from the store
-
+        const currentNodes = $nodes;
+        const currentEdges = $edges;
         const combinedData = {
             nodes: currentNodes,
-            edges: currentEdges.map(edge => ({ // Ensure edges are in the format they are saved
+            edges: currentEdges.map(edge => ({
                 id: edge.id,
                 source: edge.source,
                 target: edge.target,
                 type: 'gradient',
                 animated: true,
                 selectable: true,
-                class: edge.class || 'flow-edge' // Preserve class if it exists
+                class: edge.class || 'flow-edge'
             }))
         };
-
-        flowSourceData = JSON.stringify(combinedData, null, 2); // Pretty print with 2 spaces
+        flowSourceData = JSON.stringify(combinedData, null, 2);
         showSourceModal = true;
     }
 
@@ -495,8 +457,6 @@
             window.removeEventListener('keyup', handleKeyUp);
             window.removeEventListener('beforeunload', saveFlowState);
         }
-
-        // Clear any pending timeouts
         if (saveDebounceTimeout) {
             clearTimeout(saveDebounceTimeout);
         }
@@ -531,29 +491,16 @@
         on:wheel={handleFlowWheel}
         bind:this={flowInstance}
     >
-        <svg style="width:0;height:0;position:absolute;">
-            <defs>
-                <linearGradient id="edge-flow-gradient" x1="0%" y1="0%" x2="100%" y2="0%">
-                    <stop offset="0%" style="stop-color:#505050;stop-opacity:1" />
-                    <stop offset="50%" style="stop-color:#5c5c5c;stop-opacity:1" />
-                    <stop offset="100%" style="stop-color:#ffffff;stop-opacity:1" />
-                </linearGradient>
-            </defs>
-        </svg>
-
       <Background variant={BackgroundVariant.Dots} />
       <MiniMap />
       <Controls />
 
-      <!-- Reset button -->
       <button class="reset-flow-button" on:click={resetFlowCanvas} title="Reset Flow Canvas">
           <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
           <span>Reset</span>
       </button>
 
-      <!-- UI Elements Container -->
       <div class="ui-elements-container">
-          <!-- Save status indicator -->
           <div class="save-status" class:idle={$saveStatus === 'idle'} class:saving={$saveStatus === 'saving'} class:saved={$saveStatus === 'saved'} class:error={$saveStatus === 'error'}>
               {#if $saveStatus === 'saving'}
                   <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="spinner"><circle cx="12" cy="12" r="10"></circle></svg>
@@ -569,24 +516,21 @@
                   <span>Auto-saved</span>
               {/if}
           </div>
-          <!-- View Source button -->
           <button class="view-source-button" on:click={openSourceModal} title="View Flow Source Data">
               <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"></polyline><polyline points="8 6 2 12 8 18"></polyline><line x1="12" y1="4" x2="12" y2="20"></line></svg>
               <span>View Source</span>
           </button>
       </div>
 
-      <!-- Add the floating toolbar -->
       <FlowToolbar
           position={toolbarPosition}
           on:addNode={handleAddNode}
       />
     </SvelteFlow>
 
-    <!-- Source Data Modal -->
     <AppModal title="Svelte Flow State" show={showSourceModal} on:close={() => showSourceModal = false}>
         <div class="source-data-container">
-            <pre><code>{flowSourceData}</code></pre>
+            <pre><code class="language-json" bind:this={sourceCodeElement}>{flowSourceData}</code></pre>
         </div>
     </AppModal>
 </main>
@@ -600,26 +544,25 @@
       border-radius: 12px;
 
       &.selection-active {
-        cursor: default; /* Default arrow for the main container in selection mode */
+        cursor: default;
         :global(.svelte-flow__pane) {
-          cursor: default; /* Default arrow for the flow pane itself */
+          cursor: default;
         }
         :global(.svelte-flow__node) {
-          cursor: default; /* Default arrow for nodes */
+          cursor: default;
         }
-        /* Allow specific drag handles to still show a grab cursor */
         :global(.svelte-flow__node[data-drag-handle]) {
             cursor: grab;
         }
         :global(.svelte-flow__handle) {
-            cursor: crosshair; /* Or whatever is appropriate for handles */
+            cursor: crosshair;
         }
       }
 
       &.panning-active {
-        cursor: grab; /* Grab cursor for the main container in panning mode */
+        cursor: grab;
         :global(.svelte-flow__pane) {
-          cursor: grab; /* Grab cursor for the flow pane */
+          cursor: grab;
         }
       }
     }
@@ -639,24 +582,19 @@
         box-shadow: 0 1px 3px rgba(0,0,0,0.1);
         transition: background-color 0.2s, box-shadow 0.2s;
         z-index: 10 !important;
-
         width: fit-content;
         height: fit-content;
-
         position: absolute;
         top: 8px;
         left: 8px;
-
         svg {
             stroke: #555;
         }
-
         &:hover {
             background-color: white;
             border-color: #ccc;
             box-shadow: 0 2px 5px rgba(0,0,0,0.15);
         }
-
         &:active {
             background-color: #f5f5f5;
             box-shadow: inset 0 1px 2px rgba(0,0,0,0.1);
@@ -673,7 +611,6 @@
         z-index: 1000;
     }
 
-    /* Save status indicator styling */
     .save-status {
         display: flex;
         align-items: center;
@@ -687,27 +624,22 @@
         box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
         backdrop-filter: blur(4px);
         transition: background-color 0.3s ease, opacity 0.3s ease;
-
         span {
             line-height: 1;
         }
-
         &.idle {
             background: rgba(0, 0, 0, 0.5);
             opacity: 0.8;
         }
-
         &.saving {
             background: rgba(0, 0, 0, 0.7);
             .spinner {
                 animation: spin 1s linear infinite;
             }
         }
-
         &.saved {
             background: rgba(40, 167, 69, 0.8);
         }
-
         &.error {
             background: rgba(220, 53, 69, 0.8);
         }
@@ -720,7 +652,7 @@
         padding: 6px 10px;
         font-size: 12px;
         font-weight: 500;
-        background-color: hsla(210, 8%, 35%, 0.7); // Slightly different background for distinction
+        background-color: hsla(210, 8%, 35%, 0.7);
         border: 1px solid hsla(210, 8%, 45%, 0.5);
         border-radius: 8px;
         color: #e0e0e0;
@@ -728,12 +660,10 @@
         box-shadow: 0 1px 3px rgba(0,0,0,0.15);
         backdrop-filter: blur(4px);
         transition: background-color 0.2s, box-shadow 0.2s, color 0.2s;
-
         svg {
             stroke: #c0c0c0;
             transition: stroke 0.2s;
         }
-
         &:hover {
             background-color: hsla(210, 8%, 40%, 0.8);
             color: white;
@@ -741,7 +671,6 @@
                 stroke: white;
             }
         }
-
         &:active {
             background-color: hsla(210, 8%, 30%, 0.8);
             box-shadow: inset 0 1px 2px rgba(0,0,0,0.1);
@@ -798,7 +727,6 @@
             stroke-width: 3 !important;
             animation: pulse-edge 2s infinite;
         }
-
         &:hover .svelte-flow__edge-path {
             stroke-width: 2.5 !important;
             stroke: #ff3d7f !important;
@@ -810,25 +738,20 @@
         cursor: pointer;
     }
 
-    /* Enhancing styles for scrollable areas */
     :global(.markdown-container), :global(.result-text) {
         scrollbar-width: thin;
         scrollbar-color: rgba(255, 255, 255, 0.3) rgba(0, 0, 0, 0.2);
-
         &::-webkit-scrollbar {
             width: 6px;
         }
-
         &::-webkit-scrollbar-track {
             background: rgba(0, 0, 0, 0.2);
             border-radius: 3px;
         }
-
         &::-webkit-scrollbar-thumb {
             background-color: rgba(255, 255, 255, 0.3);
             border-radius: 3px;
         }
-
         &:hover::-webkit-scrollbar-thumb {
             background-color: rgba(255, 255, 255, 0.4);
         }
@@ -846,26 +769,30 @@
         }
     }
 
-    /* Fix for node dragging lag */
     :global(.svelte-flow__node) {
         transition: none !important;
     }
 
     .source-data-container {
         pre {
-            background-color: #1e1e1e; // Darker background for code
-            color: #d4d4d4; // Light text for code
+            background-color: transparent !important;
+            color: inherit !important;
             padding: 15px;
             border-radius: 8px;
-            overflow-x: auto; // Horizontal scroll for long lines
+            overflow-x: auto;
             font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, Courier, monospace;
             font-size: 0.85em;
             line-height: 1.6;
-            white-space: pre; // Keep whitespace as is
+            white-space: pre;
+            margin: 0;
         }
 
         code {
             font-family: inherit;
+            background-color: transparent !important;
+            color: inherit !important;
+            padding: 0 !important;
+            text-shadow: none !important;
         }
     }
  </style>

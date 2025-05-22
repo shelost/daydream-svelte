@@ -147,7 +147,7 @@
 
   .result{
     //border: 1px solid rgba(white, .5);
-    background: rgba(white, .05);
+    background: rgba(white, .02);
     box-shadow: -8px 24px 36px rgba(black, .1);
     backdrop-filter: blur(20px);
     padding: 24px;
