@@ -187,6 +187,7 @@
     align-items: center;
     gap: 8px;
     z-index: 10; /* Ensure it's above other content if fixed */
+    box-sizing: border-box;
 
     .input-form {
       display: flex;
@@ -346,4 +347,15 @@
       }
     }
   }
+
+  @media screen and (max-width: 800px) {
+    .omnibar{
+      width: 92vw;
+      max-width: 100vw;
+      left: calc(4vw - 12px);
+      bottom: 6px;
+    }
+  }
+
+
 </style>

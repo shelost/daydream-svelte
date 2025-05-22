@@ -856,7 +856,7 @@
   #image-chat-page { // Consider renaming ID to #text-chat-page if it causes confusion
     display: flex;
     flex-direction: column;
-    height: calc(100vh - 10px);
+    height: 100%;
     width: 100%;
     max-width: 100vw;
     margin: auto;
@@ -884,6 +884,7 @@
     // Adjusted padding: top, sides, bottom (to clear fixed Omnibar)
     padding: 16px 24px calc(80px + 24px + 20px) 24px; // 80px omnibar + 24px bottom offset + 20px buffer
 
+    box-sizing: border-box;
     display: flex;
     flex-direction: column;
     justify-content: flex-start;

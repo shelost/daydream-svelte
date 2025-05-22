@@ -8,7 +8,7 @@
     <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
 </svelte:head>
 
-<div class="layout stan">
+<div class="layout">
     <div class = 'app'>
         <slot />
     </div>
@@ -35,6 +35,16 @@
         //overflow: hidden;
 
         background: var(--background-color);
+    }
+
+    @media screen and (max-width: 800px) {
+        .layout{
+            flex-direction: column;
+        }
+
+        .app{
+            margin: 12px 12px 4px 12px;
+        }
     }
 
 

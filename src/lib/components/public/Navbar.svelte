@@ -237,5 +237,21 @@
     }
 
 
+    @media screen and (max-width: 800px) {
+        header{
+            flex-direction: row;
+            height: 60px;
+            width: 100vw;
+            box-sizing: border-box;
+            padding: 0 16px;
+
+            nav{
+                flex-direction: row;
+            }
+        }
+    }
+
+
+
 
 </style>
