@@ -36,8 +36,17 @@
         const prismModule = await import('prismjs');
         await import('prismjs/components/prism-markup.js');
 
+        // More robust assignment to handle different module structures
         Prism = prismModule.default || prismModule;
-        PrismLoaded = true;
+
+        // Verify that Prism has the expected methods before marking as loaded
+        if (Prism && typeof Prism.highlightElement === 'function') {
+          PrismLoaded = true;
+          console.log('Prism.js loaded successfully');
+        } else {
+          console.warn('Prism.js loaded but highlightElement method not available');
+          PrismLoaded = false;
+        }
 
         // Load CSS dynamically
         if (!document.querySelector('link[href*="prism-okaidia"]')) {
@@ -50,6 +59,7 @@
     } catch (error) {
       console.warn('Failed to load Prism.js:', error);
       PrismLoaded = false;
+      Prism = null;
     }
   });
 
@@ -2972,10 +2982,15 @@ Again, return ONLY the SVG code with no additional text.`;
             svgCodeElement.textContent = formattedSvg;
             await tick();
 
-            // Only highlight if Prism is loaded
+            // Only highlight if Prism is loaded and available
             if (PrismLoaded && Prism && typeof Prism.highlightElement === 'function') {
-              Prism.highlightElement(svgCodeElement);
-              console.log('SVG code formatted with Prettier and highlighted with Prism.js');
+              try {
+                Prism.highlightElement(svgCodeElement);
+                console.log('SVG code formatted with Prettier and highlighted with Prism.js');
+              } catch (prismError) {
+                console.warn('Error applying Prism highlighting:', prismError);
+                console.log('SVG code formatted with Prettier (Prism highlighting failed)');
+              }
             } else {
               console.log('SVG code formatted with Prettier (Prism.js not available)');
             }
@@ -2988,7 +3003,11 @@ Again, return ONLY the SVG code with no additional text.`;
 
             // Try to highlight fallback only if Prism is available
             if (PrismLoaded && Prism && typeof Prism.highlightElement === 'function') {
-              Prism.highlightElement(svgCodeElement);
+              try {
+                Prism.highlightElement(svgCodeElement);
+              } catch (prismError) {
+                console.warn('Error applying Prism highlighting on fallback:', prismError);
+              }
             }
 
             lastFormattedAndHighlightedSvgCode = generatedSvgCode; // Mark as processed even on error to prevent loop
@@ -3010,7 +3029,7 @@ Again, return ONLY the SVG code with no additional text.`;
                   Prism.highlightElement(svgCodeElement);
                 }
               } catch (e) {
-                console.error("Error re-applying highlight", e)
+                console.warn("Error re-applying highlight:", e);
               } finally {
                 isHighlightingInProgress = false;
               }
