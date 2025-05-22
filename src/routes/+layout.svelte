@@ -42,7 +42,7 @@
   .layout {
     display: flex;
     flex-direction: column;
-    min-height: 100vh;
+    height: 100%;
     padding: 0;
     margin: 0;
   }
