@@ -25,39 +25,41 @@
   } from '$lib/stores/canvasStore';
 
   // Import Prism.js for syntax highlighting - make it conditional for production builds
-  let Prism;
-  let PrismLoaded = false;
+  let Prism: any = null; // Keep at top-level, initialize to null
+  let PrismLoaded: boolean = false; // Keep at top-level
 
   // Dynamically import Prism.js to avoid SSR issues
   onMount(async () => {
     try {
       if (typeof window !== 'undefined') {
-        // Dynamic import for better production compatibility
         const prismModule = await import('prismjs');
         await import('prismjs/components/prism-markup.js');
+        const prismInstance = prismModule.default || prismModule;
 
-        // More robust assignment to handle different module structures
-        Prism = prismModule.default || prismModule;
-
-        // Verify that Prism has the expected methods before marking as loaded
-        if (Prism && typeof Prism.highlightElement === 'function') {
-          PrismLoaded = true;
-          console.log('Prism.js loaded successfully');
+        if (prismInstance && typeof prismInstance.highlightElement === 'function') {
+          Prism = prismInstance; // Assign to top-level Prism
+          PrismLoaded = true;    // Assign to top-level PrismLoaded
+          console.log('Prism.js loaded successfully and assigned.');
         } else {
-          console.warn('Prism.js loaded but highlightElement method not available');
+          console.warn('Prism.js loaded but highlightElement method not available or instance invalid.');
           PrismLoaded = false;
         }
 
-        // Load CSS dynamically
         if (!document.querySelector('link[href*="prism-okaidia"]')) {
           const link = document.createElement('link');
           link.rel = 'stylesheet';
           link.href = 'https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-okaidia.min.css';
           document.head.appendChild(link);
         }
+
+        // After Prism is confirmed loaded (or failed), trigger highlighting if conditions met
+        if (outputView === 'code' && generatedSvgCode && svgCodeElement) {
+            console.log('onMount: Code view active with SVG code. Triggering processCodeIfNecessary.');
+            processCodeIfNecessary(); // New helper function
+        }
       }
     } catch (error) {
-      console.warn('Failed to load Prism.js:', error);
+      console.warn('Failed to load Prism.js in onMount:', error);
       PrismLoaded = false;
       Prism = null;
     }
@@ -3297,6 +3299,81 @@ Guidelines:
     }
   }
 
+  // Helper function to consolidate formatting and highlighting logic
+  async function formatAndHighlight(codeToProcess: string) {
+    if (!svgCodeElement || !PrismLoaded || !Prism || typeof Prism.highlightElement !== 'function') {
+      // If Prism not ready, just format and set text content, or fallback to raw if prettier fails
+      if (svgCodeElement) {
+        try {
+            const formatted = await prettier.format(codeToProcess, {
+                parser: 'html', plugins: [htmlParser],
+                printWidth: 80, tabWidth: 2, useTabs: false, htmlWhitespaceSensitivity: 'ignore'
+            });
+            svgCodeElement.textContent = formatted;
+            console.log('Formatted code (Prism not ready).');
+        } catch (formatError) {
+            console.error('Error formatting code (Prism not ready):', formatError);
+            svgCodeElement.textContent = codeToProcess; // Fallback to raw code
+        }
+      }
+      return; // Exit if Prism isn't ready
+    }
+
+    isHighlightingInProgress = true;
+    try {
+      const formattedSvg = await prettier.format(codeToProcess, {
+        parser: 'html',
+        plugins: [htmlParser],
+        printWidth: 80,
+        tabWidth: 2,
+        useTabs: false,
+        htmlWhitespaceSensitivity: 'ignore'
+      });
+      svgCodeElement.textContent = formattedSvg;
+      await tick();
+      Prism.highlightElement(svgCodeElement);
+      console.log('SVG code formatted and highlighted.');
+      lastFormattedAndHighlightedSvgCode = codeToProcess;
+    } catch (error) {
+      console.error('Error in formatAndHighlight:', error);
+      svgCodeElement.textContent = codeToProcess; // Fallback to raw code
+      await tick();
+      try {
+        Prism.highlightElement(svgCodeElement); // Try highlighting fallback
+      } catch (highlightError) {
+        console.warn('Error highlighting fallback SVG code:', highlightError);
+      }
+      lastFormattedAndHighlightedSvgCode = codeToProcess;
+    } finally {
+      isHighlightingInProgress = false;
+    }
+  }
+
+  // New helper to decide if processing is needed (called from onMount and reactive block)
+  function processCodeIfNecessary() {
+    if (outputView === 'code' && generatedSvgCode && svgCodeElement) {
+      if (generatedSvgCode !== lastFormattedAndHighlightedSvgCode && !isHighlightingInProgress) {
+        console.log('processCodeIfNecessary: Code changed or not yet processed. Formatting/Highlighting.');
+        formatAndHighlight(generatedSvgCode);
+      } else if (generatedSvgCode === lastFormattedAndHighlightedSvgCode && !isHighlightingInProgress && PrismLoaded && Prism && !svgCodeElement.querySelector('span.token')) {
+        console.log('processCodeIfNecessary: Code same, but spans missing. Re-highlighting.');
+        formatAndHighlight(generatedSvgCode); // Re-run to ensure highlighting is applied
+      }
+    }
+  }
+
+  // React to tab changes or code changes
+  $: if (browser && svgCodeElement) {
+    if (outputView === 'code' && generatedSvgCode) {
+      // Conditions met, call the helper
+      // This will run if outputView changes to 'code' or generatedSvgCode changes while in 'code' view
+      console.log('Reactive block: outputView or generatedSvgCode changed. Triggering processCodeIfNecessary.');
+      processCodeIfNecessary();
+    } else if (outputView !== 'code') {
+      lastFormattedAndHighlightedSvgCode = null;
+    }
+  }
+
 </script>
 
 <svelte:head>
@@ -3892,7 +3969,6 @@ Guidelines:
         height: 100%;
         padding: 12px;
         background: rgba(black, .1);
-        border: 1px solid rgba(white, .1);
         //box-shadow: -4px 16px 24px rgba(black, 0.25);
       }
 
