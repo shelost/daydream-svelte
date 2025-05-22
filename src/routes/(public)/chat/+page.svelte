@@ -575,7 +575,7 @@
   }
 </script>
 
-<div id = 'main' in:scale={{ duration: 300, start: 0.95, opacity: 0, easing: cubicOut }}>
+<div id = 'main' class = 'stan' in:scale={{ duration: 300, start: 0.95, opacity: 0, easing: cubicOut }}>
   <button
     class="global-refresh-button"
     title="Clear Chat and History"
@@ -609,7 +609,7 @@
 
   </div>
 {:else}
-  <div id="image-chat-page" in:fade={{ duration: 300 }}> <!-- Re-evaluate if this ID should be more generic -->
+  <div id="image-chat-page"  in:fade={{ duration: 300 }}> <!-- Re-evaluate if this ID should be more generic -->
 
 
     <div class="chat-messages-container" bind:this={chatContainer} in:fade={{ duration: 250, delay: 100 }}>
@@ -1272,4 +1272,70 @@
     position: relative;
     top: 0;
   }
+
+  .stan{
+    background: rgba(white, .9);
+    color: #00106D;
+    border-radius: 8px;
+
+    :global(p), :global(h1), :global(h2), :global(h3), :global(h4), :global(h5), :global(h6), :global(li), :global(ol), :global(ul){
+      color: #00106D;
+    }
+
+    .message-wrapper{
+      margin: 0 auto;
+    }
+
+    .message-bubble{
+      filter: none;
+      box-shadow: none;
+      &.user-bubble{
+        box-shadow: none;
+        background: #6355FF;
+        p{
+          color: white;
+        }
+
+      }
+      &.assistant-bubble{
+        filter: none;
+      }
+    }
+
+    .assistant-model-info{
+      color: rgba(black, .4);
+      padding: 4px 10px;
+      border-radius: 24px;
+      margin-top: 12px;
+      background: rgba(white, .5);
+      display: none;
+    }
+
+    :global(.input-form){
+      background: rgba(white, .5);
+      box-shadow: -12px 24px 48px rgba(black, .15);
+
+    }
+    :global(textarea){
+      color: #00106D !important;
+      text-shadow: -.5px 0 0 #00106D !important;
+    }
+    :global(.submit-button-omnibar){
+      background: #6355FF;
+      color: white;
+      border-radius: 24px;
+      padding: 8px 12px;
+    }
+    :global(.submit-button-omnibar:hover){
+      background: #4035bf !important;
+    }
+    :global(select){
+      background: rgba(#6355FF, .1) !important;
+      color: black !important;
+    }
+
+
+  }
+
+
 </style>

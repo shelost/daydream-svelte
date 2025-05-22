@@ -379,15 +379,11 @@
           const target = e.target;
           if (!target) return;
 
-          // We only want this for basic shapes drawn via shape tool (rect, circle (radius), triangle)
+          // We only want this for basic shapes drawn via shape tool (rect, ellipse (radius), triangle)
           if (target.type === 'rect') {
-            // Ensure cache updates while scaling to avoid cropped preview
             target.noScaleCache = false;
-
-            // Compute new dimensions
             const newWidth = target.width * target.scaleX;
             const newHeight = target.height * target.scaleY;
-
             target.set({
               width: newWidth,
               height: newHeight,
@@ -403,13 +399,32 @@
             target.set({ width: newWidth, height: newHeight, scaleX: 1, scaleY: 1 });
             target.setCoords();
             fabricInstance.requestRenderAll();
-          } else if (target.type === 'circle') {
-            // For circle, keep radius consistent with average of width/height changes
+          } else if (target.type === 'ellipse') { // Changed from 'circle' to 'ellipse'
             target.noScaleCache = false;
-            const newRadius = (target.radius * ((target.scaleX + target.scaleY) / 2));
-            target.set({ radius: newRadius, scaleX: 1, scaleY: 1 });
+            // For ellipse, adjust rx and ry based on scaleX and scaleY respectively
+            const newRx = target.rx * target.scaleX;
+            const newRy = target.ry * target.scaleY;
+            target.set({ rx: newRx, ry: newRy, scaleX: 1, scaleY: 1 });
             target.setCoords();
             fabricInstance.requestRenderAll();
+          }
+        });
+
+        // Add Alt/Option + Drag to Duplicate functionality
+        fabricInstance.on('mouse:down', function(opt) {
+          if (opt.e.altKey && opt.target && opt.target.selectable) {
+            opt.target.clone(function(clonedObj) {
+              fabricInstance.discardActiveObject(); // Clear previous selection
+              clonedObj.set({
+                left: clonedObj.left + 10,
+                top: clonedObj.top + 10,
+              });
+              fabricInstance.add(clonedObj);
+              fabricInstance.setActiveObject(clonedObj);
+              fabricInstance.requestRenderAll();
+              // recordHistory() is called by 'object:added' listener
+              saveCanvasState(); // Save state after duplication
+            });
           }
         });
 

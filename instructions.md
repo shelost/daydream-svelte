@@ -1552,3 +1552,27 @@ The goal is to transform `src/routes/(public)/chat/+page.svelte` from an image g
         *   Call `clearChatAndStorage` on click.
 2.  **Update Styles:**
     *   Add SCSS rules in the `<style lang="scss">` block of `src/routes/(public)/chat/+page.svelte` to position and style the new refresh button.
+
+## Planned Enhancements (Current Task)
+
+### 1. Correct Ellipse Scaling in `+page.svelte`
+- Modify the `object:scaling` event handler for Fabric.js.
+- When an object of `type === 'ellipse'` is scaled:
+  - Calculate new `rx` (horizontal radius) and `ry` (vertical radius) based on `target.scaleX` and `target.scaleY`.
+  - Apply these new `rx` and `ry` to the ellipse.
+  - Reset `target.scaleX` and `target.scaleY` to `1`.
+  - Ensure `target.setCoords()` and `fabricInstance.requestRenderAll()` are called.
+
+### 2. Implement Option/Alt + Drag to Duplicate in `+page.svelte`
+- Add a `mouse:down` event listener to the `fabricInstance`.
+- In the handler, check if `altKey` is pressed and a target object exists.
+- If so:
+  - Clone the target object.
+  - In the clone callback:
+    - Discard the current active object.
+    - Position the cloned object slightly offset from the original.
+    - Add the cloned object to the canvas.
+    - Set the cloned object as the active object (this should make it the target for the current drag operation).
+    - Request a canvas render.
+    - Save canvas state.
+  - The existing `object:added` handler should manage `recordHistory()`.

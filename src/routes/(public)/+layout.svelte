@@ -8,7 +8,7 @@
     <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
 </svelte:head>
 
-<div class="layout">
+<div class="layout stan">
     <div class = 'app'>
         <slot />
     </div>
@@ -36,4 +36,6 @@
 
         background: var(--background-color);
     }
+
+
 </style>
