@@ -3025,7 +3025,7 @@ Again, return ONLY the SVG code with no additional text.`;
               try {
                 console.log('Re-applying Prism highlighting to existing code (no re-format).');
                 await tick(); // ensure textContent (already formatted) is in DOM
-                if (typeof Prism.highlightElement === 'function') {
+                if (PrismLoaded && Prism && typeof Prism.highlightElement === 'function') {
                   Prism.highlightElement(svgCodeElement);
                 }
               } catch (e) {
