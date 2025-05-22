@@ -214,6 +214,7 @@
                     line-height: 100%;
                     color: rgba(white, .3);
                     text-align: center;
+                    user-select: none;
                     filter: drop-shadow(0 4px 8px rgba(black, .1));
                 }
                 &:hover{
