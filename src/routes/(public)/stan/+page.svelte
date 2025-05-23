@@ -1422,8 +1422,8 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
       border: 1.5px solid transparent;
 
       &:hover{
-        background: rgba(#6355FF, .12);
-        border-color: rgba(#6355FF, .2);
+        background: rgba(#4a6bfd, .15);
+        //border-color: rgba(#6355FF, .2);
         transform: translateY(-1px);
       }
 
@@ -1480,7 +1480,7 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
     }
 
     // Hide second row of prompts when screen height is less than 500px
-    @media (max-height: 600px) {
+    @media (max-height: 720px) {
       .carousel-container.second {
         display: none;
 
