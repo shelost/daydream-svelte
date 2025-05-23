@@ -1467,7 +1467,7 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
       }
 
       .prompt-card {
-        width: 200px;
+        width: 160px;
         padding: 12px 16px;
         margin: 0;
 
@@ -1480,8 +1480,8 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
     }
 
     // Hide second row of prompts when screen height is less than 500px
-    @media (max-height: 600px) {
-      .carousel-container.second {
+    @media (max-height: 720px) {
+      .second {
         display: none;
 
       }
