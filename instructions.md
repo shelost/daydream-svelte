@@ -1903,3 +1903,52 @@ The start state of the Stan chat interface only shows a welcome message and an e
 - [ ] Ensure responsive layout for mobile and desktop
 - [ ] Test smooth transition from start state to chat state
 - [ ] Ensure no duplicate code or imports
+
+## Enhance Stan Chat Interface with Auto-Scrolling Carousel Prompts (Latest)
+
+### 1. Problem Identified
+The Stan chat interface had static example prompts in a simple 2x2 grid. This felt static and could benefit from a more dynamic, engaging presentation that would make the interface feel more alive and showcase more prompt options.
+
+### 2. Solution Implemented
+1. **Dual Carousel Rows**
+   - Converted the static grid into 2 horizontal carousels
+   - First row scrolls left-to-right, second row scrolls right-to-left for visual interest
+   - Each carousel contains 3 unique prompts, duplicated for seamless infinite looping
+
+2. **Added New Prompts**
+   - "How do I create a successful TikTok strategy?" (first carousel)
+   - "What are the best practices for email marketing?" (second carousel)
+   - Total of 6 diverse prompts covering Stan Store, content ideas, social media, courses, monetization, and marketing
+
+3. **Gradient Fade Effects**
+   - Left and right gradient overlays create smooth fade-in/fade-out appearance
+   - Cards appear to gradually materialize from one side and disappear into the other
+   - Uses `pointer-events: none` to maintain button functionality
+
+4. **Smooth CSS Animations**
+   - Pure CSS animations using `transform: translateX()` and keyframes
+   - 25-second duration for smooth, natural movement (20s on mobile)
+   - Animation pauses on hover for better user interaction
+   - `will-change: transform` for optimized performance
+
+5. **Responsive Design**
+   - Faster animation and smaller gradients on mobile devices
+   - Consistent card sizing with `min-width` and `flex-shrink: 0`
+   - Adjusted padding and font sizes for mobile optimization
+
+### 3. Technical Implementation
+- **HTML Structure**: 2 carousel containers, each with a track containing 6 cards (3 unique + 3 duplicates)
+- **CSS Animations**: `scrollLeftToRight` and `scrollRightToLeft` keyframes for opposite directions
+- **Gradient Overlays**: Positioned absolutely with linear gradients from opaque to transparent
+- **Card Styling**: Enhanced hover effects with subtle transforms and border highlights
+
+### 4. Benefits
+- **Visual Appeal**: Dynamic movement makes the interface feel more alive and modern
+- **Content Discovery**: Users can see more prompt options through the scrolling animation
+- **Professional Polish**: Smooth animations and gradients create a premium feel
+- **Better UX**: Hover-to-pause functionality allows users to easily interact with moving cards
+
+### 5. Files Modified
+- `src/routes/(public)/stan/+page.svelte` - Updated HTML structure and CSS for carousel implementation
+
+Implementation completed  ✔︎

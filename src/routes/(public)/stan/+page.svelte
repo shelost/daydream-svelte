@@ -759,39 +759,120 @@
 
     <!-- Example Prompts Section -->
     <div class="example-prompts" in:fade={{ delay: 500, duration: 500 }}>
+      <!-- First carousel row - scrolls left to right -->
+      <div class="carousel-container">
+        <div class="carousel-track carousel-left-to-right">
+          <button
+            class="prompt-card"
+            on:click={() => handleExamplePrompt("What is a Stan Store?")}
+            disabled={isOverallLoading}
+          >
+            <span class="prompt-text">What is a Stan Store?</span>
+          </button>
 
-      <div class="prompts-grid">
-        <button
-          class="prompt-card"
-          on:click={() => handleExamplePrompt("What is a Stan Store?")}
-          disabled={isOverallLoading}
-        >
-          <span class="prompt-text">What is a Stan Store?</span>
-        </button>
+          <button
+            class="prompt-card"
+            on:click={() => handleExamplePrompt("Give me a list of content ideas")}
+            disabled={isOverallLoading}
+          >
+            <span class="prompt-text">Give me a list of content ideas</span>
+          </button>
 
-        <button
-          class="prompt-card"
-          on:click={() => handleExamplePrompt("Give me a list of content ideas")}
-          disabled={isOverallLoading}
-        >
-          <span class="prompt-text">Give me a list of content ideas</span>
-        </button>
+          <button
+            class="prompt-card"
+            on:click={() => handleExamplePrompt("How do I create a successful TikTok strategy?")}
+            disabled={isOverallLoading}
+          >
+            <span class="prompt-text">How do I create a successful TikTok strategy?</span>
+          </button>
 
-        <button
-          class="prompt-card"
-          on:click={() => handleExamplePrompt("Create an outline for a 4-module course on UGC")}
-          disabled={isOverallLoading}
-        >
-          <span class="prompt-text">Create an outline for a 4-module course on UGC</span>
-        </button>
+          <!-- Duplicate for seamless loop -->
+          <button
+            class="prompt-card"
+            on:click={() => handleExamplePrompt("What is a Stan Store?")}
+            disabled={isOverallLoading}
+          >
+            <span class="prompt-text">What is a Stan Store?</span>
+          </button>
 
-        <button
-          class="prompt-card"
-          on:click={() => handleExamplePrompt("How do I get started making money online?")}
-          disabled={isOverallLoading}
-        >
-          <span class="prompt-text">How do I get started making money online?</span>
-        </button>
+          <button
+            class="prompt-card"
+            on:click={() => handleExamplePrompt("Give me a list of content ideas")}
+            disabled={isOverallLoading}
+          >
+            <span class="prompt-text">Give me a list of content ideas</span>
+          </button>
+
+          <button
+            class="prompt-card"
+            on:click={() => handleExamplePrompt("How do I create a successful TikTok strategy?")}
+            disabled={isOverallLoading}
+          >
+            <span class="prompt-text">How do I create a successful TikTok strategy?</span>
+          </button>
+        </div>
+
+        <!-- Gradient overlays -->
+        <div class="carousel-gradient carousel-gradient-left"></div>
+        <div class="carousel-gradient carousel-gradient-right"></div>
+      </div>
+
+      <!-- Second carousel row - scrolls right to left -->
+      <div class="carousel-container">
+        <div class="carousel-track carousel-right-to-left">
+          <button
+            class="prompt-card"
+            on:click={() => handleExamplePrompt("Create an outline for a 4-module course on UGC")}
+            disabled={isOverallLoading}
+          >
+            <span class="prompt-text">Create an outline for a 4-module course on UGC</span>
+          </button>
+
+          <button
+            class="prompt-card"
+            on:click={() => handleExamplePrompt("How do I get started making money online?")}
+            disabled={isOverallLoading}
+          >
+            <span class="prompt-text">How do I get started making money online?</span>
+          </button>
+
+          <button
+            class="prompt-card"
+            on:click={() => handleExamplePrompt("What are the best practices for email marketing?")}
+            disabled={isOverallLoading}
+          >
+            <span class="prompt-text">What are the best practices for email marketing?</span>
+          </button>
+
+          <!-- Duplicate for seamless loop -->
+          <button
+            class="prompt-card"
+            on:click={() => handleExamplePrompt("Create an outline for a 4-module course on UGC")}
+            disabled={isOverallLoading}
+          >
+            <span class="prompt-text">Create an outline for a 4-module course on UGC</span>
+          </button>
+
+          <button
+            class="prompt-card"
+            on:click={() => handleExamplePrompt("How do I get started making money online?")}
+            disabled={isOverallLoading}
+          >
+            <span class="prompt-text">How do I get started making money online?</span>
+          </button>
+
+          <button
+            class="prompt-card"
+            on:click={() => handleExamplePrompt("What are the best practices for email marketing?")}
+            disabled={isOverallLoading}
+          >
+            <span class="prompt-text">What are the best practices for email marketing?</span>
+          </button>
+        </div>
+
+        <!-- Gradient overlays -->
+        <div class="carousel-gradient carousel-gradient-left"></div>
+        <div class="carousel-gradient carousel-gradient-right"></div>
       </div>
     </div>
 
@@ -1004,8 +1085,16 @@
 
   .example-prompts {
     margin-bottom: 32px;
+    margin-top: 16px;
     width: 100%;
     max-width: 720px;
+    display: flex;
+    flex-direction: column;
+    gap: 0px;
+
+    @media screen and (max-width: 800px) {
+      gap: 8px;
+    }
 
     .prompts-label {
       text-align: center;
@@ -1015,30 +1104,94 @@
       font-weight: 500;
     }
 
-    .prompts-grid {
-      display: grid;
-      grid-template-columns: repeat(2, 1fr);
-      gap: 12px;
+    .carousel-container {
+      position: relative;
+      width: 100%;
+      overflow: hidden;
+      height: 60px; // Fixed height for consistent layout
+    }
 
-      @media (max-width: 768px) {
-        grid-template-columns: 1fr;
-        gap: 10px;
+    .carousel-track {
+      display: flex;
+      gap: 16px;
+      padding: 4px 0;
+      width: fit-content;
+      animation-duration: 40s;
+      animation-timing-function: linear;
+      animation-iteration-count: infinite;
+      will-change: transform;
+
+      &.carousel-left-to-right {
+        animation-name: scrollLeftToRight;
+      }
+
+      &.carousel-right-to-left {
+        animation-name: scrollRightToLeft;
+      }
+
+      // Pause animation on hover for better UX
+      &:hover {
+        animation-play-state: paused;
+      }
+    }
+
+    @keyframes scrollLeftToRight {
+      0% {
+        transform: translateX(-50%);
+      }
+      100% {
+        transform: translateX(0%);
+      }
+    }
+
+    @keyframes scrollRightToLeft {
+      0% {
+        transform: translateX(0%);
+      }
+      100% {
+        transform: translateX(-50%);
+      }
+    }
+
+    .carousel-gradient {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      width: 80px;
+      pointer-events: none;
+      z-index: 2;
+
+      &.carousel-gradient-left {
+        left: 0;
+        background: linear-gradient(to right, rgba(white, 1) 0%, rgba(white, 0.8) 50%, rgba(white, 0) 100%);
+      }
+
+      &.carousel-gradient-right {
+        right: 0;
+        background: linear-gradient(to left, rgba(white, 1) 0%, rgba(white, 0.8) 50%, rgba(white, 0) 100%);
       }
     }
 
     .prompt-card {
-      background: rgba(white, .95);
-      background: rgba(#6355FF, .08);
+      background: #f1f5ff;
       border-radius: 12px;
-      padding: 12px 16px;
+      padding: 10px 18px;
       cursor: pointer;
       width: fit-content;
+      min-width: 100px; // Ensure consistent card sizes
       transition: all 0.2s cubic-bezier(0.4,0,0.2,1);
+      flex-shrink: 0; // Prevent cards from shrinking
+      border: 1.5px solid transparent;
 
       &:hover{
         background: rgba(#6355FF, .12);
+        border-color: rgba(#6355FF, .2);
+        transform: translateY(-1px);
       }
 
+      &:active {
+        transform: translateY(0);
+      }
 
       &:disabled {
         opacity: 0.6;
@@ -1051,11 +1204,40 @@
         font-size: 15px;
         font-weight: 500;
         letter-spacing: .5px;
-        color: #00106D;
-        text-shadow: -.4px 0 0 #00106D;
+        color: #3f4d9c;
+        text-shadow: -.5px 0 0 #00106D;
         line-height: 140%;
         display: block;
         text-align: left;
+        white-space: nowrap; // Prevent text wrapping for consistent card sizes
+      }
+
+    }
+
+    @media (max-width: 800px) {
+      .carousel-track {
+        animation-duration: 25s;
+        height: 100%;
+      }
+
+      .carousel-container{
+        height: 90px;
+      }
+
+      .carousel-gradient {
+        width: 60px; // Smaller gradients on mobile
+      }
+
+      .prompt-card {
+        width: 200px;
+        padding: 12px 16px;
+        margin: 0;
+
+        .prompt-text {
+          width: 100%;
+          text-wrap: wrap;
+          line-height: 120%;
+        }
       }
     }
   }
