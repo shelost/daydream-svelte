@@ -289,6 +289,10 @@
     justify-content: center; /* Center by default */
     transition: justify-content 0.2s ease;
 
+    @media screen and (max-width: 800px) {
+      margin-bottom: -8px;
+    }
+
     /* Apply gradient fade mask to create scroll shadows */
     mask: linear-gradient(
       to right,
