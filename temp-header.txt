@@ -1,0 +1,40 @@
+<script lang="ts">
+  import { onMount } from 'svelte';
+  import { fade, scale } from 'svelte/transition';
+  import type { Tool, Stroke, StrokePoint } from '$lib/types';
+  import { getStroke } from 'perfect-freehand';
+  import { writable } from 'svelte/store';
+
+  import { getSvgPathFromStroke, calculatePressureFromVelocity, calculateMultiStrokeBoundingBox, findRelatedStrokes, normalizeBoundingBox } from '$lib/utils/drawingUtils.js';
+  import VerticalSlider from '$lib/components/VerticalSlider.svelte';
+  import AIOverlay from '$lib/components/AIOverlay.svelte';
+  import StrokeOverlay from '$lib/components/StrokeOverlay.svelte';
+  import TFOverlay from '$lib/components/TFOverlay.svelte';
+  import ShapeRecognitionButton from '$lib/components/ShapeRecognitionButton.svelte';
+  import ShapeRecognitionDialog from '$lib/components/ShapeRecognitionDialog.svelte';
+
+  // Import all needed stores from canvasStore.js
+  import {
+    fabricCanvas,
+    selectedTool,
+    fabricSelectedTool,
+    fabricPencilActive,
+    fabricIsDrawing,
+    strokeOptions,
+    eraserOptions,
+    selectedObjects,
+    isApplePencilActive,
+    isErasing,
+    isSelecting,
+    isAnalyzing,
+    analysisOptions,
+    isGenerating,
+    isEditing,
+    selectedModel,
+    gptImagePrompt,
+    gptEditPrompt,
+    generatedImageUrl,
+    generatedByModel,
+    editedImageUrl,
+    editedByModel
+  } from '$lib/stores/canvasStore';

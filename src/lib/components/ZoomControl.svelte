@@ -9,6 +9,7 @@
 
   // Function to reset zoom and position
   function resetZoomAndPosition() {
+    // Dispatch event to reset zoom and center the canvas
     dispatch('resetZoom');
   }
 

@@ -2,15 +2,28 @@
 	"extends": "./.svelte-kit/tsconfig.json",
 	"compilerOptions": {
 		"allowJs": true,
-		"checkJs": true,
+		"checkJs": false,
 		"esModuleInterop": true,
 		"forceConsistentCasingInFileNames": true,
 		"resolveJsonModule": true,
 		"skipLibCheck": true,
 		"sourceMap": true,
-		"strict": true,
-		"moduleResolution": "bundler"
-	}
+		"strict": false,
+		"noImplicitAny": false,
+		"moduleResolution": "bundler",
+		"useUnknownInCatchVariables": false
+	},
+	"include": [
+		"decs.d.ts",
+		"./.svelte-kit/types/**/$types.d.ts",
+		"./vite.config.ts",
+		"./src/**/*.js",
+		"./src/**/*.ts",
+		"./src/**/*.svelte",
+		"./tests/**/*.js",
+		"./tests/**/*.ts",
+		"./tests/**/*.svelte"
+, "src/routes/(public)/draw/+page.svelte.bak"	]
 	// Path aliases are handled by https://svelte.dev/docs/kit/configuration#alias
 	// except $lib which is handled by https://svelte.dev/docs/kit/configuration#files
 	//

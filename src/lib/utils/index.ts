@@ -6,5 +6,5 @@ export {
   isPointInStroke,
   calculatePressureFromVelocity,
   formatDate
-} from './drawingUtils';
+} from './drawingUtils.js';
 

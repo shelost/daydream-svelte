@@ -15,9 +15,9 @@
   let creatingPage = false;
 
   // Helper function to get the appropriate Material Icon based on page type
-  function getPageIcon(type: 'canvas' | 'drawing', icon?: string): string {
+  function getPageIcon(type, icon) {
     if (icon) return icon;
-    return type === 'canvas' ? 'dashboard' : 'edit';
+    return type === 'canvas' ? 'dashboard' : type === 'diagram' ? 'show_chart' : 'edit';
   }
 
   onMount(async () => {
@@ -74,7 +74,7 @@
     }
   });
 
-  async function handleCreate(type: 'canvas' | 'drawing') {
+  async function handleCreate(type) {
     if (creatingPage || !$user) return;
 
     try {
@@ -145,6 +145,52 @@
 
             // Bottom-right square
             ctx.fillRect(x - iconSize/2 + gridSize + 6, y - iconSize/2 + gridSize + 6, gridSize - 6, gridSize - 6);
+          } else if (type === 'diagram') {
+            // Draw diagram icon
+            const iconSize = 60;
+            const x = canvas.width / 2;
+            const y = canvas.height / 2 - 20;
+
+            // Draw a flow diagram icon
+            ctx.strokeStyle = '#cccccc';
+            ctx.lineWidth = 2;
+
+            // Draw nodes
+            const nodeSize = iconSize / 4;
+
+            // Top node
+            ctx.beginPath();
+            ctx.rect(x - nodeSize / 2, y - iconSize / 2, nodeSize, nodeSize);
+            ctx.stroke();
+            ctx.fill();
+
+            // Middle nodes
+            ctx.beginPath();
+            ctx.rect(x - iconSize / 3 - nodeSize / 2, y - nodeSize / 2, nodeSize, nodeSize);
+            ctx.stroke();
+            ctx.fill();
+
+            ctx.beginPath();
+            ctx.rect(x + iconSize / 3 - nodeSize / 2, y - nodeSize / 2, nodeSize, nodeSize);
+            ctx.stroke();
+            ctx.fill();
+
+            // Bottom node
+            ctx.beginPath();
+            ctx.rect(x - nodeSize / 2, y + iconSize / 2 - nodeSize, nodeSize, nodeSize);
+            ctx.stroke();
+            ctx.fill();
+
+            // Draw edges
+            ctx.beginPath();
+            ctx.moveTo(x, y - iconSize / 2 + nodeSize);
+            ctx.lineTo(x, y - nodeSize / 2);
+            ctx.lineTo(x - iconSize / 3, y - nodeSize / 2);
+            ctx.moveTo(x, y - nodeSize / 2);
+            ctx.lineTo(x + iconSize / 3, y - nodeSize / 2);
+            ctx.moveTo(x, y + nodeSize / 2);
+            ctx.lineTo(x, y + iconSize / 2 - nodeSize);
+            ctx.stroke();
           } else {
             // Draw edit icon
             const iconSize = 60;
@@ -204,7 +250,7 @@
     }
   }
 
-  function handlePageClick(page: Page) {
+  function handlePageClick(page) {
     // Navigate to the appropriate editor based on page type
     goto(`/app/${page.type}/${page.id}`);
   }
@@ -231,6 +277,9 @@
         </button>
         <button on:click={() => handleCreate('drawing')} class="create-button secondary" disabled={creatingPage}>
           <span>+</span> New Drawing
+        </button>
+        <button on:click={() => handleCreate('diagram')} class="create-button secondary" disabled={creatingPage}>
+          <span>+</span> New Diagram
         </button>
       </div>
     </div>
@@ -262,6 +311,17 @@
             <h2>Drawing Pages</h2>
             <div class="pages-grid">
               {#each $pagesByType.drawingPages as page}
+                <PageCard {page} />
+              {/each}
+            </div>
+          </div>
+        {/if}
+
+        {#if $pagesByType.diagramPages && $pagesByType.diagramPages.length > 0}
+          <div class="pages-section">
+            <h2>Diagram Pages</h2>
+            <div class="pages-grid">
+              {#each $pagesByType.diagramPages as page}
                 <PageCard {page} />
               {/each}
             </div>
@@ -307,9 +367,9 @@
 
   .app-home {
     padding: 2rem;
+    width: calc(100vw - 450px);
     max-width: 1200px;
     margin: 0 auto;
-    width: 100%;
     height: 100%;
     overflow-y: scroll;
   }

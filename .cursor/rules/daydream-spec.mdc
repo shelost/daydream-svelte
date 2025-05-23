@@ -1,0 +1,53 @@
+---
+description: Description of the app we are building in this project
+globs: *.svelte
+alwaysApply: true
+---
+
+# Daydream: Blending Art and Technology
+
+You are an expert in creating interactive, comprehensive, and functionally efficient web applications for creative professionals.
+
+Your task is to help me create a SvelteKit app, very similar to tldraw (https://tldraw.com) or Figma (https://figma.com), but with more advanced drawing and AI features.
+
+The tech stack:
+- SvelteKit, for the overall structure and routing
+- Supabase, for storing and accessing data
+- Fabric.js, for creating and dealing with the canvas pages
+- Perfect-freehand, for dealing with drawing on the Fabric.js canvas in certain areas (see app description below)
+- Svelte Flow, for diagrams with node connections
+- OpenAI API, for AI responses and image generation (gpt-image-1 model for images)
+- GSAP for UI animations
+- SCSS for all styles
+
+I need these basic features, necessary for a CRUD app:
+- Landing page with login / signup button
+- Auth page with OAuth for Google login, or through email / password. If they choose the latter, there should also be a page afterwards for the user to enter their name and profile photo (optional).
+- The actual app (accessible through login) should be under the app.* subdomain, or through the /app directory. In the Sveltekit project, we can create (public) and (app) directories in /routes to separate the two.
+
+In the actual app, there should be:
+- A sidebar with a list of pages, with an option to create or delete pages, similar to tldraw or notion. There should also be a profile button at the bottom, which leads to a simple user profile page. Use the google / custom profile photo if available, or just their initials.
+- A canvas for each page, where fabric.js and perfect-freehand will be used together.
+- A title bar floating above the canvas, with breadcrumbs, an editable page title, and an editable page icon/emoji like notion.
+- A toolbar floating above the canvas, with basic tools such as “draw,” “polygon (with options)”, “pan”, “text”, “eraser” and “move / handle”.
+
+In the /draw directory, we will build an AI image drawing tool that will be the most structurally-faithful image generator in the world. This means that we will allow the user to draw a hand sketch, and the AI will match EXACTLY the structure and layout of that sketch, down to the location, positioning, scale, and rotation of each element. It should appear as though the generated image could be overlaid directly on top of the hand sketch, and every single element of the image should line up with exactly where their corresponding elements in the hand sketch are located. It should almost be like we are generating a finalized image with AI on "top of" the user-drawn hand sketch.
+
+We will accomplish this in several steps:
+
+1. The user draws on the canvas with the perfect-freehand library
+2. Every time the user makes an edit, the canvas data is converted to an image and is analyzed by various image recognition services (TensorFlow, GPT-4 Vision, etc.)
+3. The AI analysis layer displays tightly-wrapped bounding boxes and labels on each identified object (right eye, nose, mouth, sun, cloud, window, etc.) with detailed data as well (e.g. "woman's face, facing 3/4 to the right, frustrated, clenched eyebrows")
+4. The AI analysis data is displayed in the app, so users can compare the quality of data provided by different sources
+5. The user clicks "generate" button, and all of this analysis data is fed into the gpt-image-1 model along with the actual canvas image itself
+6. The gpt-image-1 model generates an extremely structurally-faithful image, which can be overlaid on top of the existing image to confirm pinpoint layoout fidelity and accuracy
+
+We will use all available and appropriate image recognition tools for object identification and labeling:
+- GPT-4-vision model, by OpenAI
+- Tensorflow.js
+- Quick, Draw, by Google
+- Convolutional Neural Networks (CNNs)
+
+The aesthetic should be extremely minimal and simple, like MUJI. We can also take inspiration from Apple and Tldraw for their extremely beautiful and simple UI, with very smooth animations. The app must be extremely beautifully animated and smooth.
+
+Always outline your plan first, and then implement. Use any other libraries / packages as are necessary to fully implement this feature. If you have questions or clarifications, ask them first before implementing until I give you explicit permission.
