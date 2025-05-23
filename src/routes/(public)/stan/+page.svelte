@@ -956,6 +956,12 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
   }
 </script>
 
+<svelte:head>
+  <title>Stanley</title>
+  <link href = 'stan-avatar.png' rel = 'icon'>
+</svelte:head>
+
+
 <div id = 'main' class = 'stan' in:scale={{ duration: 300, start: 0.95, opacity: 0, easing: cubicOut }}>
   <button
     class="global-refresh-button"

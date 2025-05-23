@@ -135,6 +135,7 @@
   let strokeColor: string;
   let strokeSize: number;
   let strokeOpacity: number;
+  let canvasBackgroundColor: string = '#f8f8f8'; // Default background color
 
   let lastUserEditTime = 0;
   let pendingAnalysis = false;
@@ -273,7 +274,7 @@
         }
 
         fabricInstance = new fabric.Canvas(fabricCanvasHTML, {
-          backgroundColor: '#f8f8f8',
+          backgroundColor: canvasBackgroundColor,
           renderOnAddRemove: true,
           width: fabricCanvasHTML.width,
           height: fabricCanvasHTML.height,
@@ -1007,166 +1008,2801 @@
             fabricInstance.freeDrawingBrush.width = eraserSize;
           }
         }
-      } else if ($selectedTool === 'select' && activeFabricObject && (activeFabricObject.type === 'rect' || activeFabricObject.type === 'circle' || activeFabricObject.type === 'triangle' || activeFabricObject.type === 'ellipse')}
-        <!-- SELECTED SHAPE Object Options -->
-        <div class="tool-group">
-          <input type="color" value={selectedShapeFillProxy}
-            on:input={(e) => {
-              selectedShapeFillProxy = e.currentTarget.value;
-              updateSelectedObjectProperty('fill', selectedShapeFillProxy);
-            }} />
-        </div>
-        <div class="tool-group">
-          <input type="color" value={selectedShapeStrokeProxy}
-            on:input={(e) => {
-              selectedShapeStrokeProxy = e.currentTarget.value;
-              updateSelectedObjectProperty('stroke', selectedShapeStrokeProxy);
-            }} />
-        </div>
-        <div class="tool-group">
-          <VerticalSlider
-            min={0}
-            max={30}
-            step={1}
-            bind:value={selectedShapeStrokeWidthProxy}
-            color="#6355FF"
-            height="120px"
-            onChange={() => {
-              if (activeFabricObject && activeFabricObject.strokeWidth !== selectedShapeStrokeWidthProxy) {
-                updateSelectedObjectProperty('strokeWidth', selectedShapeStrokeWidthProxy);
+      } else if ($selectedTool === 'select') {
+        // Selection mode
+        inputCanvas.style.pointerEvents = 'none';
+        if (fabricInstance) {
+          fabricInstance.isDrawingMode = false;
+          if (fabricInstance.upperCanvasEl) {
+            fabricInstance.upperCanvasEl.style.pointerEvents = 'auto';
+            fabricInstance.upperCanvasEl.style.zIndex = '2';
+          }
+        }
+      }
+    }
+  }
+
+  $: {
+    // This reactive block for drawingContent.strokes might be less relevant now
+    // as Fabric manages its own objects. Kept for potential AI logic (which is ignored here).
+    if (drawingContent.strokes && drawingContent.strokes.length > 0) {
+      if (isRealUserEdit()) {
+        console.log('User edit detected, scheduling analysis (AI part ignored)');
+      }
+    }
+  }
+
+  $: {
+    if (browser && selectedAspectRatio) {
+      resizeCanvas();
+    }
+  }
+
+  // --- Unified Event Handlers ---
+  function onPointerDown(e: PointerEvent) {
+    if (e.button !== 0) return;
+    if ($selectedTool === 'pen') {
+        startPenStroke(e);
+    } else if ($selectedTool === 'text') {
+        addTextObject(e);
+    } else if ($selectedTool === 'shape') {
+        addShapeObject(e);
+    } else if ($selectedTool === 'image') {
+        activateImageUpload();
+    }
+  }
+
+  function onPointerMove(e: PointerEvent) {
+    if ($selectedTool === 'pen') {
+        continuePenStroke(e);
+    }
+  }
+
+  function onPointerUp(e: PointerEvent) {
+    if ($selectedTool === 'pen') {
+        endPenStroke(e);
+    }
+  }
+
+  // --- Tool Specific Functions ---
+
+  // PEN TOOL
+  function startPenStroke(e: PointerEvent) {
+    isDrawing = true;
+    console.log(`Pen Draw Started. Pointer type: ${e.pointerType}, Pressure: ${e.pressure}`);
+
+    const point = getPointerPosition(e);
+    const timestamp = Date.now();
+    pointTimes = [timestamp];
+    const hasHardwarePressure = e.pointerType === 'pen' && e.pressure > 0 && e.pressure !== 0.5;
+
+    let currentOptionsValues;
+    strokeOptions.subscribe(options => { currentOptionsValues = options; })();
+
+    currentStroke = {
+      tool: 'pen',
+      points: [point],
+      color: currentOptionsValues.color,
+      size: currentOptionsValues.size,
+      opacity: currentOptionsValues.opacity,
+      hasHardwarePressure: hasHardwarePressure
+    };
+    inputCanvas.setPointerCapture(e.pointerId);
+  }
+
+  function continuePenStroke(e: PointerEvent) {
+    if (!isDrawing || !currentStroke || !inputCtx) return;
+    const point = getPointerPosition(e);
+    const timestamp = Date.now();
+    pointTimes.push(timestamp);
+
+    if (!currentStroke.hasHardwarePressure || (e.pointerType === 'pen' && e.pressure === 0.5)) {
+       if (currentStroke.points.length > 1) {
+        const calculatedPressure = calculatePressureFromVelocity(
+          currentStroke.points, currentStroke.points.length - 1, 0.2, true, pointTimes
+        );
+        point.pressure = calculatedPressure;
+      } else {
+        point.pressure = 0.5;
+      }
+    }
+    currentStroke.points.push(point);
+    renderStrokes();
+  }
+
+  function endPenStroke(e: PointerEvent) {
+    if (!isDrawing || !currentStroke) return;
+    console.log('Pen Draw Ended');
+
+    // Check if Fabric.js is available
+    if (!fabricInstance) {
+      console.error('Cannot complete stroke - Fabric.js instance not available');
+      if (!fabricErrorMessage) {
+        fabricErrorMessage = 'Drawing engine not initialized. Please refresh the page.';
+      }
+      // Still end the stroke cleanly even if we can't add it to Fabric
+    currentStroke = null;
+    isDrawing = false;
+      if (e.pointerId) {
+        try {
+    inputCanvas.releasePointerCapture(e.pointerId);
+        } catch (err) {
+          console.error('Error releasing pointer capture:', err);
+        }
+      }
+      renderStrokes(); // Clear the temporary stroke from inputCanvas
+      return;
+    }
+
+    if (currentStroke.points.length > 1) {
+      let currentOptionsValues;
+      strokeOptions.subscribe(options => { currentOptionsValues = options; })();
+
+      const freehandStrokeOptions = {
+        size: currentStroke.size,
+        thinning: currentOptionsValues.thinning,
+        smoothing: currentOptionsValues.smoothing,
+        streamline: currentOptionsValues.streamline,
+        easing: currentOptionsValues.easing,
+        simulatePressure: !currentStroke.hasHardwarePressure,
+        last: true,
+        start: currentOptionsValues.start,
+        end: currentOptionsValues.end,
+      };
+
+      const enhancedPoints = currentStroke.points.map(p => [p.x, p.y, p.pressure || 0.5]);
+      const strokePath = getStroke(enhancedPoints, freehandStrokeOptions);
+      const svgPathData = getSvgPathFromStroke(strokePath);
+
+      if (svgPathData) {
+        try {
+          const fabricPath = new fabric.Path(svgPathData, {
+            fill: currentStroke.color,
+            strokeWidth: 0,
+            opacity: currentStroke.opacity,
+            selectable: true,
+            evented: true,
+          });
+          fabricInstance.add(fabricPath);
+        } catch (err) {
+          console.error('Error creating fabric path:', err);
+          if (!fabricErrorMessage) {
+            fabricErrorMessage = 'Error adding stroke to canvas. Please refresh the page.';
+          }
+        }
+      }
+    }
+
+    currentStroke = null;
+    isDrawing = false;
+    if (e.pointerId) {
+      try {
+    inputCanvas.releasePointerCapture(e.pointerId);
+      } catch (err) {
+        console.error('Error releasing pointer capture:', err);
+      }
+    }
+    renderStrokes(); // Clear the temporary stroke from inputCanvas
+
+    lastUserEditTime = Date.now();
+    pendingAnalysis = true;
+    updateImageData(); // Use the centralized function
+    saveCanvasState(); // Persist state
+  }
+
+  // ERASER TOOL
+  let eraserSize = 20;
+  // Note: $selectedTool reactive block handles setting fabricInstance.isDrawingMode and EraserBrush.
+  // start/continue/endEraserStroke are not strictly needed for Fabric's internal drawing,
+  // but can be used for logging or triggering other actions if necessary.
+
+  function startEraserStroke(e: PointerEvent) {
+    console.log('Eraser Tool Active - Fabric.js handles drawing');
+  }
+
+  function continueEraserStroke(e: PointerEvent) {
+    // Fabric.js handles this
+  }
+
+  function endEraserStroke(e: PointerEvent) {
+    console.log('Eraser stroke ended on Fabric.js canvas');
+    lastUserEditTime = Date.now();
+    pendingAnalysis = true;
+    updateImageData(); // Use centralized function
+    saveCanvasState();
+  }
+
+  // SELECT TOOL
+  // Note: $selectedTool reactive block handles setting fabricInstance.isDrawingMode = false.
+  // Fabric.js handles selection internally.
+  function startSelection(e: PointerEvent) {
+    console.log('Select Tool Active - Fabric.js handles selection');
+  }
+
+  function continueSelection(e: PointerEvent) {
+    // Fabric.js handles this
+  }
+
+  function endSelection(e: PointerEvent) {
+    console.log('Selection operation ended on Fabric.js canvas');
+    updateImageData(); // Use centralized function
+    saveCanvasState();
+  }
+
+  function getPointerPosition(e: PointerEvent): StrokePoint {
+    if (!inputCanvas) return { x: 0, y: 0, pressure: 0.5 };
+    const rect = inputCanvas.getBoundingClientRect();
+    const scaleX = inputCanvas.width / rect.width; // Use internal resolution for coords
+    const scaleY = inputCanvas.height / rect.height;
+    return {
+      x: (e.clientX - rect.left) * scaleX,
+      y: (e.clientY - rect.top) * scaleY,
+      pressure: e.pressure
+    };
+  }
+
+  function renderStrokes() {
+    if (!inputCtx || !inputCanvas) return;
+    inputCtx.clearRect(0, 0, inputCanvas.width, inputCanvas.height);
+
+    if (currentStroke && currentStroke.points.length > 1 && $selectedTool === 'pen') { // Only render for pen tool
+      let currentOptionsValues;
+      strokeOptions.subscribe(options => { currentOptionsValues = options; })();
+
+      const options = {
+        size: currentStroke.size,
+        thinning: currentOptionsValues.thinning,
+        smoothing: currentOptionsValues.smoothing,
+        streamline: currentOptionsValues.streamline,
+        easing: currentOptionsValues.easing,
+        simulatePressure: !(currentStroke as EnhancedStroke).hasHardwarePressure,
+        last: false, // Temporary stroke is never "last" in the context of the final path
+        start: currentOptionsValues.start,
+        end: currentOptionsValues.end,
+      };
+
+      const enhancedPoints = currentStroke.points.map(p => [p.x, p.y, p.pressure || 0.5]);
+      const freehandStroke = getStroke(enhancedPoints, options);
+      const pathData = getSvgPathFromStroke(freehandStroke);
+
+      if (pathData) {
+      const path = new Path2D(pathData);
+        inputCtx.fillStyle = currentStroke.color;
+        inputCtx.globalAlpha = currentStroke.opacity;
+        inputCtx.fill(path);
+        inputCtx.globalAlpha = 1;
+      }
+    }
+  }
+
+  function clearCanvas() {
+    if (fabricInstance) {
+      fabricInstance.clear();
+      fabricInstance.setBackgroundColor('#f8f8f8', fabricInstance.renderAll.bind(fabricInstance));
+      updateImageData(); // Use centralized function
+
+      // Also clear the sessionStorage data
+      if (browser) {
+        sessionStorage.removeItem(CANVAS_STORAGE_KEY);
+        console.log('Canvas storage cleared');
+      }
+    } else if (inputCtx && inputCanvas) {
+      inputCtx.clearRect(0, 0, inputCanvas.width, inputCanvas.height);
+      inputCtx.fillStyle = '#f8f8f8'; // Should be transparent
+      inputCtx.fillRect(0, 0, inputCanvas.width, inputCanvas.height); // No fill if transparent
+      updateImageData(); // Use centralized function
+
+      // Also clear the sessionStorage data
+      if (browser) {
+        sessionStorage.removeItem(CANVAS_STORAGE_KEY);
+        console.log('Canvas storage cleared');
+      }
+    }
+
+    generatedImageUrl.set(null);
+    generatedByModel.set(null);
+  }
+
+  // First, create a dedicated function for building SVG-specific prompts
+  function buildSvgPrompt() {
+    let prompt = `Create an SVG vector image based on this sketch. IMPORTANT: Your response MUST be valid SVG code only, starting with <svg> tag and ending with </svg>. DO NOT include any explanation, markdown formatting, or code blocks - ONLY the raw SVG code.
+
+The SVG should exactly match the structure and layout of the input sketch. Preserve all proportions, positions, and the general design, but add appropriate vector styling, colors, and refinements.
+
+`;
+
+    if (additionalContext) {
+      prompt += `Context: ${additionalContext}\n\n`;
+    }
+
+    prompt += `Technical requirements:
+- Use standard SVG format with xmlns="http://www.w3.org/2000/svg" attribute
+- Include appropriate viewBox attribute
+- Use vector elements like <path>, <rect>, <circle>, etc.
+- Add appropriate fill colors and stroke styles
+- Ensure the SVG is properly structured and valid
+
+Again, return ONLY the SVG code with no additional text.`;
+
+    return prompt;
+  }
+
+  // Now update the SVG generation portion of the generateImage function
+  async function generateImage() {
+    // ... inside generateImage(), replace the SVG branch logic
+    if (selectedFormat === 'svg') {
+      const hasSketch = fabricInstance && fabricInstance.getObjects().length > 0;
+      const hasText   = additionalContext.trim().length > 0;
+
+      if (!hasSketch && !hasText) {
+        errorMessage = "Please draw something or provide context first!";
+        setTimeout(() => { errorMessage = null; }, 3000);
+        return;
+      }
+
+      // Only capture image data (PNG) when we actually have visible sketch content
+      let imageForPayload: string | null = null;
+      if (hasSketch) {
+        updateImageData();
+        imageForPayload = imageData;
+      }
+
+      isGenerating.set(true);
+      errorMessage = null;
+
+      try {
+        const svgPrompt = buildDynamicSvgPrompt(hasSketch, additionalContext);
+
+        const svgRes = await fetchAndLog('/api/ai/generate-svg', { // <-- USE fetchAndLog
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            imageData: imageForPayload, // may be null when no sketch
+            prompt: svgPrompt,
+            additionalContext,
+            model: $selectedModel // forced to gpt-4o elsewhere when SVG selected
+          })
+        });
+
+        if (!svgRes.ok) {
+          const errTxt = await svgRes.text();
+          throw new Error(errTxt || 'Failed to generate SVG');
+        }
+
+        const data = await svgRes.json();
+        if (data.svgCode) {
+          const svgCode = extractValidSvg(data.svgCode) || data.svgCode;
+          if (!svgCode.startsWith('<svg')) {
+            throw new Error('Could not extract valid SVG from response');
+          }
+
+          generatedSvgCode = svgCode;
+          outputView = 'svg';
+          await renderSvgToOutputCanvas(generatedSvgCode);
+        } else {
+          throw new Error('No SVG returned by server');
+        }
+      } catch (err) {
+        console.error('SVG generation error:', err);
+        errorMessage = err instanceof Error ? err.message : 'Unknown SVG generation error';
+      } finally {
+        isGenerating.set(false);
+      }
+      return; // Skip raster generation flow
+    }
+
+    const objectCount = fabricInstance ? fabricInstance.getObjects().length : 0;
+    if (objectCount === 0 && (!drawingContent.strokes || drawingContent.strokes.length === 0) && !additionalContext.trim()) {
+      errorMessage = "Please draw something or provide context first!";
+      setTimeout(() => { errorMessage = null; }, 3000);
+      return;
+    }
+
+    // Capture latest snapshot for preview and for API payloads
+    updateImageData();
+
+    // Add debugging to verify we're capturing canvas data properly
+    console.log('Canvas image data captured:', {
+      hasImageData: !!imageData,
+      imageDataLength: imageData ? imageData.length : 0,
+      fabricObjects: fabricInstance ? fabricInstance.getObjects().length : 0,
+      canvasSize: { width: canvasWidth, height: canvasHeight }
+    });
+
+    // Verify imageData is valid
+    if (!imageData || !imageData.startsWith('data:image/')) {
+      console.error('Invalid or missing canvas image data:', imageData ? imageData.substring(0, 50) + '...' : 'null');
+      errorMessage = "Failed to capture canvas image data. Please ensure you have drawn something on the canvas.";
+      setTimeout(() => { errorMessage = null; }, 3000);
+      isGenerating.set(false);
+      isEditing.set(false);
+      return;
+    }
+
+    isGenerating.set(true);
+    isEditing.set(true);
+    errorMessage = null;
+
+    // Reset previous results
+    generatedImageUrl.set(null);
+    generatedByModel.set(null);
+    editedImageUrl.set(null);
+    editedByModel.set(null);
+
+    // Ensure aspect-ratio meta is in sync so the preview box sizes correctly
+    generatedImageAspectRatio = selectedAspectRatio;
+
+    // Deep-copy drawingContent to avoid mutating reactive object during async ops
+    const drawingContentCopy = JSON.parse(JSON.stringify(drawingContent));
+
+    const currentPrompt = $gptImagePrompt;
+    const currentEditPrompt = $gptEditPrompt;
+
+    const structureData = {
+      aspectRatio: selectedAspectRatio,
+      canvasWidth,
+      canvasHeight,
+      viewportWidth: window.innerWidth,
+      viewportHeight: window.innerHeight,
+      pixelRatio: window.devicePixelRatio || 1
+    };
+
+    const basePayload = {
+      drawingContent: drawingContentCopy,
+      imageData,
+      additionalContext,
+      aspectRatio: selectedAspectRatio,
+      sketchAnalysis,
+      strokeRecognition,
+      structureData,
+      detectedObjects: analysisElements
+    };
+
+    const generatePayload = {
+      ...basePayload,
+      prompt: currentPrompt,
+      originalPrompt: currentPrompt
+    };
+
+    const editPayload = {
+      ...basePayload,
+      prompt: currentEditPrompt,
+      originalPrompt: currentPrompt // keep track of original
+    };
+
+    try {
+      if ($selectedModel === 'gpt-image-1') {
+        // Use fetch with streaming response for edit-image
+        const editResponse = fetch('/api/ai/edit-image', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(editPayload)
+        });
+
+        // Run standard generation in parallel
+        const standardResponse = fetch('/api/ai/generate-image', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(generatePayload)
+        });
+
+        // Handle streaming edit response with proper buffering
+        editResponse.then(async (response) => {
+          if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+          }
+
+          if (!response.body) {
+            throw new Error('No response body for streaming');
+          }
+
+          const reader = response.body.getReader();
+          const decoder = new TextDecoder();
+          let buffer = ''; // Buffer to accumulate incomplete data
+
+          try {
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+
+              // Decode the chunk and add to buffer
+              const chunk = decoder.decode(value, { stream: true });
+              buffer += chunk;
+
+              // Process complete SSE messages from buffer
+              const lines = buffer.split('\n');
+
+              // Keep the last potentially incomplete line in buffer
+              buffer = lines.pop() || '';
+
+              for (const line of lines) {
+                if (line.startsWith('data: ')) {
+                  try {
+                    const jsonStr = line.slice(6).trim();
+                    if (jsonStr === '') continue; // Skip empty data lines
+
+                    const data = JSON.parse(jsonStr);
+                    console.log('Received streaming event:', data.type);
+
+                    switch (data.type) {
+                      case 'status':
+                        console.log('Status:', data.message);
+                        break;
+
+                      case 'partial_image':
+                        console.log(`Received partial image ${data.imageIndex}`);
+                        // Update the displayed image with the progressive version
+                        editedImageUrl.set(data.imageData);
+                        editedByModel.set('gpt-4.1-streaming');
+                        break;
+
+                      case 'final_image':
+                        console.log('Final image received:', data.imageUrl);
+                        editedImageUrl.set(data.imageUrl);
+                        editedByModel.set(data.model);
+                        if (data.aspectRatio) generatedImageAspectRatio = data.aspectRatio;
+                        break;
+
+                      case 'completed':
+                        console.log('Image generation completed');
+                        if (data.finalImageUrl) {
+                          editedImageUrl.set(data.finalImageUrl);
+                        }
+                        break;
+
+                      case 'error':
+                        console.error('Streaming error:', data.error);
+                        errorMessage = data.error;
+                        break;
+
+                      case 'done':
+                        console.log('Stream completed');
+                        isGenerating.set(false);
+                        isEditing.set(false);
+                        return; // Exit the function
+                    }
+                  } catch (parseError) {
+                    console.error('Error parsing streaming data:', parseError);
+                    console.log('Problematic line length:', line.length);
+                    console.log('Line preview:', line.substring(0, 100) + (line.length > 100 ? '...' : ''));
+                    // Continue processing other lines instead of failing completely
+                  }
+                }
               }
-            }}
-            showValue={true}
-          />
-        </div>
-      {:else if $selectedTool === 'shape'}
-        <!-- SHAPE Tool (for new shape) Options -->
-        <div class="tool-group">
-          <input type="color" bind:value={shapeFillColor} />
-        </div>
-        <div class="tool-group">
-          <input type="color" bind:value={shapeStrokeColor} />
-        </div>
+            }
 
-        <div class="tool-group">
-          <VerticalSlider min={0} max={30} step={1} bind:value={shapeStrokeWidth} color="#6355FF" height="120px" showValue={true} />
-        </div>
-      {:else if $selectedTool === 'text'}
+            // Process any remaining complete message in buffer
+            if (buffer.trim() && buffer.startsWith('data: ')) {
+              try {
+                const jsonStr = buffer.slice(6).trim();
+                if (jsonStr !== '') {
+                  const data = JSON.parse(jsonStr);
+                  console.log('Final buffered event:', data.type);
+                  // Process final message if needed
+                }
+              } catch (parseError) {
+                console.error('Error parsing final buffered data:', parseError);
+              }
+            }
 
-        <div class="tool-group">
-          <input type="color" bind:value={textColor} />
-        </div>
-        <!-- Future: Font Size (Slider/Input), Font Family (Dropdown) -->
+          } finally {
+            reader.releaseLock();
+          }
+        }).catch((error) => {
+          console.error('Error in streaming edit:', error);
+          errorMessage = error.message || 'Error during streaming generation';
+          isGenerating.set(false);
+          isEditing.set(false);
+        });
 
-        <div class="tool-group">
-            <VerticalSlider min={8} max={128} step={1} bind:value={fontSize} color="#6355FF" height="100px" showValue={true} />
-        </div>
-        <!-- Placeholder for font family dropdown -->
+        // Handle standard generation response
+        standardResponse.then(async (response) => {
+          if (!response.ok) {
+            console.error('Standard generation failed with status:', response.status);
+            return;
+          }
 
-      {:else}
-        <!-- Default: Could be empty or show global options if any -->
-        <!-- Or just the clear button which is outside this if/else block -->
-      {/if}
+          try {
+            const data = await response.json();
+            const url = data.imageUrl || data.url;
+            if (url) {
+              generatedImageUrl.set(url);
+              generatedByModel.set(data.model || 'gpt-image-1');
+              if (data.aspectRatio) generatedImageAspectRatio = data.aspectRatio;
+            }
+          } catch (error) {
+            console.error('Error parsing standard generation response:', error);
+          }
+        }).catch((error) => {
+          console.error('Standard generation failed:', error);
+        });
 
-      <button class="tool-button clear-button" on:click={clearCanvas}>
-        <span class="material-icons">delete_outline</span>
-      </button>
+        // Ensure flags are cleared after both operations
+        Promise.allSettled([editResponse, standardResponse]).then(() => {
+          isGenerating.set(false);
+          isEditing.set(false);
+        });
 
-    </div>
-  </div>
-</div>
+      } else {
+        // Replicate-based models (non-streaming for now)
+        const repRes = await fetchAndLog('/api/ai/edit-replicate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...generatePayload, model: $selectedModel })
+        });
+
+        if (!repRes.ok) {
+          throw new Error(await repRes.text());
+        }
+
+        const data = await repRes.json();
+        const url = data.imageUrl || data.url;
+        if (url) {
+          generatedImageUrl.set(url);
+          editedImageUrl.set(url);
+          generatedByModel.set(data.model || $selectedModel);
+          editedByModel.set(data.model || $selectedModel);
+          if (data.aspectRatio) generatedImageAspectRatio = data.aspectRatio;
+        }
+
+        isGenerating.set(false);
+        isEditing.set(false);
+      }
+    } catch (err) {
+      console.error('Error generating image', err);
+      if (!(err.message && err.message.includes('apiLogEntry'))) {
+          errorMessage = err instanceof Error ? err.message : 'Unknown error during image generation';
+      }
+      isGenerating.set(false);
+      isEditing.set(false);
+    }
+  }
+
+  function buildGptEditPrompt() { // AI Ignored
+    let prompt = `Complete this drawing, in the exact same style and proportions as the original. DO NOT change the original image sketch at all; simply add onto the existing drawing EXACTLY as it is. CRITICAL STRUCTURE PRESERVATION: You MUST treat this sketch as an EXACT STRUCTURAL TEMPLATE. `;
+    let prompt2 = `Complete this drawing, in the exact same style and proportions as the original. DO NOT change the original image sketch at all; simply add onto the existing drawing EXACTLY as it is. CRITICAL STRUCTURE PRESERVATION: You MUST treat this sketch as an EXACT STRUCTURAL TEMPLATE. `;
+    const contentGuide = sketchAnalysis !== "Draw something to see AI's interpretation" ? sketchAnalysis : "A user's drawing.";
+    prompt += `\n\nCONTENT DESCRIPTION: ${contentGuide}`;
+    if (additionalContext) {
+      prompt2 += `\n\nUSER'S CONTEXT: "${additionalContext}"`;
+    }
+    if (analysisElements.length > 0) {
+      const structuralGuide = `Based on analysis, the drawing contains ${analysisElements.length} main elements. Element positions and basic relationships are implied by the sketch.`;
+      prompt += `\n\nSTRUCTURAL GUIDE: ${structuralGuide}`;
+    }
+    const compositionGuide = `Focus on the arrangement within the ${selectedAspectRatio} frame.`;
+    prompt += `\n\nCOMPOSITION GUIDE: ${compositionGuide}`;
+    if (strokeRecognition && strokeRecognition !== "Draw something to see shapes recognized") {
+      prompt += `\n\nRECOGNIZED SHAPES: ${strokeRecognition}`;
+    }
+    return prompt2.length > 4000 ? prompt2.substring(0, 3997) + '...' : prompt2;
+  }
+
+  $: {
+    const newEditPrompt = buildGptEditPrompt();
+    gptEditPrompt.set(newEditPrompt);
+  }
+
+  $: if (additionalContext !== undefined) {
+    const newEditPrompt = buildGptEditPrompt();
+    gptEditPrompt.set(newEditPrompt);
+  }
+
+  $: {
+    $strokeOptions;
+  }
+
+  function mobileCheck() {
+    const isMobile = window.innerWidth < 768;
+    if (isMobile) {
+      console.log('Mobile device detected, adjusting UI');
+    }
+    if (inputCanvas || fabricCanvasHTML) {
+      resizeCanvas();
+    }
+  }
+
+  let selectedAspectRatio = '1:1';
+  const aspectRatios = {
+    '1:1': 1 / 1,
+    'portrait': 1536 / 1024,
+    'landscape': 1024 / 1536
+  };
+  let generatedImageAspectRatio = '1:1';
+
+  $: {
+    if (selectedAspectRatio) {
+      generatedImageAspectRatio = selectedAspectRatio;
+      if (browser) {
+        resizeCanvas();
+        // After resize, if fabricInstance exists and has objects, ensure they are rendered.
+        // If perfect-freehand is in the middle of a stroke, renderStrokes() handles it.
+        if (fabricInstance && fabricInstance.getObjects().length > 0) {
+          fabricInstance.renderAll();
+        } else if (currentStroke && $selectedTool === 'pen') {
+          renderStrokes();
+        }
+      }
+    }
+  }
+
+  // beforeNavigate to save
+  import { beforeNavigate } from '$app/navigation';
+  if (browser) {
+    beforeNavigate(() => {
+      saveCanvasState();
+    });
+    // Moved 'beforeunload' listener setup here for clarity, will be cleaned in onDestroy
+    window.addEventListener('beforeunload', saveCanvasState);
+  }
+
+  // CONSOLIDATED onDestroy function
+  onDestroy(() => {
+    console.log('Canvas component destroying. Saving state and cleaning up.');
+    saveCanvasState(); // Ensure state is saved
+
+    if (browser) {
+      window.removeEventListener('resize', mobileCheck);
+      window.removeEventListener('keydown', handleGlobalKeyDown); // Changed
+      window.removeEventListener('beforeunload', saveCanvasState); // Crucial: remove this listener
+    }
+
+    if (fabricInstance) {
+      fabricInstance.dispose();
+      fabricInstance = null; // Help with garbage collection
+    }
+
+    if (renderDebounceTimeout) {
+      clearTimeout(renderDebounceTimeout);
+    }
+    // Any other specific cleanup from previous onDestroy blocks would go here.
+  });
+
+  // Svelte action for auto-resizing textarea
+  function autoResize(node: HTMLTextAreaElement) {
+    const MAX_HEIGHT = 160; // Max height in pixels
+    const computedStyle = getComputedStyle(node);
+
+    // Calculate base height for one line of text content (excluding padding)
+    let singleLineContentHeight;
+    const fs = parseFloat(computedStyle.fontSize);
+    const lhStyle = computedStyle.lineHeight;
+
+    if (lhStyle === 'normal') {
+      singleLineContentHeight = Math.ceil(fs * 1.2); // Common approximation for 'normal'
+    } else if (lhStyle.endsWith('px')) {
+      singleLineContentHeight = parseFloat(lhStyle);
+    } else if (lhStyle.endsWith('em')) {
+      singleLineContentHeight = parseFloat(lhStyle) * fs;
+    } else if (!isNaN(parseFloat(lhStyle))) { // Unitless number (e.g., "1.5")
+      singleLineContentHeight = parseFloat(lhStyle) * fs;
+    } else {
+      singleLineContentHeight = Math.ceil(fs * 1.2); // Fallback if parsing lhStyle fails
+    }
+
+    const paddingTop = parseFloat(computedStyle.paddingTop) || 0;
+    const paddingBottom = parseFloat(computedStyle.paddingBottom) || 0;
+
+    // Consider CSS min-height for the content box itself
+    const cssMinContentHeight = parseFloat(computedStyle.minHeight) || 0;
+    // The effective content height for one line, respecting CSS min-height for the content part.
+    const effectiveSingleLineContentHeight = Math.max(singleLineContentHeight, cssMinContentHeight);
+    // This is the target minimum height for the textarea (content + padding) when empty or containing a single line.
+    const minTargetHeightForOneLine = effectiveSingleLineContentHeight + paddingTop + paddingBottom;
+
+    function resize() {
+      if (node.value === '') {
+        node.style.height = minTargetHeightForOneLine + 'px';
+        node.style.overflowY = 'hidden';
+      } else {
+        const prevHeightStyle = node.style.height; // Store current explicit style.height
+        node.style.height = '1px'; // Temporarily collapse to measure actual content scroll height
+        let currentContentScrollHeight = node.scrollHeight; // Includes padding
+        node.style.height = prevHeightStyle; // Restore briefly (mostly for safety, will be overridden)
+
+        let targetHeight;
+        const epsilon = 2; // Tolerance for floating point comparisons
+
+        // If the measured scroll height for content is at or below one styled line height
+        if (currentContentScrollHeight <= minTargetHeightForOneLine + epsilon) {
+          targetHeight = minTargetHeightForOneLine;
+        } else {
+          targetHeight = currentContentScrollHeight;
+        }
+
+        if (targetHeight <= MAX_HEIGHT) {
+          node.style.height = targetHeight + 'px';
+          node.style.overflowY = 'hidden';
+        } else {
+          node.style.height = MAX_HEIGHT + 'px';
+          node.style.overflowY = 'auto';
+        }
+      }
+    }
+
+    node.addEventListener('input', resize);
+    setTimeout(resize, 0); // Initial resize on mount
+
+    return {
+      destroy() {
+        node.removeEventListener('input', resize);
+      }
+    };
+  }
+
+  // Keydown handler for the textarea to submit with Enter
+  function handleCanvasInputKeydown(event: KeyboardEvent) {
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault();
+      // Check if the button would be disabled before calling generateImage
+      const isDisabled = $isGenerating || (!fabricInstance || fabricInstance.getObjects().length === 0) && !additionalContext.trim();
+      if (!isDisabled) {
+        generateImage(); // Call the existing submit function
+      }
+    }
+  }
+
+  let textColor: string = '#000000';
+  let fontSize: number = 32;
+  let fontFamily: string = 'Arial';
+
+  let shapeFillColor: string = '#cccccc';
+  let shapeStrokeColor: string = '#000000';
+  let shapeStrokeWidth: number = 2;
+  // Remove duplicate shapeType declaration
+  // let shapeType: string = 'rectangle'; // Default shape
+
+  // For shape selection dropdown
+  // const shapeOptionsList = [
+  //   { type: 'rectangle', icon: 'check_box_outline_blank' },
+  //   { type: 'circle',    icon: 'circle' }, // Using 'circle' material icon
+  //   { type: 'triangle',  icon: 'change_history' }
+  // ];
+
+  // $: currentShapeIcon = shapeOptionsList.find(s => s.type === shapeType)?.icon || 'check_box_outline_blank';
+
+  // Reactive update for dropdown position
+  // $: if (browser && showShapeDropdown && shapeToolButtonElement) {
+  //   const rect = shapeToolButtonElement.getBoundingClientRect();
+  //   const toolbarRect = shapeToolButtonElement.closest('.tool-selector-toolbar')?.getBoundingClientRect();
+  //   if (rect && toolbarRect) {
+  //     // Position the dropdown above the button
+  //     const buttonCenter = rect.left + (rect.width / 2);
+  //     shapeDropdownLeftPosition = `${buttonCenter - 24}px`; // Center the 48px dropdown over the button
+  //     shapeDropdownTopPosition = `auto`; // Let bottom property handle vertical position
+  //   }
+  // }
+
+  // For dynamic toolbar when a shape is selected
+  let activeFabricObject: any | null = null;
+  let selectedShapeFillProxy: string = '#cccccc';
+  let selectedShapeStrokeProxy: string = '#000000';
+  let selectedShapeStrokeWidthProxy: number = 0;
+
+  // Image upload variables
+  let fileInput: HTMLInputElement;
+  let isDraggingOver = false;
+  let imageUploadScale = 1.0;
+
+  function addTextObject(e: PointerEvent) {
+    if (!fabricInstance) {
+      console.error('Fabric instance not ready');
+      return;
+    }
+    const point = getPointerPosition(e);
+    const text = new fabric.IText('Text', {
+      left: point.x,
+      top: point.y,
+      fill: textColor,
+      fontSize: fontSize,
+      fontFamily: fontFamily,
+      selectable: true,
+      evented: true
+    });
+    fabricInstance.add(text);
+    fabricInstance.setActiveObject(text);
+    selectedTool.set('select');
+    updateImageData();
+    saveCanvasState();
+  }
+
+  function addShapeObject(e: PointerEvent) {
+    if (!fabricInstance) {
+      console.error('Fabric instance not ready');
+      return;
+    }
+    const point = getPointerPosition(e);
+    const commonProps = {
+      left: point.x,
+      top: point.y,
+      fill: shapeFillColor,
+      stroke: shapeStrokeColor,
+      strokeWidth: shapeStrokeWidth,
+      selectable: true,
+      evented: true
+    };
+    let obj: any = null;
+    switch (shapeType) {
+      case 'circle':
+        obj = new fabric.Ellipse({ ...commonProps, rx: 50, ry: 50 }); // Use Ellipse for circle
+        break;
+      case 'triangle':
+        obj = new fabric.Triangle({ ...commonProps, width: 100, height: 90 });
+        break;
+      case 'rectangle':
+      default:
+        obj = new fabric.Rect({ ...commonProps, width: 120, height: 80 });
+        break;
+    }
+    if (obj) {
+      fabricInstance.add(obj);
+      fabricInstance.setActiveObject(obj);
+    }
+    selectedTool.set('select');
+    updateImageData();
+    saveCanvasState();
+  }
+
+  // Handle image upload from file input
+  function handleFileInputChange(event: Event) {
+    const target = event.target as HTMLInputElement;
+    if (target.files && target.files.length > 0) {
+      const file = target.files[0];
+      uploadImage(file);
+      target.value = ''; // Reset file input to allow uploading the same file again
+    }
+  }
+
+  // Handle drag and drop
+  function handleDragOver(event: DragEvent) {
+    event.preventDefault();
+    isDraggingOver = true;
+  }
+
+  function handleDragLeave() {
+    isDraggingOver = false;
+  }
+
+  function handleDrop(event: DragEvent) {
+    event.preventDefault();
+    isDraggingOver = false;
+
+    if (event.dataTransfer?.files && event.dataTransfer.files.length > 0) {
+      const file = event.dataTransfer.files[0];
+      if (file.type.startsWith('image/')) {
+        uploadImage(file);
+      } else {
+        errorMessage = "Please drop an image file";
+        setTimeout(() => { errorMessage = null; }, 3000);
+      }
+    }
+  }
+
+  // Process image and add to canvas – ensure NO cropping occurs.
+  function uploadImage(file: File) {
+    if (!fabricInstance) {
+      console.error('Fabric instance not ready for uploadImage');
+      return;
+    }
+
+    const reader = new FileReader();
+
+    if (file.type === 'image/svg+xml') {
+      // Handle SVG files
+      reader.onload = function (e) {
+        const svgString = e.target?.result as string;
+        if (!svgString) {
+          console.error('Could not read SVG string');
+          errorMessage = "Could not read SVG file";
+          setTimeout(() => { errorMessage = null; }, 3000);
+          return;
+        }
+
+        console.log('SVG string loaded, length:', svgString.length);
+
+        let processedSvg = svgString.trim();
+        if (processedSvg.startsWith('<?xml')) {
+          processedSvg = processedSvg.substring(processedSvg.indexOf('?>') + 2).trim();
+          console.log('Removed XML declaration from SVG string.');
+        }
+
+        if (!processedSvg.startsWith('<svg')) {
+          const svgTagIndex = processedSvg.toLowerCase().indexOf('<svg');
+          if (svgTagIndex !== -1) {
+            processedSvg = processedSvg.substring(svgTagIndex);
+            console.log('Trimmed SVG to start with <svg> tag.');
+          } else {
+            console.error('SVG content does not seem to contain an <svg> tag.');
+            errorMessage = "Invalid SVG content: Missing <svg> tag.";
+            setTimeout(() => { errorMessage = null; }, 3000);
+            return;
+          }
+        }
+
+        const svgTagMatch = processedSvg.match(/<svg[^>]*>/i);
+        if (svgTagMatch && svgTagMatch[0] && !svgTagMatch[0].includes('xmlns="http://www.w3.org/2000/svg"')) {
+          processedSvg = processedSvg.replace(/<svg/i, '<svg xmlns="http://www.w3.org/2000/svg"');
+          console.log('Added SVG namespace to the <svg> tag.');
+        }
+
+        try {
+          console.log('Attempting to parse SVG with fabric.loadSVGFromString. Processed SVG string snippet:', processedSvg.substring(0, 200));
+          fabric.loadSVGFromString(processedSvg, (objects, options) => {
+            console.log('fabric.loadSVGFromString callback. Objects:', objects, 'Options:', options);
+
+            let finalObjects = objects;
+            if ((!finalObjects || finalObjects.length === 0) && options && options.objects && options.objects.length > 0) {
+              console.warn('`objects` array was empty in loadSVGFromString, but `options.objects` has content. Using `options.objects`.');
+              finalObjects = options.objects;
+            }
+
+            if (finalObjects && Array.isArray(finalObjects) && finalObjects.length > 0) {
+              console.log('Proceeding with objects from fabric.loadSVGFromString.');
+              processFabricElements(finalObjects, options);
+            } else {
+              console.warn('`objects` array is empty or invalid after fabric.loadSVGFromString. Attempting fallback with DOMParser, parseSVGDocument & enlivenObjects...');
+              try {
+                const parser = new DOMParser();
+                const svgDoc = parser.parseFromString(processedSvg, "image/svg+xml");
+
+                const parserErrorNode = svgDoc.querySelector('parsererror');
+                if (parserErrorNode) {
+                  console.error("Error parsing SVG with DOMParser:", parserErrorNode.textContent);
+                  errorMessage = "Error parsing SVG: " + (parserErrorNode.textContent || "Unknown DOMParser error");
+                  setTimeout(() => { errorMessage = null; }, 5000);
+                  return;
+                }
+
+                if (!svgDoc.documentElement || svgDoc.documentElement.nodeName === 'parsererror') {
+                  console.error('Failed to parse SVG with DOMParser or SVG is empty/invalid (documentElement error).');
+                  errorMessage = "Invalid SVG structure after DOMParser.";
+                  setTimeout(() => { errorMessage = null; }, 3000);
+                  return;
+                }
+                console.log('DOMParser successful. SVG Document Element:', svgDoc.documentElement);
+
+                // Corrected usage of fabric.parseSVGDocument and fabric.util.enlivenObjects
+                fabric.parseSVGDocument(svgDoc.documentElement, (results, optionsFromParseSVG) => {
+                  console.log('fabric.parseSVGDocument callback. Results:', results, 'Options from parseSVGDocument:', optionsFromParseSVG);
+                  if (results && Array.isArray(results) && results.length > 0) {
+                    console.log(`Found ${results.length} elements from parseSVGDocument. Attempting to enliven.`);
+                    fabric.util.enlivenObjects(results, (enlivenedFabricObjects: any[]) => {
+                      console.log('fabric.util.enlivenObjects callback. Enlivened Objects:', enlivenedFabricObjects);
+                      if (enlivenedFabricObjects && Array.isArray(enlivenedFabricObjects) && enlivenedFabricObjects.length > 0) {
+                        console.log('SVG enlivened successfully via fallback path.');
+                        // Pass the enlivened objects AND the options from this parseSVGDocument step
+                        processFabricElements(enlivenedFabricObjects, optionsFromParseSVG);
+                      } else {
+                        console.error('SVG enlivening via fallback resulted in no objects or an invalid/empty array.');
+                        errorMessage = "Could not process SVG elements after parsing (enlivenObjects failed or returned empty).";
+                        setTimeout(() => { errorMessage = null; }, 3000);
+                      }
+                    }, 'fabric'); // Use 'fabric' namespace
+                  } else {
+                    console.error('fabric.parseSVGDocument resulted in no elements or an invalid results array.');
+                    errorMessage = "Could not extract elements using fabric.parseSVGDocument (fallback returned empty/invalid).";
+                    setTimeout(() => { errorMessage = null; }, 3000);
+                  }
+                } /*, reviverFn_if_needed, options_for_parseSVGDocument_if_any */);
+              } catch (fallbackError) {
+                console.error('Error during SVG fallback parsing process:', fallbackError);
+                let message = "Unknown error";
+                if (fallbackError instanceof Error) message = fallbackError.message;
+                errorMessage = "Failed to parse SVG (fallback): " + message;
+                setTimeout(() => { errorMessage = null; }, 3000);
+              }
+            }
+          });
+        } catch (loadError) {
+          console.error('Error calling fabric.loadSVGFromString (outer try-catch):', loadError);
+          let message = "Unknown error";
+          if (loadError instanceof Error) message = loadError.message;
+          errorMessage = "Error parsing SVG: " + message;
+          setTimeout(() => { errorMessage = null; }, 3000);
+        }
+      };
+
+      // Function to process the elements (either from direct parse or enliven)
+      // This function is defined within reader.onload to have access to its scope if needed,
+      // but primarily uses fabricInstance, canvasWidth, canvasHeight from the component scope.
+      function processFabricElements(fabricObjects: any[], processingOptions: any) {
+        console.log('Processing Fabric elements. Count:', fabricObjects.length, 'Processing Options:', processingOptions);
+        try {
+          if (!fabricObjects || !Array.isArray(fabricObjects) || fabricObjects.length === 0) {
+              console.error('processFabricElements called with no valid objects.');
+              errorMessage = "No elements to process for SVG.";
+              setTimeout(() => { errorMessage = null; }, 3000);
+              return;
+          }
+
+          let elementToAdd;
+          const viewBox = processingOptions?.viewBox; // options from loadSVGFromString or parseSVGDocument callback
+
+          // If there's only one object and no specific viewBox indicating a complex layout, use it directly.
+          // Otherwise, group them. Grouping is generally safer for SVGs.
+          if (fabricObjects.length === 1 && !viewBox && fabricObjects[0] && typeof fabricObjects[0].set === 'function') {
+            elementToAdd = fabricObjects[0];
+            console.log('Single SVG element, will add directly.');
+          } else {
+            elementToAdd = fabric.util.groupSVGElements(fabricObjects, processingOptions || {});
+            console.log('Multiple SVG elements or viewBox implies grouping. Group created:', elementToAdd);
+          }
+
+          if (!elementToAdd || typeof elementToAdd.set !== 'function') {
+            console.error('Failed to create a valid Fabric element/group (elementToAdd is invalid).');
+            errorMessage = "Error processing SVG elements into a usable Fabric object.";
+            setTimeout(() => { errorMessage = null; }, 3000);
+            return;
+          }
+
+          // Resetting transform for the new element
+          elementToAdd.set({
+            left: 0,
+            top: 0,
+            originX: 'left', // Set origin before calculating scaled dimensions and final position
+            originY: 'top',
+            scaleX: 1,
+            scaleY: 1,
+            angle: 0,
+            flipX: false,
+            flipY: false,
+            skewX: 0,
+            skewY: 0
+          });
+          elementToAdd.setCoords(); // Calculate initial coords after reset
+
+          let elementWidth = elementToAdd.width;
+          let elementHeight = elementToAdd.height;
+
+          // If width/height are still 0 or undefined, try getBoundingRect (more reliable after setCoords)
+          if ((!elementWidth || !elementHeight || elementWidth === 0 || elementHeight === 0) && typeof elementToAdd.getBoundingRect === 'function') {
+              const bounds = elementToAdd.getBoundingRect();
+              elementWidth = bounds.width;
+              elementHeight = bounds.height;
+              console.log('Used getBoundingRect for dimensions:', { width: elementWidth, height: elementHeight });
+          }
+
+          // If still no valid dimensions, calculate from all raw objects as a last resort
+          // This is less likely to be needed if groupSVGElements works well or getBoundingRect is reliable
+          if ((!elementWidth || !elementHeight || elementWidth === 0 || elementHeight === 0) && fabricObjects.length > 0){
+              let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+              fabricObjects.forEach(obj => {
+                if (obj && typeof obj.getBoundingRect === 'function') {
+                    obj.setCoords(); // Ensure coords are calculated
+                    const ob = obj.getBoundingRect();
+                    if(ob.left < minX) minX = ob.left;
+                    if(ob.top < minY) minY = ob.top;
+                    if(ob.left + ob.width > maxX) maxX = ob.left + ob.width;
+                    if(ob.top + ob.height > maxY) maxY = ob.top + ob.height;
+                }
+              });
+              if (isFinite(minX) && isFinite(maxX) && isFinite(minY) && isFinite(maxY)) {
+                  elementWidth = maxX - minX;
+                  elementHeight = maxY - minY;
+                  console.log('Calculated dimensions from bounding box of all raw objects as fallback:', {width: elementWidth, height: elementHeight});
+              }
+          }
 
 
-<!-- Hidden file input for image uploads -->
-<input
-  type="file"
-  bind:this={fileInput}
-  on:change={handleFileInputChange}
-  accept="image/*,.svg"
-  style="display: none;"
-/>
+          if (!elementWidth || !elementHeight || elementWidth <= 0 || elementHeight <= 0) {
+            console.warn('Element has invalid/zero dimensions after all checks, using default dimensions (200x200) for scaling.', { elementWidth, elementHeight });
+            elementWidth = 200; // Default to avoid division by zero
+            elementHeight = 200;
+          }
 
-<div class = 'area'>
-  <div class="canvas-wrapper output-canvas" class:ratio-1-1={generatedImageAspectRatio === '1:1'} class:ratio-portrait={generatedImageAspectRatio === 'portrait'} class:ratio-landscape={generatedImageAspectRatio === 'landscape'}>
-    <div class="output-display" class:ratio-1-1={generatedImageAspectRatio === '1:1'} class:ratio-portrait={generatedImageAspectRatio === 'portrait'} class:ratio-landscape={generatedImageAspectRatio === 'landscape'}>
-      {#if generatedSvgCode}
-        <!-- Tab selector for vector output -->
-        <div class="output-tabs">
-          <button class="tab-button {outputView === 'svg' ? 'active' : ''}" on:click={() => outputView = 'svg'}>
-            SVG
-          </button>
-          <button class="tab-button {outputView === 'code' ? 'active' : ''}" on:click={() => outputView = 'code'}>
-            Code
-          </button>
-        </div>
+          const targetCanvasWidth = fabricInstance.width * 0.9;
+          const targetCanvasHeight = fabricInstance.height * 0.9;
+          let scale = 1.0;
 
-        <!-- Keep both views in the DOM and toggle visibility instead -->
-        <div class="output-view svg-view" style="display: {outputView === 'svg' ? 'block' : 'none'}; width: 100%; height: 100%; position: relative;">
-          <canvas class="output-svg-canvas" bind:this={fabricOutputCanvasHTML}></canvas>
-        </div>
-        <div class="output-view code-view" style="display: {outputView === 'code' ? 'block' : 'none'}; width: 100%; height: 100%;">
-          <!-- Modified for correct Prism.js syntax highlighting -->
-          <pre class="svg-code-display language-markup"><code bind:this={svgCodeElement} class="language-markup"></code></pre>
-        </div>
+          scale = Math.min(targetCanvasWidth / elementWidth, targetCanvasHeight / elementHeight);
+          // Ensure it's not scaled beyond 100% of its original size unless necessary to meet minDim
+          scale = Math.min(scale, 1.0);
 
-        {#if $isGenerating}
-          <div class="ai-scanning-animation">
-            <div class='loader'></div>
-          </div>
-        {/if}
-      {:else if $editedImageUrl}
-        <img src={$editedImageUrl} alt="AI generated image" class="output-image" />
-        <button
-          class="model-badge download-button"
-          on:click={() => {
-            const link = document.createElement('a');
-            link.href = $editedImageUrl;
-            link.download = `daydream-image-${Date.now()}.png`;
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
-          }}
-        >
-          <span class="material-icons" style="font-size: 16px; margin-right: 4px;">download</span> Download
-        </button>
-      {:else}
-        <div class="drawing-preview" style="aspect-ratio: {(fabricCanvasHTML?.width || inputCanvas?.width)}/{(fabricCanvasHTML?.height || inputCanvas?.height)}">
-          {#if imageData}
-            <img src={imageData} alt="Drawing preview" class="drawing-preview-image" style="width: 100%; height: 100%; object-fit: contain;" />
 
-            {#if $isGenerating}
-              <div class="ai-scanning-animation">
-                <div class = 'loader'></div>
-                <div class="scanning-status">
-                  <h2> Creating</h2>
-                  <div class='dots'>
-                    <div class='dot'></div>
-                    <div class='dot'></div>
-                    <div class='dot'></div>
-                  </div>
+          const minAllowableDimension = 100; // px
+          const currentMinWidth = elementWidth * scale;
+          const currentMinHeight = elementHeight * scale;
+
+          if (currentMinWidth < minAllowableDimension && elementWidth > 0) {
+              scale = Math.max(scale, minAllowableDimension / elementWidth);
+          }
+          if (currentMinHeight < minAllowableDimension && elementHeight > 0) {
+              scale = Math.max(scale, minAllowableDimension / elementHeight);
+          }
+
+          // Final check to ensure it doesn't exceed canvas boundaries after min_dim scaling
+          if (elementWidth * scale > targetCanvasWidth) {
+              scale = targetCanvasWidth / elementWidth;
+          }
+          if (elementHeight * scale > targetCanvasHeight) {
+              scale = targetCanvasHeight / elementHeight;
+          }
+
+
+          elementToAdd.set({
+            left: fabricInstance.width / 2,
+            top: fabricInstance.height / 2,
+            originX: 'center',
+            originY: 'center',
+            scaleX: scale,
+            scaleY: scale,
+            selectable: true,
+            evented: true,
+            crossOrigin: 'anonymous' // For SVGs that might contain external refs, though less common
+          });
+
+          elementToAdd.setCoords();
+          fabricInstance.add(elementToAdd);
+          fabricInstance.setActiveObject(elementToAdd);
+          selectedTool.set('select');
+          fabricInstance.requestRenderAll(); // Use requestRenderAll for better perf
+
+          setTimeout(() => { // Defer non-critical updates
+              updateImageData();
+              saveCanvasState();
+              recordHistory(); // Ensure recordHistory is available in this scope
+          }, 0);
+          console.log('SVG element processed and added to canvas successfully. Final scale:', scale);
+
+        } catch (processingError) {
+          console.error('Error within processFabricElements:', processingError);
+          let message = "Unknown error";
+          if (processingError instanceof Error) message = processingError.message;
+          errorMessage = "Error processing SVG elements: " + message;
+          setTimeout(() => { errorMessage = null; }, 3000);
+        }
+      }
+
+      reader.onerror = function (err) {
+        console.error('FileReader error for SVG:', err);
+        errorMessage = "Error reading SVG file";
+        setTimeout(() => { errorMessage = null; }, 3000);
+      };
+      reader.readAsText(file);
+
+    } else {
+      // Handle raster images (PNG, JPG, etc.)
+      reader.onload = function (e) {
+        const imgData = e.target?.result as string;
+        if (!imgData) {
+          console.error('Could not read image data');
+          errorMessage = "Could not read image file";
+          setTimeout(() => { errorMessage = null; }, 3000);
+          return;
+        }
+
+        fabric.Image.fromURL(imgData, (img) => {
+          if (!img || typeof img.set !== 'function') {
+            console.error('Failed to create Fabric image or image object is invalid');
+            errorMessage = "Failed to process image";
+            setTimeout(() => { errorMessage = null; }, 3000);
+            return;
+          }
+
+          const originalWidth = img.width;
+          const originalHeight = img.height;
+
+          if (!originalWidth || !originalHeight || originalWidth === 0 || originalHeight === 0) {
+              console.warn('Uploaded raster image has zero dimensions, using defaults (200x200).', { originalWidth, originalHeight });
+              img.set({ width: 200, height: 200 }); // Set some defaults
+          }
+
+
+          const targetCanvasWidth = fabricInstance.width * 0.9;
+          const targetCanvasHeight = fabricInstance.height * 0.9;
+          let scale = 1.0;
+
+          if (img.width > 0 && img.height > 0) {
+              scale = Math.min(targetCanvasWidth / img.width, targetCanvasHeight / img.height);
+               // Ensure it's not scaled beyond 100% of its original size unless necessary to meet minDim
+              scale = Math.min(scale, 1.0);
+          } else { // Should not happen if defaults set above
+              scale = 0.5;
+          }
+
+          const minAllowableDimension = 100;
+          const currentMinWidth = img.width * scale;
+          const currentMinHeight = img.height * scale;
+
+          if (currentMinWidth < minAllowableDimension && img.width > 0) {
+              scale = Math.max(scale, minAllowableDimension / img.width);
+          }
+          if (currentMinHeight < minAllowableDimension && img.height > 0) {
+              scale = Math.max(scale, minAllowableDimension / img.height);
+          }
+
+          // Final check to ensure it doesn't exceed canvas boundaries after min_dim scaling
+          if (img.width * scale > targetCanvasWidth) {
+              scale = targetCanvasWidth / img.width;
+          }
+          if (img.height * scale > targetCanvasHeight) {
+              scale = targetCanvasHeight / img.height;
+          }
+
+
+          img.set({
+            left: fabricInstance.width / 2,
+            top: fabricInstance.height / 2,
+            originX: 'center',
+            originY: 'center',
+            scaleX: scale,
+            scaleY: scale,
+            selectable: true,
+            evented: true,
+            crossOrigin: 'anonymous' // Important for toDataURL if image source is different
+          });
+
+          fabricInstance.add(img);
+          fabricInstance.setActiveObject(img);
+          selectedTool.set('select');
+          fabricInstance.requestRenderAll();
+
+          setTimeout(() => { // Defer non-critical updates
+              updateImageData();
+              saveCanvasState();
+              recordHistory(); // Ensure recordHistory is available in this scope
+          }, 0);
+          console.log('Raster image added to canvas successfully. Final scale:', scale);
+
+        }, { crossOrigin: 'anonymous' }); // Options for fromURL
+      };
+
+      reader.onerror = function(err){
+          console.error('FileReader error for raster image:', err);
+          errorMessage = "Error reading image file";
+          setTimeout(() => { errorMessage = null; }, 3000);
+      };
+      reader.readAsDataURL(file);
+    }
+  }
+
+  // Function to trigger file input click
+  function activateImageUpload() {
+    if (fileInput) {
+      fileInput.value = ''; // Clear previous selection to allow re-upload of same file
+      fileInput.click();
+    }
+  }
+
+  // --- UNDO / REDO HISTORY MANAGEMENT ---
+  const undoStack: string[] = [];
+  const redoStack: string[] = [];
+  let isRestoringHistory = false; // flag to suppress history during restore
+  const MAX_HISTORY = 50;
+
+  function recordHistory() {
+    if (!fabricInstance || isRestoringHistory) return;
+    try {
+      const snapshot = JSON.stringify(fabricInstance.toJSON());
+      // Prevent duplicate states at the top of the stack
+      if (undoStack.length === 0 || undoStack[undoStack.length - 1] !== snapshot) {
+        undoStack.push(snapshot);
+        if (undoStack.length > MAX_HISTORY) undoStack.shift();
+        redoStack.length = 0; // clear redo stack on new action
+      }
+    } catch (err) {
+      console.error('Error recording history', err);
+    }
+  }
+
+  // Edit the applySnapshot function to ensure immediate rendering
+  function applySnapshot(snapshot: string) {
+    if (!fabricInstance) return;
+    isRestoringHistory = true;
+    try {
+      fabricInstance.loadFromJSON(JSON.parse(snapshot), () => {
+        // Immediate visual update first
+        fabricInstance.renderAll();
+
+        // Then perform the potentially slower operations
+        setTimeout(() => {
+          updateImageData();
+          saveCanvasState(); // This will save the restored state
+          isRestoringHistory = false;
+          // DO NOT call recordHistory() here, as this is restoring a state, not a new action.
+        }, 0);
+      });
+    } catch (err) {
+      console.error('Error applying history snapshot', err);
+      isRestoringHistory = false;
+    }
+  }
+
+  // Update the undoAction function for immediate rendering
+  function undoAction() {
+    if (!fabricInstance || undoStack.length === 0) return;
+    const current = JSON.stringify(fabricInstance.toJSON());
+    redoStack.push(current);
+    if (redoStack.length > MAX_HISTORY) redoStack.shift();
+
+    const prev = undoStack.pop();
+    if (prev) {
+      applySnapshot(prev);
+    }
+  }
+
+  // Update the redoAction function for immediate rendering
+  function redoAction() {
+    if (!fabricInstance || redoStack.length === 0) return;
+    const current = JSON.stringify(fabricInstance.toJSON());
+    undoStack.push(current);
+    if (undoStack.length > MAX_HISTORY) undoStack.shift();
+
+    const next = redoStack.pop();
+    if (next) {
+      applySnapshot(next);
+    }
+  }
+
+  // --- OBJECT REORDERING (Z-INDEX) ---
+  /**
+   * Reorder selected objects on the Fabric canvas.
+   * @param {'backward' | 'forward' | 'back' | 'front'} direction
+   */
+  function reorderObjects(direction: 'backward' | 'forward' | 'back' | 'front') {
+    if (!fabricInstance) return;
+    const activeObjects = fabricInstance.getActiveObjects();
+    if (!activeObjects || activeObjects.length === 0) return;
+
+    recordHistory(); // Save state before reordering
+
+    activeObjects.forEach((obj: any) => {
+      switch (direction) {
+        case 'backward':
+          fabricInstance.sendBackwards(obj);
+          break;
+        case 'forward':
+          fabricInstance.bringForward(obj);
+          break;
+        case 'back':
+          fabricInstance.sendToBack(obj);
+          break;
+        case 'front':
+          fabricInstance.bringToFront(obj);
+          break;
+      }
+    });
+
+    // Immediate visual update
+    fabricInstance.requestRenderAll();
+
+    // Persist state asynchronously to avoid blocking UI
+    setTimeout(() => {
+      updateImageData();
+      saveCanvasState();
+      // recordHistory(); // History already recorded at the start of function
+    }, 0);
+  }
+
+  // Update the handleGlobalKeyDown function for immediate rendering after delete
+  // Renamed from handleKeyDown to handleGlobalKeyDown to avoid conflict with new textarea keydown
+  function handleGlobalKeyDown(event: KeyboardEvent) {
+    const target = event.target as HTMLElement | null;
+
+    // Check if the event target is the new textarea or any other input/editable element
+    if (target && (target.tagName === 'TEXTAREA' && target.classList.contains('text-input-area-canvas')) || target.tagName === 'INPUT' || target.isContentEditable || target.closest('.ql-editor')) {
+      return; // Ignore if focus is on the new textarea or other input/textarea, contentEditable, or Quill editor
+    }
+
+    // console.log('Key event:', { key: event.key, code: event.code, ctrlKey: event.ctrlKey, metaKey: event.metaKey, shiftKey: event.altKey });
+
+    const isMetaOrCtrl = event.metaKey || event.ctrlKey;
+    const isShift = event.shiftKey;
+
+    if ((event.key === 'Delete' || event.key === 'Backspace') && fabricInstance) {
+      const activeObjects = fabricInstance.getActiveObjects();
+      if (activeObjects && activeObjects.length > 0) {
+        event.preventDefault();
+        recordHistory(); // save state before deletion
+
+        activeObjects.forEach(obj => fabricInstance.remove(obj));
+        fabricInstance.discardActiveObject();
+        fabricInstance.requestRenderAll();
+
+        setTimeout(() => {
+          updateImageData();
+          saveCanvasState();
+        }, 0);
+      }
+      return; // Important to prevent further processing for delete/backspace
+    }
+
+    // Z-ordering shortcuts
+    if (isMetaOrCtrl) {
+      if (event.code === 'BracketLeft' || event.key === '[') {
+        event.preventDefault(); event.stopPropagation();
+        reorderObjects(isShift ? 'back' : 'backward');
+        return;
+      }
+      if (event.code === 'BracketRight' || event.key === ']') {
+        event.preventDefault(); event.stopPropagation();
+        reorderObjects(isShift ? 'front' : 'forward');
+        return;
+      }
+      // Undo/Redo
+      if (event.key.toLowerCase() === 'z') {
+        event.preventDefault(); event.stopPropagation();
+        if (isShift) {
+          redoAction();
+        } else {
+          undoAction();
+        }
+        return;
+      }
+      if (event.key.toLowerCase() === 'y') { // Typically redo
+        event.preventDefault(); event.stopPropagation();
+        redoAction();
+        return;
+      }
+    }
+  }
+
+  // Update proxy variables when activeFabricObject changes or is modified
+  $: {
+    if (activeFabricObject && (activeFabricObject.type === 'rect' || activeFabricObject.type === 'circle' || activeFabricObject.type === 'triangle' || activeFabricObject.type === 'ellipse')) {
+      selectedShapeFillProxy = activeFabricObject.fill || '#cccccc';
+      selectedShapeStrokeProxy = activeFabricObject.stroke || '#000000';
+      selectedShapeStrokeWidthProxy = activeFabricObject.strokeWidth === undefined ? 0 : activeFabricObject.strokeWidth;
+    } else if (activeFabricObject && activeFabricObject.type === 'i-text') {
+      // Proxies for text - assuming textColorProxy, fontSizeProxy, fontFamilyProxy exist or will be created
+      // textColorProxy = activeFabricObject.fill || '#000000';
+      // fontSizeProxy = activeFabricObject.fontSize || 32;
+      // fontFamilyProxy = activeFabricObject.fontFamily || 'Arial';
+    } else {
+      // Reset or set to defaults if no shape is selected or different type
+      selectedShapeFillProxy = shapeFillColor;
+      selectedShapeStrokeProxy = shapeStrokeColor;
+      selectedShapeStrokeWidthProxy = shapeStrokeWidth;
+    }
+  }
+
+  function updateSelectedObjectProperty(property: string, value: any) {
+    if (activeFabricObject) {
+      activeFabricObject.set(property, value);
+      fabricInstance.requestRenderAll();
+
+      setTimeout(() => {
+        // updateImageData(); // ImageData updated on object:modified
+        saveCanvasState();
+        recordHistory();
+      }, 0);
+    }
+  }
+
+  // Click outside to close shape dropdown
+  // function handleClickOutside(event: MouseEvent) {
+  //   if (showShapeDropdown && shapeDropdownElement && !shapeDropdownElement.contains(event.target as Node) && shapeToolButtonElement && !shapeToolButtonElement.contains(event.target as Node)) {
+  //     showShapeDropdown = false;
+  //   }
+  // }
+
+  // onMount(() => {
+  //   console.log('Canvas component mounting...');
+  //   // ... other onMount logic ...
+  //   window.addEventListener('click', handleClickOutside);
+  // });
+
+  // onDestroy(() => {
+  //   // ... other onDestroy logic ...
+  //   window.removeEventListener('click', handleClickOutside);
+  //   window.removeEventListener('keydown', handleGlobalKeyDown); // Ensure this is also cleaned up
+  // });
+
+  // --- NEW: Format selection & SVG output support ---
+  // User-selected output format: 'png' (default raster) or 'svg' (vector)
+  let selectedFormat: string = 'png';
+
+  // Holds raw SVG markup returned by the backend when selectedFormat === 'svg'
+  let generatedSvgCode: string | null = null;
+
+  // Fabric instance for rendering SVG output
+  let fabricOutputCanvasHTML: HTMLCanvasElement;
+  let fabricOutputInstance: any = null;
+
+  // Reactive: force model to GPT-4o and disable others when SVG format chosen
+  $: if (selectedFormat === 'svg') {
+    selectedModel.set('gpt-4o');
+  }
+
+  // Element for SVG code display (for Prism.js)
+  let svgCodeElement: HTMLElement;
+
+  /**
+   * Render provided SVG string onto a dedicated Fabric.js canvas inside the output pane.
+   * The canvas is created (or recreated) each time a new SVG is generated.
+   */
+  async function renderSvgToOutputCanvas(svgString: string) {
+    try {
+      if (!svgString) {
+        console.warn('renderSvgToOutputCanvas called with no svgString');
+        return;
+      }
+      console.log('Attempting to render SVG, length:', svgString.length);
+      // console.log('SVG string preview:', svgString.substring(0, 500) + '...');
+
+      // Pre-process the SVG string to ensure it's properly formatted
+      let processedSvg = extractValidSvg(svgString) || svgString; // Use extractValidSvg first
+      if (!processedSvg.trim().startsWith('<svg')) {
+        console.error('SVG content does not seem to start with an <svg> tag even after extraction.');
+        errorMessage = "Invalid SVG content: Missing <svg> tag.";
+        return;
+      }
+
+      // Ensure the SVG has the required namespace
+      if (!processedSvg.includes('xmlns="http://www.w3.org/2000/svg"')) {
+        processedSvg = processedSvg.replace(/<svg/i, '<svg xmlns="http://www.w3.org/2000/svg"');
+        console.log('Added SVG namespace to the <svg> tag');
+      }
+
+      // Ensure viewBox is present (if not already there, try to create a sensible one)
+      if (!processedSvg.match(/viewBox=(?:'[^']+'|"[^"]+")/i)) {
+        const widthMatch = processedSvg.match(/width=(?:\'([^\']+)\'|\"([^\"]+)\")/i);
+        const heightMatch = processedSvg.match(/height=(?:\'([^\']+)\'|\"([^\"]+)\")/i);
+
+        let vbWidth = canvasWidth; // Default to current main canvas width
+        let vbHeight = canvasHeight; // Default to current main canvas height
+
+        if (widthMatch && (widthMatch[1] || widthMatch[2])) {
+            const parsedW = parseFloat(widthMatch[1] || widthMatch[2]);
+            if (!isNaN(parsedW) && parsedW > 0) vbWidth = parsedW;
+        }
+        if (heightMatch && (heightMatch[1] || heightMatch[2])) {
+            const parsedH = parseFloat(heightMatch[1] || heightMatch[2]);
+            if (!isNaN(parsedH) && parsedH > 0) vbHeight = parsedH;
+        }
+
+        processedSvg = processedSvg.replace(/<svg/i, `<svg viewBox="0 0 ${vbWidth} ${vbHeight}"`);
+        console.log(`Added default viewBox attribute to SVG: viewBox="0 0 ${vbWidth} ${vbHeight}"`);
+      }
+
+      // console.log('Processed SVG for rendering:', processedSvg.substring(0,500) + '...');
+
+      await loadFabricScript();
+
+      // Check if we need to make the SVG view visible to ensure proper rendering
+      const svgViewContainer = document.querySelector('.output-view.svg-view');
+      const wasHidden = svgViewContainer && window.getComputedStyle(svgViewContainer).display === 'none';
+      let originalDisplay = null;
+
+      // Temporarily make SVG view visible if it was hidden (we'll restore later)
+      if (wasHidden && svgViewContainer) {
+        originalDisplay = (svgViewContainer as HTMLElement).style.display;
+        (svgViewContainer as HTMLElement).style.display = 'block';
+        console.log('Temporarily making SVG view visible for rendering');
+      }
+
+      if (fabricOutputInstance) {
+        try {
+          // First, clear all objects from the canvas
+          fabricOutputInstance.clear();
+
+          // Then dispose of the canvas properly
+          fabricOutputInstance.dispose();
+
+          // Ensure null references to avoid stale references
+          fabricOutputInstance = null;
+
+          // Add a small delay to ensure DOM operations complete
+          await new Promise(resolve => setTimeout(resolve, 0));
+
+          console.log('Previous output canvas instance properly disposed');
+        } catch (disposeError) {
+          console.error('Error disposing previous canvas:', disposeError);
+          // Continue with new canvas creation even if disposal had issues
+        }
+      }
+
+      if (!fabricOutputCanvasHTML) {
+        console.error('fabricOutputCanvasHTML is not available');
+        // Restore original visibility before returning
+        if (wasHidden && svgViewContainer && originalDisplay !== null) {
+          (svgViewContainer as HTMLElement).style.display = originalDisplay;
+        }
+        return;
+      }
+
+      // Clean up any existing canvas wrappers from previous renders
+      const existingWrappers = document.querySelectorAll('.canvas-container');
+      existingWrappers.forEach(wrapper => {
+        // Only remove wrappers inside the output display area
+        const outputDisplay = document.querySelector('.output-display');
+        if (outputDisplay && outputDisplay.contains(wrapper)) {
+          try {
+            // Clone canvas element before removing wrapper
+            const originalCanvas = wrapper.querySelector('canvas');
+            if (originalCanvas) {
+              const parent = wrapper.parentElement;
+              if (parent) {
+                const clonedCanvas = fabricOutputCanvasHTML.cloneNode(false);
+                parent.replaceChild(clonedCanvas, wrapper);
+                fabricOutputCanvasHTML = clonedCanvas as HTMLCanvasElement;
+              }
+            } else {
+              wrapper.remove();
+            }
+          } catch (err) {
+            console.warn('Error cleaning up canvas wrapper:', err);
+          }
+        }
+      });
+
+      // Set dimensions before creating canvas instance
+      fabricOutputCanvasHTML.width = canvasWidth;
+      fabricOutputCanvasHTML.height = canvasHeight;
+
+      fabricOutputInstance = new fabric.Canvas(fabricOutputCanvasHTML, {
+        backgroundColor: '#ffffff',
+        renderOnAddRemove: true,
+        width: canvasWidth,
+        height: canvasHeight,
+        preserveObjectStacking: true
+      });
+      console.log('Fabric output canvas initialized:', fabricOutputInstance.width, 'x', fabricOutputInstance.height);
+
+      if (fabricOutputInstance.wrapperEl) {
+        const inputContainer = document.querySelector('.canvas-container-overlay');
+        if (inputContainer) {
+          const computedStyle = window.getComputedStyle(inputContainer);
+          fabricOutputInstance.wrapperEl.style.width = computedStyle.width;
+          fabricOutputInstance.wrapperEl.style.height = computedStyle.height;
+          fabricOutputInstance.wrapperEl.style.position = 'absolute';
+          fabricOutputInstance.wrapperEl.style.top = '0';
+          fabricOutputInstance.wrapperEl.style.left = '0';
+        }
+      }
+      if (fabricOutputInstance.lowerCanvasEl && inputCanvas) {
+        fabricOutputInstance.lowerCanvasEl.style.width = inputCanvas.style.width;
+        fabricOutputInstance.lowerCanvasEl.style.height = inputCanvas.style.height;
+      }
+
+      // Centralized function to handle processing and rendering of fabric objects
+      const processAndRenderFabricObject = (objToRender, source) => {
+        try {
+          if (!objToRender) {
+            console.error(`processAndRenderFabricObject (${source}): No fabric object provided`);
+            errorMessage = 'Failed to render SVG - no object provided';
+            return false;
+          }
+
+          if (objToRender.type === 'group' && (!objToRender._objects || objToRender._objects.length === 0)) {
+            console.error(`processAndRenderFabricObject (${source}): Empty group received`, objToRender);
+            errorMessage = 'Failed to render SVG - empty group provided';
+            return false;
+          }
+
+          console.log(`processAndRenderFabricObject (${source}): Object type:`, objToRender.type);
+
+          // Temporarily add to calculate bounds accurately
+          fabricOutputInstance.add(objToRender);
+          objToRender.setCoords(); // Update coordinates and dimensions
+
+          // Get object bounds - ensure we consider stroke width
+          const bounds = objToRender.getBoundingRect(true);
+          fabricOutputInstance.remove(objToRender); // Remove after getting bounds
+
+          console.log(`Calculated bounds:`, bounds);
+
+          if (!bounds || bounds.width === 0 || bounds.height === 0) {
+            console.error(`Invalid bounds (zero width/height):`, bounds);
+            errorMessage = 'Failed to render SVG - could not determine object dimensions';
+            return false;
+          }
+
+          // Calculate appropriate scaling
+          const canvasTargetWidth = fabricOutputInstance.width * 0.9;
+          const canvasTargetHeight = fabricOutputInstance.height * 0.9;
+
+          const scaleX = canvasTargetWidth / bounds.width;
+          const scaleY = canvasTargetHeight / bounds.height;
+          const scale = Math.min(scaleX, scaleY);
+
+          console.log(`Calculated scale: ${scale} (canvas: ${canvasTargetWidth}x${canvasTargetHeight}, bounds: ${bounds.width}x${bounds.height})`);
+
+          // Position object centered on canvas with appropriate scale
+          objToRender.set({
+            left: fabricOutputInstance.width / 2,
+            top: fabricOutputInstance.height / 2,
+            originX: 'center',
+            originY: 'center',
+            scaleX: scale,
+            scaleY: scale
+          });
+
+          objToRender.setCoords(); // Update coordinates after transform
+          fabricOutputInstance.add(objToRender);
+
+          // If the object is a group, ungroup it so that each SVG element becomes its own Fabric object
+          if (objToRender.type === 'group' && objToRender._objects && objToRender._objects.length > 0) {
+            // Restore child objects' absolute positions
+            objToRender._restoreObjectsState();
+            const items = objToRender._objects;
+            objToRender._objects = [];
+            fabricOutputInstance.remove(objToRender);
+            items.forEach(item => {
+              // Ensure items respect the same scaling/positioning already applied via group transform
+              item.setCoords();
+              fabricOutputInstance.add(item);
+            });
+            console.log(`Ungrouped ${items.length} SVG elements into individual Fabric objects.`);
+          }
+
+          fabricOutputInstance.requestRenderAll();
+          console.log(`SVG rendered successfully from ${source}`);
+          errorMessage = null; // Clear any error messages
+          return true;
+        } catch (err) {
+          console.error(`Error in processAndRenderFabricObject (${source}):`, err);
+          errorMessage = `Error processing SVG elements: ${err.message || 'unknown error'}`;
+          return false;
+        }
+      };
+
+      // Try different parsing methods in sequence
+
+      // METHOD 1: Primary method - loadSVGFromString
+      let renderSuccess = false;
+      console.log('METHOD 1: Attempting primary SVG parsing with loadSVGFromString');
+      try {
+        fabric.loadSVGFromString(processedSvg, (objects, optionsFromLoadSvg) => { // Renamed options here
+          console.log('loadSVGFromString callback received', objects?.length || 0, 'objects');
+
+          if (objects && objects.length > 0) {
+            const validObjects = objects.filter(obj => obj && obj.type);
+            console.log(`Found ${validObjects.length} valid objects out of ${objects.length} total`);
+
+            if (validObjects.length > 0) {
+              let elementToAdd;
+
+              if (validObjects.length === 1) {
+                elementToAdd = validObjects[0];
+                console.log('Processing single SVG element');
+              } else {
+                console.log('Grouping multiple SVG elements');
+                elementToAdd = fabric.util.groupSVGElements(validObjects, optionsFromLoadSvg || {}); // Use optionsFromLoadSvg
+              }
+
+              if (elementToAdd) {
+                renderSuccess = processAndRenderFabricObject(elementToAdd, 'METHOD 1: loadSVGFromString');
+
+                // Add this new section to handle text elements
+                if (renderSuccess) {
+                  // After successful render, extract and render text elements separately
+                  const bounds = elementToAdd.getBoundingRect(true);
+                  const canvasTargetWidth = fabricOutputInstance.width * 0.9;
+                  const canvasTargetHeight = fabricOutputInstance.height * 0.9;
+                  const scaleX = canvasTargetWidth / bounds.width;
+                  const scaleY = canvasTargetHeight / bounds.height;
+                  const scale = Math.min(scaleX, scaleY);
+
+                  // Extract and render text elements with appropriate scaling
+                  extractAndRenderTextElements(processedSvg, bounds, scale);
+                }
+              }
+            }
+          }
+
+          // If method 1 failed, try the next method
+          if (!renderSuccess) {
+            tryMethod2();
+          } else {
+            // If successful, restore original visibility
+            restoreVisibility();
+          }
+        });
+      } catch (error) {
+        console.error('Error in METHOD 1:', error);
+        tryMethod2();
+      }
+
+      // METHOD 2: Manual DOM parsing and fabric.parseSVGDocument
+      function tryMethod2() {
+        console.log('METHOD 2: Attempting DOM parsing with parseSVGDocument');
+        try {
+          const parser = new DOMParser();
+          const svgDoc = parser.parseFromString(processedSvg, 'image/svg+xml');
+
+          const parserError = svgDoc.querySelector('parsererror');
+          if (parserError) {
+            console.error('XML parsing error:', parserError.textContent);
+            const errorDetails = parserError.textContent || "Unknown XML parsing error";
+            errorMessage = `SVG Parsing Error (Method 2): ${errorDetails.substring(0, 100)}`;
+            tryMethod3();
+            return;
+          }
+
+          const svgElement = svgDoc.documentElement;
+          if (!svgElement || svgElement.nodeName.toLowerCase() !== 'svg') {
+            console.error('Not a valid SVG document element or svgElement is null/undefined');
+            errorMessage = 'Invalid SVG structure (Method 2): Missing <svg> root element.';
+            tryMethod3();
+            return;
+          }
+
+          let parsedViewBoxObj = null;
+          const viewBoxAttr = svgElement.getAttribute('viewBox');
+          if (viewBoxAttr) {
+            const parts = viewBoxAttr.split(/[\s,]+/).map(Number);
+            if (parts.length === 4 && parts.every(p => !isNaN(p))) {
+              parsedViewBoxObj = { x: parts[0], y: parts[1], width: parts[2], height: parts[3] };
+            }
+          }
+
+          // Initial options for parseSVGDocument, potentially including the viewBox from the SVG element itself.
+          const initialParseOptions = parsedViewBoxObj ? { viewBox: parsedViewBoxObj } : {};
+
+          fabric.parseSVGDocument(svgElement, (results, fabricOptionsFromParse) => {
+            // Combine initial options (like our parsed viewBox) with options returned by parseSVGDocument
+            const finalProcessingOptions = { ...initialParseOptions, ...(fabricOptionsFromParse || {}) };
+            console.log('parseSVGDocument returned', results?.length || 0, 'results. Options used for enliven/grouping:', finalProcessingOptions);
+
+            if (results && results.length > 0) {
+              fabric.util.enlivenObjects(results, (enlivenedObjects) => {
+                console.log('Enlivened', enlivenedObjects?.length || 0, 'objects');
+
+                if (enlivenedObjects && enlivenedObjects.length > 0) {
+                  let elementToAdd;
+
+                  if (enlivenedObjects.length === 1) {
+                    elementToAdd = enlivenedObjects[0];
+                  } else {
+                    // Pass the combined finalProcessingOptions to groupSVGElements
+                    elementToAdd = fabric.util.groupSVGElements(enlivenedObjects, finalProcessingOptions);
+                  }
+
+                  renderSuccess = processAndRenderFabricObject(elementToAdd, 'METHOD 2: parseSVGDocument');
+
+                  if (!renderSuccess) {
+                    tryMethod3();
+                  } else {
+                    // Add text element rendering for Method 2
+                    const bounds = elementToAdd.getBoundingRect(true);
+                    const canvasTargetWidth = fabricOutputInstance.width * 0.9;
+                    const canvasTargetHeight = fabricOutputInstance.height * 0.9;
+                    const scaleX = canvasTargetWidth / bounds.width;
+                    const scaleY = canvasTargetHeight / bounds.height;
+                    const scale = Math.min(scaleX, scaleY);
+
+                    // Extract and render text elements with appropriate scaling
+                    extractAndRenderTextElements(processedSvg, bounds, scale);
+                    restoreVisibility();
+                  }
+                } else {
+                  tryMethod3(); // No valid objects found
+                }
+              }, 'fabric');
+            } else {
+              tryMethod3(); // No results from parseSVGDocument
+            }
+          });
+        } catch (error) {
+          console.error('Error in METHOD 2:', error);
+          tryMethod3();
+        }
+      }
+
+      // METHOD 3: Direct path creation as a last resort
+      function tryMethod3() {
+        console.log('METHOD 3: Attempting direct path element creation');
+        try {
+          // Extract path elements directly from the SVG string
+          const pathRegex = /<path[^>]*d="([^"]*)"[^>]*>/gi;
+          const paths = [];
+          let match;
+
+          while ((match = pathRegex.exec(processedSvg)) !== null) {
+            // Extract other attributes for the path
+            const pathElement = match[0];
+            const pathData = match[1];
+
+            // Extract fill, stroke, stroke-width if available
+            const fillMatch = pathElement.match(/fill="([^"]*)"/);
+            const strokeMatch = pathElement.match(/stroke="([^"]*)"/);
+            const strokeWidthMatch = pathElement.match(/stroke-width="([^"]*)"/);
+
+            const fill = fillMatch ? fillMatch[1] : 'none';
+            const stroke = strokeMatch ? strokeMatch[1] : '#000000';
+            const strokeWidth = strokeWidthMatch ? parseFloat(strokeWidthMatch[1]) : 1;
+
+            if (pathData) {
+              console.log(`Creating path with data: ${pathData.substring(0, 30)}...`);
+              try {
+                const fabricPath = new fabric.Path(pathData, {
+                  fill: fill,
+                  stroke: stroke,
+                  strokeWidth: strokeWidth,
+                  objectCaching: false // Disable caching for more reliable rendering
+                });
+
+                if (fabricPath) {
+                  paths.push(fabricPath);
+                }
+              } catch (pathError) {
+                console.error('Error creating individual path:', pathError);
+              }
+            }
+          }
+
+          console.log(`METHOD 3: Extracted ${paths.length} paths from SVG string`);
+
+          if (paths.length > 0) {
+            let elementToAdd;
+
+            if (paths.length === 1) {
+              elementToAdd = paths[0];
+            } else {
+              elementToAdd = new fabric.Group(paths, {
+                objectCaching: false
+              });
+            }
+
+            renderSuccess = processAndRenderFabricObject(elementToAdd, 'METHOD 3: direct path creation');
+
+            if (!renderSuccess) {
+              showFinalError();
+            } else {
+              // Add text element rendering for Method 3
+              const bounds = elementToAdd.getBoundingRect(true);
+              const canvasTargetWidth = fabricOutputInstance.width * 0.9;
+              const canvasTargetHeight = fabricOutputInstance.height * 0.9;
+              const scaleX = canvasTargetWidth / bounds.width;
+              const scaleY = canvasTargetHeight / bounds.height;
+              const scale = Math.min(scaleX, scaleY);
+
+              extractAndRenderTextElements(processedSvg, bounds, scale);
+              restoreVisibility();
+            }
+          } else {
+            showFinalError();
+          }
+        } catch (error) {
+          console.error('Error in METHOD 3:', error);
+          showFinalError();
+        }
+      }
+
+      function showFinalError() {
+        console.error('All SVG parsing methods failed');
+        errorMessage = 'Failed to render SVG - no valid elements found after all parsing attempts.';
+        restoreVisibility();
+      }
+
+      // Helper function to restore original visibility state
+      function restoreVisibility() {
+        if (wasHidden && svgViewContainer && originalDisplay !== null) {
+          // Delay restoring display to ensure rendering is complete
+          setTimeout(() => {
+            (svgViewContainer as HTMLElement).style.display = originalDisplay;
+            console.log('Restored original visibility state of SVG view');
+          }, 100);
+        }
+      }
+
+    } catch (err) {
+      console.error('Outer error in renderSvgToOutputCanvas:', err);
+      errorMessage = `Failed to render SVG: ${err.message || 'unexpected error'}`;
+    }
+  }
+
+  // Controls which representation of the generated vector is shown in the output pane
+  // "svg" – the rendered preview on a Fabric canvas
+  // "code" – raw SVG markup in a scrollable block
+  let outputView: string = 'svg';
+  let lastFormattedAndHighlightedSvgCode: string | null = null;
+  let isHighlightingInProgress = false;
+
+  // Whenever the generated SVG code is cleared (e.g. switching back to PNG mode)
+  // make sure the viewer defaults to the preview tab.
+  $: if (!generatedSvgCode) {
+    outputView = 'svg';
+  }
+
+  // React to tab changes - ensure canvas is properly redrawn when returning to SVG view
+  // AND apply syntax highlighting when switching to "Code" view.
+  $: if (browser && svgCodeElement) {
+    if (outputView === 'code' && generatedSvgCode) {
+      // We are in code view and have SVG code
+      if (generatedSvgCode !== lastFormattedAndHighlightedSvgCode && !isHighlightingInProgress) {
+        // The code is new or different from what was last processed, and not already processing
+        const processCode = async () => {
+          isHighlightingInProgress = true;
+          try {
+            console.log('Formatting and highlighting new/changed SVG code...');
+            const formattedSvg = await prettier.format(generatedSvgCode, {
+              parser: 'html',
+              plugins: [htmlParser], // htmlParser defined earlier
+              printWidth: 80,
+              tabWidth: 2,
+              useTabs: false,
+              htmlWhitespaceSensitivity: 'ignore'
+            });
+            svgCodeElement.textContent = formattedSvg;
+            await tick();
+
+            // Only highlight if Prism is loaded and available
+            if (PrismLoaded && Prism && typeof Prism.highlightElement === 'function') {
+              try {
+                Prism.highlightElement(svgCodeElement);
+                console.log('SVG code formatted with Prettier and highlighted with Prism.js');
+              } catch (prismError) {
+                console.warn('Error applying Prism highlighting:', prismError);
+                console.log('SVG code formatted with Prettier (Prism highlighting failed)');
+              }
+            } else {
+              console.log('SVG code formatted with Prettier (Prism.js not available)');
+            }
+
+            lastFormattedAndHighlightedSvgCode = generatedSvgCode; // Mark this version as processed
+          } catch (error) {
+            console.error('Error formatting/highlighting SVG:', error, { parserHtml: htmlParser, generatedSvgCode });
+            svgCodeElement.textContent = generatedSvgCode; // Fallback
+            await tick();
+
+            // Try to highlight fallback only if Prism is available
+            if (PrismLoaded && Prism && typeof Prism.highlightElement === 'function') {
+              try {
+                Prism.highlightElement(svgCodeElement);
+              } catch (prismError) {
+                console.warn('Error applying Prism highlighting on fallback:', prismError);
+              }
+            }
+
+            lastFormattedAndHighlightedSvgCode = generatedSvgCode; // Mark as processed even on error to prevent loop
+          } finally {
+            isHighlightingInProgress = false;
+          }
+        };
+        processCode();
+      } else if (generatedSvgCode === lastFormattedAndHighlightedSvgCode && !isHighlightingInProgress) {
+        // Code is the same as last processed.
+        // Ensure Prism highlighting is still applied if element was hidden/re-shown.
+        if (PrismLoaded && Prism && !svgCodeElement.querySelector('span.token')) { // Check if Prism's spans are missing
+            const reapplyHighlight = async () => {
+              isHighlightingInProgress = true;
+              try {
+                console.log('Re-applying Prism highlighting to existing code (no re-format).');
+                await tick(); // ensure textContent (already formatted) is in DOM
+                if (PrismLoaded && Prism && typeof Prism.highlightElement === 'function') {
+                  Prism.highlightElement(svgCodeElement);
+                }
+              } catch (e) {
+                console.warn("Error re-applying highlight:", e);
+              } finally {
+                isHighlightingInProgress = false;
+              }
+            }
+            reapplyHighlight();
+        } else {
+          // console.log('SVG code already formatted and highlighted, and visually appears so.');
+        }
+      }
+    } else if (outputView !== 'code') {
+      // When not in code view, clear the last processed code marker
+      lastFormattedAndHighlightedSvgCode = null;
+      // Optionally clear the content of svgCodeElement if it's not needed when hidden
+      // if (svgCodeElement) svgCodeElement.textContent = '';
+    }
+  }
+
+  // Add a helper function to extract valid SVG from a potentially messy response
+  function extractValidSvg(responseText) {
+    // Try to extract anything between opening and closing SVG tags
+    const svgMatch = responseText.match(/<svg[\s\S]*?<\/svg>/i);
+
+    if (svgMatch && svgMatch[0]) {
+      let svgCode = svgMatch[0].trim();
+
+      // Ensure the SVG has the required namespace
+      if (!svgCode.includes('xmlns="http://www.w3.org/2000/svg"')) {
+        svgCode = svgCode.replace(/<svg/i, '<svg xmlns="http://www.w3.org/2000/svg"');
+      }
+
+      return svgCode;
+    }
+
+    return null;
+  }
+
+  // Add a window resize listener to update the output canvas size
+  $: if (browser && fabricOutputInstance && selectedFormat === 'svg') {
+    resizeOutputCanvas();
+  }
+
+  // Function to resize the output canvas
+  function resizeOutputCanvas() {
+    if (!fabricOutputInstance || !fabricOutputCanvasHTML) return;
+
+    // Check if SVG view is visible - if not, save current state to apply later when visible
+    const svgViewContainer = document.querySelector('.output-view.svg-view');
+    const isVisible = !svgViewContainer || window.getComputedStyle(svgViewContainer).display !== 'none';
+
+    if (!isVisible) {
+      console.log('Skipping immediate resize for hidden SVG view - will be updated when shown');
+      // Set a flag to resize when the view becomes visible
+      return;
+    }
+
+    // Match dimensions with input canvas
+    fabricOutputInstance.setWidth(canvasWidth);
+    fabricOutputInstance.setHeight(canvasHeight);
+
+    // Apply the same CSS scale to maintain aspect ratio
+    if (fabricOutputInstance.wrapperEl) {
+      const inputContainer = document.querySelector('.canvas-container-overlay');
+      if (inputContainer) {
+        const computedStyle = window.getComputedStyle(inputContainer);
+        fabricOutputInstance.wrapperEl.style.width = computedStyle.width;
+        fabricOutputInstance.wrapperEl.style.height = computedStyle.height;
+      }
+    }
+
+    if (fabricOutputInstance.lowerCanvasEl && inputCanvas) {
+      fabricOutputInstance.lowerCanvasEl.style.width = inputCanvas.style.width;
+      fabricOutputInstance.lowerCanvasEl.style.height = inputCanvas.style.height;
+    }
+
+    if (fabricOutputInstance.upperCanvasEl && inputCanvas) {
+      fabricOutputInstance.upperCanvasEl.style.width = inputCanvas.style.width;
+      fabricOutputInstance.upperCanvasEl.style.height = inputCanvas.style.height;
+    }
+
+    fabricOutputInstance.calcOffset();
+    fabricOutputInstance.requestRenderAll();
+
+    console.log('Output canvas resized to match input canvas dimensions');
+  }
+
+  // Add the new dynamic prompt builder just before generateImage definition
+  function buildDynamicSvgPrompt(hasSketch: boolean, context: string) {
+    /*
+      Build an SVG-generation prompt that adapts to whether the user has supplied a sketch on the canvas.
+      When a sketch exists we preserve the strict structure-fidelity wording so GPT-4o respects the sketch layout.
+      When no sketch exists we instead ask for a clean, high-quality vector illustration solely from the text description.
+    */
+    const baseHeader = `IMPORTANT: Respond with ONLY valid standalone SVG markup – starting with <svg> and ending with </svg>. Do NOT wrap in Markdown, code fences, or add explanations.`;
+
+    // Use canvasWidth and canvasHeight for the viewBox to match input aspect ratio
+    const viewBoxInstruction = `Include xmlns="http://www.w3.org/2000/svg" and an appropriate viewBox attribute, for example: viewBox="0 0 ${canvasWidth} ${canvasHeight}". Adjust the x and y of the viewBox if necessary to encompass all drawn elements, but maintain the width and height based on the input canvas dimensions (${canvasWidth}x${canvasHeight}).`;
+
+    const textStyleInstruction = `For any text elements, use proper <text> tags with appropriate x, y positioning and text-anchor attributes.
+Ensure font sizes are legible, ideally aiming for a minimum effective size of 24px within the ${canvasWidth}x${canvasHeight} coordinate system.
+Place text thoughtfully so it is clearly visible and does not obstruct important visual elements.
+Use font-family: "Inter", sans-serif; for all text.`;
+
+    if (hasSketch) {
+      return `${baseHeader}
+
+Create an SVG vector image based on the supplied sketch image. The SVG must match the structure and layout of the sketch exactly – every element should align precisely. Preserve all proportions and positions while adding clean vector styling, colours and refinements.
+${context ? `\nContext: ${context}\n` : ''}
+Technical requirements:
+- ${viewBoxInstruction}
+- Use semantic vector elements (<path>, <rect>, <circle>, etc.).
+- ${textStyleInstruction}
+- Use fills and strokes appropriately.
+- Ensure the SVG is syntactically correct and renders without external assets.`;
+    }
+
+    // No sketch – free illustration based only on text
+    return `${baseHeader}
+
+Create a high-quality, accurate SVG illustration that fulfils the following description:\n"${context || 'Illustration'}"\n
+Guidelines:
+- Use clean, precise vector geometry and sufficient detail so the image is recognisable at any resolution.
+- ${viewBoxInstruction}
+- ${textStyleInstruction}
+- Prefer descriptive grouping and paths rather than raster images.
+- Ensure the SVG renders correctly with no external dependencies.`;
+  }
+
+  // -----------------------------------------------------------------------------
+  //  Modify the SVG branch inside generateImage to use the new prompt builder and
+  //  to omit image data when no sketch exists.
+  // -----------------------------------------------------------------------------
+
+  // ... locate the start of the SVG branch (selectedFormat === 'svg') inside
+  //     generateImage() and replace its initial logic up to the fetch call ...
+
+  // Function to extract and create text elements from SVG
+  function extractAndRenderTextElements(svgString, mainObjectBounds, scaleFactor) {
+    if (!fabricOutputInstance || !svgString) return;
+
+    try {
+      console.log('Extracting text elements from SVG...');
+      const parser = new DOMParser();
+      const svgDoc = parser.parseFromString(svgString, 'image/svg+xml');
+
+      const parseError = svgDoc.querySelector('parsererror');
+      if (parseError) {
+        console.error('SVG parsing error during text extraction:', parseError.textContent);
+        return;
+      }
+
+      const textNodes = svgDoc.querySelectorAll('text');
+      if (!textNodes || textNodes.length === 0) {
+        console.log('No text elements found in SVG for extraction.');
+        return;
+      }
+      console.log(`Found ${textNodes.length} text elements in SVG`);
+
+      const svgElement = svgDoc.querySelector('svg');
+      let viewBox = { x: 0, y: 0, width: canvasWidth, height: canvasHeight }; // Default to main canvas dimensions
+
+      if (svgElement && svgElement.getAttribute('viewBox')) {
+        const viewBoxString = svgElement.getAttribute('viewBox');
+        const viewBoxValues = viewBoxString.split(/[\s,]+/).map(Number);
+        if (viewBoxValues.length === 4 && viewBoxValues.every(v => !isNaN(v)) && viewBoxValues[2] > 0 && viewBoxValues[3] > 0) {
+          viewBox = {
+            x: viewBoxValues[0],
+            y: viewBoxValues[1],
+            width: viewBoxValues[2],
+            height: viewBoxValues[3]
+          };
+          console.log('Using viewBox for text elements:', viewBox);
+        } else {
+          console.warn('Invalid or zero-dimension viewBox attribute found for text extraction, using canvas defaults:', viewBoxString);
+        }
+      } else if (svgElement) {
+        const widthAttr = svgElement.getAttribute('width');
+        const heightAttr = svgElement.getAttribute('height');
+        const parsedW = parseFloat(widthAttr);
+        const parsedH = parseFloat(heightAttr);
+        if (!isNaN(parsedW) && parsedW > 0) viewBox.width = parsedW;
+        if (!isNaN(parsedH) && parsedH > 0) viewBox.height = parsedH;
+        console.log('No viewBox, using SVG width/height for text elements. Calculated viewBox:', viewBox);
+      } else {
+        console.warn('No <svg> element or viewBox found for text extraction, using canvas dimension defaults.');
+      }
+
+      const canvasCenterX = fabricOutputInstance.width / 2;
+      const canvasCenterY = fabricOutputInstance.height / 2;
+      const MIN_FONT_SIZE_PX = 12; // Minimum absolute font size on the output canvas
+
+      textNodes.forEach((textNode, index) => {
+        const content = textNode.textContent || '';
+        if (!content.trim()) return;
+
+        let x = parseFloat(textNode.getAttribute('x') || '0');
+        let y = parseFloat(textNode.getAttribute('y') || '0');
+
+        const rawFontSize = textNode.getAttribute('font-size') || window.getComputedStyle(textNode).fontSize || '24';
+        let fontSize = parseFloat(rawFontSize.replace('px', ''));
+        if (isNaN(fontSize) || fontSize <=0) fontSize = 24; // Default if parsing fails or invalid
+
+        let fill = textNode.getAttribute('fill') || window.getComputedStyle(textNode).fill || '#000000';
+        if (fill.toLowerCase() === 'none') fill = '#000000';
+
+        const textAnchor = textNode.getAttribute('text-anchor') || window.getComputedStyle(textNode).textAnchor || 'start';
+        let textAlign = 'left';
+        if (textAnchor === 'middle') textAlign = 'center';
+        else if (textAnchor === 'end') textAlign = 'right';
+
+        let fontFamily = textNode.getAttribute('font-family') || window.getComputedStyle(textNode).fontFamily || 'Inter, sans-serif';
+        if (!fontFamily.toLowerCase().includes('inter')) {
+          fontFamily = `"Inter", ${fontFamily}`;
+        }
+
+        // Convert SVG coordinates (relative to its viewBox) to fabricOutputInstance coordinates
+        // The mainObjectBounds and scaleFactor are for the entire SVG graphic group.
+        // We need to map text coords from SVG's internal viewBox to the scaled and centered graphic group.
+
+        const relativeXInViewBox = (x - viewBox.x) / viewBox.width;
+        const relativeYInViewBox = (y - viewBox.y) / viewBox.height;
+
+        // Position relative to the mainObjectBounds's top-left, then scaled and centered
+        const posXOnObject = mainObjectBounds.left + relativeXInViewBox * mainObjectBounds.width;
+        const posYOnObject = mainObjectBounds.top + relativeYInViewBox * mainObjectBounds.height;
+
+        // Font size scaling: AI gives font size relative to its viewBox.
+        // We need to scale this font size by the same overall scaleFactor applied to the main SVG group.
+        let finalFontSize = fontSize * scaleFactor;
+        // Enforce minimum practical font size on the output canvas
+        if (finalFontSize < MIN_FONT_SIZE_PX) {
+            console.warn(`Text "${content.substring(0,20)}..." scaled font size ${finalFontSize.toFixed(1)}px is too small. Boosting to ${MIN_FONT_SIZE_PX}px.`);
+            finalFontSize = MIN_FONT_SIZE_PX;
+        }
+
+        let originX = 'left';
+        if (textAlign === 'center') originX = 'center';
+        else if (textAlign === 'right') originX = 'right';
+
+        console.log(`Creating text "${content.substring(0,30)}..." at fabric(${posXOnObject.toFixed(1)}, ${posYOnObject.toFixed(1)}), finalFontSize: ${finalFontSize.toFixed(1)}px`);
+
+        const fabricText = new fabric.IText(content, {
+          left: posXOnObject,
+          top: posYOnObject,
+          originX: originX,
+          originY: 'top', // Consistent origin for y-coordinate interpretation
+          fontSize: finalFontSize,
+          fontFamily: fontFamily,
+          letterSpacing: 0,
+          fill: fill,
+          textAlign: textAlign,
+          selectable: true,
+          editable: true,
+          evented: true,
+          objectCaching: false
+        });
+
+        fabricOutputInstance.add(fabricText);
+      });
+
+      fabricOutputInstance.requestRenderAll();
+      console.log('Text elements processed and added to SVG output canvas');
+
+    } catch (err) {
+      console.error('Error processing SVG text elements:', err);
+    }
+  }
+
+  // Helper function to consolidate formatting and highlighting logic
+  async function formatAndHighlight(codeToProcess: string) {
+    if (!svgCodeElement || !PrismLoaded || !Prism || typeof Prism.highlightElement !== 'function') {
+      // If Prism not ready, just format and set text content, or fallback to raw if prettier fails
+      if (svgCodeElement) {
+        try {
+            const formatted = await prettier.format(codeToProcess, {
+                parser: 'html', plugins: [htmlParser],
+                printWidth: 80, tabWidth: 2, useTabs: false, htmlWhitespaceSensitivity: 'ignore'
+            });
+            svgCodeElement.textContent = formatted;
+            console.log('Formatted code (Prism not ready).');
+        } catch (formatError) {
+            console.error('Error formatting code (Prism not ready):', formatError);
+            svgCodeElement.textContent = codeToProcess; // Fallback to raw code
+        }
+      }
+      return; // Exit if Prism isn't ready
+    }
+
+    isHighlightingInProgress = true;
+    try {
+      const formattedSvg = await prettier.format(codeToProcess, {
+        parser: 'html',
+        plugins: [htmlParser],
+        printWidth: 80,
+        tabWidth: 2,
+        useTabs: false,
+        htmlWhitespaceSensitivity: 'ignore'
+      });
+      svgCodeElement.textContent = formattedSvg;
+      await tick();
+      Prism.highlightElement(svgCodeElement);
+      console.log('SVG code formatted and highlighted.');
+      lastFormattedAndHighlightedSvgCode = codeToProcess;
+    } catch (error) {
+      console.error('Error in formatAndHighlight:', error);
+      svgCodeElement.textContent = codeToProcess; // Fallback to raw code
+      await tick();
+      try {
+        Prism.highlightElement(svgCodeElement); // Try highlighting fallback
+      } catch (highlightError) {
+        console.warn('Error highlighting fallback SVG code:', highlightError);
+      }
+      lastFormattedAndHighlightedSvgCode = codeToProcess;
+    } finally {
+      isHighlightingInProgress = false;
+    }
+  }
+
+  // New helper to decide if processing is needed (called from onMount and reactive block)
+  function processCodeIfNecessary() {
+    if (outputView === 'code' && generatedSvgCode && svgCodeElement) {
+      if (generatedSvgCode !== lastFormattedAndHighlightedSvgCode && !isHighlightingInProgress) {
+        console.log('processCodeIfNecessary: Code changed or not yet processed. Formatting/Highlighting.');
+        formatAndHighlight(generatedSvgCode);
+      } else if (generatedSvgCode === lastFormattedAndHighlightedSvgCode && !isHighlightingInProgress && PrismLoaded && Prism && !svgCodeElement.querySelector('span.token')) {
+        console.log('processCodeIfNecessary: Code same, but spans missing. Re-highlighting.');
+        formatAndHighlight(generatedSvgCode); // Re-run to ensure highlighting is applied
+      }
+    }
+  }
+
+  // React to tab changes or code changes
+  $: if (browser && svgCodeElement) {
+    if (outputView === 'code' && generatedSvgCode) {
+      // Conditions met, call the helper
+      // This will run if outputView changes to 'code' or generatedSvgCode changes while in 'code' view
+      console.log('Reactive block: outputView or generatedSvgCode changed. Triggering processCodeIfNecessary.');
+      processCodeIfNecessary();
+    } else if (outputView !== 'code') {
+      lastFormattedAndHighlightedSvgCode = null;
+    }
+  }
+
+  function updateCanvasBackgroundColor(color: string) {
+    if (fabricInstance) {
+      fabricInstance.setBackgroundColor(color, fabricInstance.renderAll.bind(fabricInstance));
+      canvasBackgroundColor = color;
+      updateImageData();
+      saveCanvasState();
+    }
+  }
+
+</script>
+
+<svelte:head>
+  <title>Daydream</title>
+  <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet" />
+  <!-- Ensure this specific one for outlined symbols is present -->
+  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet" />
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet" />
+  <!-- Add Inter font from Google Fonts -->
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+
+</svelte:head>
+
+<div id = 'app' in:scale={{ start: .98, opacity: 0.5}}>
+  <div class="draw-demo-container">
+
+
+    <div id="main">
+      <div class="toolbars-wrapper">
+        <!-- New Tool Selection Toolbar -->
+
+        <!-- Existing Stroke Options Toolbar -->
+        <div class="vertical-toolbar options-toolbar">
+          <div class="tools-group">
+
+            {#if $selectedTool === 'pen' || $selectedTool === 'eraser'}
+              <!-- PEN/ERASER Tool Options -->
+              <div class="tool-group">
+                <input
+                  type="color"
+                  bind:value={strokeColor}
+                  on:input={() => {
+                    strokeOptions.update(opts => ({...opts, color: strokeColor}));
+                  }}
+                />
+              </div>
+              <div class="tool-group">
+                <VerticalSlider
+                  min={1}
+                  max={30}
+                  step={0.5}
+                  bind:value={strokeSize}
+                  color="#6355FF"
+                  height="120px"
+                  onChange={() => {
+                    strokeOptions.update(opts => ({...opts, size: strokeSize}));
+                    if ($selectedTool === 'eraser') eraserSize = strokeSize;
+                  }}
+                  showValue={true}
+                />
+              </div>
+              <div class="tool-group">
+                <VerticalSlider
+                  min={0.1}
+                  max={1}
+                  step={0.1}
+                  bind:value={strokeOpacity}
+                  color="#6355FF"
+                  height="120px"
+                  onChange={() => {
+                    strokeOptions.update(opts => ({...opts, opacity: strokeOpacity}));
+                  }}
+                  showValue={true}
+                />
+              </div>
+
+            {:else if $selectedTool === 'select'}
+              {#if activeFabricObject && (activeFabricObject.type === 'rect' || activeFabricObject.type === 'circle' || activeFabricObject.type === 'triangle' || activeFabricObject.type === 'ellipse')}
+                <!-- SELECTED SHAPE Object Options -->
+                <div class="tool-group">
+                  <input type="color" value={selectedShapeFillProxy}
+                    on:input={(e) => {
+                      selectedShapeFillProxy = e.currentTarget.value;
+                      updateSelectedObjectProperty('fill', selectedShapeFillProxy);
+                    }} />
                 </div>
+                <div class="tool-group">
+                  <input type="color" value={selectedShapeStrokeProxy}
+                    on:input={(e) => {
+                      selectedShapeStrokeProxy = e.currentTarget.value;
+                      updateSelectedObjectProperty('stroke', selectedShapeStrokeProxy);
+                    }} />
+                </div>
+                <div class="tool-group">
+                  <VerticalSlider
+                    min={0}
+                    max={30}
+                    step={1}
+                    bind:value={selectedShapeStrokeWidthProxy}
+                    color="#6355FF"
+                    height="120px"
+                    onChange={() => {
+                      if (activeFabricObject && activeFabricObject.strokeWidth !== selectedShapeStrokeWidthProxy) {
+                        updateSelectedObjectProperty('strokeWidth', selectedShapeStrokeWidthProxy);
+                      }
+                    }}
+                    showValue={true}
+                  />
+                </div>
+              {:else}
+                <!-- CANVAS BACKGROUND COLOR when no shape is selected -->
+                <div class="tool-group">
+                  <span class="tool-label">Background</span>
+                  <input
+                    type="color"
+                    value={canvasBackgroundColor}
+                    on:input={(e) => updateCanvasBackgroundColor(e.currentTarget.value)}
+                  />
+                </div>
+              {/if}
+            {:else if $selectedTool === 'shape'}
+              <!-- SHAPE Tool (for new shape) Options -->
+              <div class="tool-group">
+                <input type="color" bind:value={shapeFillColor} />
+              </div>
+              <div class="tool-group">
+                <input type="color" bind:value={shapeStrokeColor} />
+              </div>
+
+              <div class="tool-group">
+                <VerticalSlider min={0} max={30} step={1} bind:value={shapeStrokeWidth} color="#6355FF" height="120px" showValue={true} />
+              </div>
+            {:else if $selectedTool === 'text'}
+
+              <div class="tool-group">
+                <input type="color" bind:value={textColor} />
+              </div>
+              <!-- Future: Font Size (Slider/Input), Font Family (Dropdown) -->
+
+              <div class="tool-group">
+                  <VerticalSlider min={8} max={128} step={1} bind:value={fontSize} color="#6355FF" height="100px" showValue={true} />
+              </div>
+              <!-- Placeholder for font family dropdown -->
+
+            {:else}
+              <!-- Default: Could be empty or show global options if any -->
+              <!-- Or just the clear button which is outside this if/else block -->
+            {/if}
+
+            <button class="tool-button clear-button" on:click={clearCanvas}>
+              <span class="material-icons">delete_outline</span>
+            </button>
+
+          </div>
+        </div>
+      </div>
+
+
+      <div class = 'area'>
+        <div class="canvas-wrapper input-canvas" class:ratio-1-1={selectedAspectRatio === '1:1'} class:ratio-portrait={selectedAspectRatio === 'portrait'} class:ratio-landscape={selectedAspectRatio === 'landscape'}>
+          <!-- Canvas container to properly position all canvases together -->
+          <div
+            class="canvas-container-overlay"
+            style="position: relative; width: 100%; height: 100%;"
+            class:dragging-over={isDraggingOver}
+            on:dragover={handleDragOver}
+            on:dragleave={handleDragLeave}
+            on:drop={handleDrop}
+          >
+            <!-- Fabric.js canvas (lower canvas) -->
+            <canvas class='fabric-canvas' bind:this={fabricCanvasHTML}>
+          </canvas>
+
+            <!-- Perfect-freehand canvas (temporary drawing, transparent overlay) -->
+          <canvas
+            bind:this={inputCanvas}
+            class="drawing-canvas"
+            on:pointerdown={onPointerDown}
+            on:pointermove={onPointerMove}
+            on:pointerup={onPointerUp}
+            on:pointercancel={onPointerUp}
+            on:pointerleave={onPointerUp}
+          ></canvas>
+
+            <!-- Drag overlay message -->
+            {#if isDraggingOver}
+            <div class="drag-overlay" transition:fade={{duration: 150}}>
+              <span class="material-symbols-outlined">file_upload</span>
+              <p>Drop image to upload</p>
+            </div>
+            {/if}
+          </div>
+        </div>
+
+        <!-- Replace the toolbar with the CanvasToolbar component -->
+        <CanvasToolbar
+          bind:shapeType={shapeType}
+          activateImageUpload={activateImageUpload}
+        />
+      </div>
+
+
+      <!-- Hidden file input for image uploads -->
+      <input
+        type="file"
+        bind:this={fileInput}
+        on:change={handleFileInputChange}
+        accept="image/*,.svg"
+        style="display: none;"
+      />
+
+      <div class = 'area'>
+        <div class="canvas-wrapper output-canvas" class:ratio-1-1={generatedImageAspectRatio === '1:1'} class:ratio-portrait={generatedImageAspectRatio === 'portrait'} class:ratio-landscape={generatedImageAspectRatio === 'landscape'}>
+          <div class="output-display" class:ratio-1-1={generatedImageAspectRatio === '1:1'} class:ratio-portrait={generatedImageAspectRatio === 'portrait'} class:ratio-landscape={generatedImageAspectRatio === 'landscape'}>
+            {#if generatedSvgCode}
+              <!-- Tab selector for vector output -->
+              <div class="output-tabs">
+                <button class="tab-button {outputView === 'svg' ? 'active' : ''}" on:click={() => outputView = 'svg'}>
+                  SVG
+                </button>
+                <button class="tab-button {outputView === 'code' ? 'active' : ''}" on:click={() => outputView = 'code'}>
+                  Code
+                </button>
+              </div>
+
+              <!-- Keep both views in the DOM and toggle visibility instead -->
+              <div class="output-view svg-view" style="display: {outputView === 'svg' ? 'block' : 'none'}; width: 100%; height: 100%; position: relative;">
+                <canvas class="output-svg-canvas" bind:this={fabricOutputCanvasHTML}></canvas>
+              </div>
+              <div class="output-view code-view" style="display: {outputView === 'code' ? 'block' : 'none'}; width: 100%; height: 100%;">
+                <!-- Modified for correct Prism.js syntax highlighting -->
+                <pre class="svg-code-display language-markup"><code bind:this={svgCodeElement} class="language-markup"></code></pre>
+              </div>
+
+              {#if $isGenerating}
+                <div class="ai-scanning-animation">
+                  <div class='loader'></div>
+                </div>
+              {/if}
+            {:else if $editedImageUrl}
+              <img src={$editedImageUrl} alt="AI generated image" class="output-image" />
+              <button
+                class="model-badge download-button"
+                on:click={() => {
+                  const link = document.createElement('a');
+                  link.href = $editedImageUrl;
+                  link.download = `daydream-image-${Date.now()}.png`;
+                  document.body.appendChild(link);
+                  link.click();
+                  document.body.removeChild(link);
+                }}
+              >
+                <span class="material-icons" style="font-size: 16px; margin-right: 4px;">download</span> Download
+              </button>
+            {:else}
+              <div class="drawing-preview" style="aspect-ratio: {(fabricCanvasHTML?.width || inputCanvas?.width)}/{(fabricCanvasHTML?.height || inputCanvas?.height)}">
+                {#if imageData}
+                  <img src={imageData} alt="Drawing preview" class="drawing-preview-image" style="width: 100%; height: 100%; object-fit: contain;" />
+
+                  {#if $isGenerating}
+                    <div class="ai-scanning-animation">
+                      <div class = 'loader'></div>
+                      <div class="scanning-status">
+                        <h2> Creating</h2>
+                        <div class='dots'>
+                          <div class='dot'></div>
+                          <div class='dot'></div>
+                          <div class='dot'></div>
+                        </div>
+                      </div>
+                    </div>
+                  {/if}
+                  {:else}
+                  <p>Your AI-generated image will appear here</p>
+                {/if}
               </div>
             {/if}
-            {:else}
-            <p>Your AI-generated image will appear here</p>
-          {/if}
+          </div>
         </div>
-      {/if}
+      </div>
     </div>
-  </div>
-</div>
-</div>
 
-<Omnibar
-  settingType="image"
-  bind:additionalContext
-  bind:selectedFormat
-  bind:currentSelectedModel={$selectedModel}
-  isGenerating={$isGenerating}
-  onSubmit={generateImage}
-  parentDisabled={parentOmnibarDisabled}
-  imageModels={imageGenerationModels}
-/>
+  </div>
+
+  <Omnibar
+    settingType="image"
+    bind:additionalContext
+    bind:selectedFormat
+    bind:currentSelectedModel={$selectedModel}
+    isGenerating={$isGenerating}
+    onSubmit={generateImage}
+    parentDisabled={parentOmnibarDisabled}
+    imageModels={imageGenerationModels}
+  />
 
 </div>
 
@@ -1572,6 +4208,16 @@
                   border: none;
                   border-radius: 20px;
                 }
+              }
+
+              .tool-label {
+                display: block;
+                text-align: center;
+                color: #ccc;
+                font-size: 12px;
+                margin-bottom: 4px;
+                font-weight: 500;
+                text-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
               }
             }
           }
