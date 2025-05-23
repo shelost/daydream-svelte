@@ -1445,9 +1445,9 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
         color: #3f4d9c;
         text-shadow: -.5px 0 0 #00106D;
         line-height: 140%;
+        width: 100%;
         display: block;
         text-align: left;
-        white-space: nowrap; // Prevent text wrapping for consistent card sizes
       }
 
     }
@@ -1480,7 +1480,7 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
     }
 
     // Hide second row of prompts when screen height is less than 500px
-    @media (max-height: 720px) {
+    @media (max-height: 600px) {
       .carousel-container.second {
         display: none;
 
