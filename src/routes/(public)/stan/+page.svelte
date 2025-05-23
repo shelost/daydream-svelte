@@ -1447,7 +1447,6 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
         line-height: 140%;
         display: block;
         text-align: left;
-        white-space: nowrap; // Prevent text wrapping for consistent card sizes
       }
 
     }
@@ -1481,9 +1480,11 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
 
     // Hide second row of prompts when screen height is less than 500px
     @media (max-height: 720px) {
+      .carousel-container{
+        margin-bottom: 24px;
+      }
       .second {
         display: none;
-
       }
     }
   }
@@ -2172,7 +2173,7 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
       &.user-bubble{
         box-shadow: none;
         background: linear-gradient(to bottom, #6355FF 50%, #5040ff);
-        padding: 13px 18px 16px 18px;
+        padding: 14px 18px 16px 18px;
         border-radius: 18px 18px 4px 18px;
         box-shadow: inset -1px -2px 8px rgba(black, .15), inset 1px 2px 8px rgba(white, .15), -2px 4px 12px rgba(#00106D, .2);
         p{
