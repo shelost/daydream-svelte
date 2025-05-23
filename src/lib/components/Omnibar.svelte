@@ -553,7 +553,7 @@
         right: 6px;
         top: 50%;
         transform: translateY(-50%);
-        color: rgba(255, 255, 255, 0.5);
+        color: rgba(black, 0.9);
         font-size: 18px;
         pointer-events: none;
       }
