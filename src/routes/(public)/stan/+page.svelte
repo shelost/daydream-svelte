@@ -1008,6 +1008,7 @@
     overflow: auto;
     position: relative;
     touch-action: pan-y pan-x;
+    -webkit-overflow-scrolling: touch;
   }
 
   .global-refresh-button {
@@ -1028,6 +1029,8 @@
     justify-content: center;
     transition: .2s ease;
     box-shadow: 0 4px 10px rgba(0,0,0,0.15);
+    // Ensure button doesn't interfere with touch scrolling
+    touch-action: manipulation;
 
     svg {
       height: 16px; // Slightly larger icon
@@ -1109,6 +1112,8 @@
       width: 100%;
       overflow: hidden;
       height: 60px; // Fixed height for consistent layout
+      // Ensure carousel doesn't interfere with page scrolling
+      touch-action: pan-y;
     }
 
     .carousel-track {
@@ -1120,6 +1125,8 @@
       animation-timing-function: linear;
       animation-iteration-count: infinite;
       will-change: transform;
+      // Allow vertical scrolling on carousel
+      touch-action: pan-y;
 
       &.carousel-left-to-right {
         animation-name: scrollLeftToRight;
@@ -1308,10 +1315,13 @@
     // Adjusted padding: top, sides, bottom (to clear fixed Omnibar)
     padding: 16px 24px 180px 24px; // 80px omnibar + 24px bottom offset + 20px buffer
 
-    // Add touch-action for mobile scrolling
+    // Critical mobile scrolling properties
     touch-action: pan-y;
-    // Enable momentum scrolling on iOS
     -webkit-overflow-scrolling: touch;
+    // Prevent scrolling issues on some devices
+    transform: translateZ(0);
+    // Enable hardware acceleration
+    will-change: scroll-position;
 
     box-sizing: border-box;
     display: flex;
@@ -1997,20 +2007,29 @@
     #main{
       border-radius: 0;
       // Ensure touch scrolling works properly on mobile
-      overflow-y: auto;
-      -webkit-overflow-scrolling: touch;
-      touch-action: pan-y;
+      overflow-y: auto !important;
+      -webkit-overflow-scrolling: touch !important;
+      touch-action: pan-y !important;
+      // Force hardware acceleration for smooth scrolling
+      transform: translateZ(0);
+      // Prevent scrolling issues
+      -webkit-transform: translateZ(0);
     }
 
     .chat-messages-container{
       padding: 16px 12px 180px 12px !important; // Reduced side padding for mobile
       margin: 0 auto !important; // Remove top margin
-      height: calc(100vh - 32px); // Ensure proper height calculation
-      max-height: calc(100vh - 32px);
-      // Ensure scrolling works on mobile
-      overflow-y: auto;
-      -webkit-overflow-scrolling: touch;
-      touch-action: pan-y;
+      height: calc(100vh - 32px) !important; // Ensure proper height calculation
+      max-height: calc(100vh - 32px) !important;
+      // Force scrolling to work on mobile
+      overflow-y: auto !important;
+      -webkit-overflow-scrolling: touch !important;
+      touch-action: pan-y !important;
+      // Additional mobile fixes
+      transform: translateZ(0);
+      -webkit-transform: translateZ(0);
+      // Prevent any potential scrolling blocks
+      position: relative;
     }
 
     .message-wrapper{
@@ -2018,6 +2037,37 @@
       padding: 0;
       max-width: 100%;
       width: 95% !important; // Slightly wider for better mobile experience
+      // Ensure messages don't block scrolling
+      touch-action: pan-y;
+    }
+
+    // Ensure carousels work properly on mobile
+    .carousel-container{
+      height: 90px;
+      // Keep vertical scrolling enabled
+      touch-action: pan-y !important;
+    }
+
+    .carousel-track {
+      animation-duration: 25s;
+      height: 100%;
+      // Keep vertical scrolling enabled
+      touch-action: pan-y !important;
+    }
+
+    // Ensure prompt cards don't interfere with scrolling
+    .prompt-card {
+      width: 200px;
+      padding: 12px 16px;
+      margin: 0;
+      // Allow parent scrolling to work
+      touch-action: pan-y;
+
+      .prompt-text {
+        width: 100%;
+        text-wrap: wrap;
+        line-height: 120%;
+      }
     }
   }
 
