@@ -1877,6 +1877,9 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
       overflow-x: auto;
       position: relative; /* Ensure position relative for absolute positioning of header */
     }
+    :global(li){
+      margin: 24px 0;
+    }
     :global(pre code) {
       padding: 0;
       background-color: transparent;
