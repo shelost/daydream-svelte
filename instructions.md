@@ -1576,3 +1576,211 @@ The goal is to transform `src/routes/(public)/chat/+page.svelte` from an image g
     - Request a canvas render.
     - Save canvas state.
   - The existing `object:added` handler should manage `recordHistory()`.
+
+# Streaming Image Generation Implementation Plan
+
+## Objective
+Implement OpenAI's new Responses API with image_generation tools to provide streaming image generation that shows progressive refinement from blurry to detailed images.
+
+## Backend Changes
+1. Update `src/routes/api/ai/edit-image/+server.ts` to use OpenAI's Responses API
+2. Implement Server-Sent Events (SSE) streaming for real-time image updates
+3. Handle partial_image events and stream base64 data to frontend
+
+## Frontend Changes
+1. Modify `generateImage()` function in canvas page to handle EventSource streaming
+2. Add progressive image display state management
+3. Implement UI feedback for streaming process
+4. Update error handling for streaming scenarios
+
+## Technical Implementation
+- Use `openai.responses.create()` with `stream: true` and `image_generation` tool
+- Handle `response.image_generation_call.partial_image` events
+- Stream base64 image data via SSE to frontend
+- Display progressive images in real-time as they refine
+
+## Benefits
+- Better user experience with progressive image refinement
+- Real-time feedback showing generation progress
+- Modern streaming approach aligned with OpenAI's latest capabilities
+
+## OpenAI Streaming Responses API Integration for Progressive Image Generation
+
+### Objective
+Implement OpenAI's new streaming Responses API to provide progressive image generation where images start blurry and gradually refine to detailed, high-quality results. This creates a better user experience with real-time visual feedback during the generation process.
+
+### Technical Implementation
+
+#### Backend Streaming API (`src/routes/api/ai/edit-image/+server.ts`)
+- Use `openai.responses.create()` with `model: "gpt-4.1"` and `stream: true`
+- Configure `tools: [{ type: "image_generation", partial_images: 3 }]` for 3 progressive refinement stages
+- **CRITICAL FIX**: Properly format image input using message structure instead of embedding base64 in text prompt
+- Input format: `input: [{ role: "user", content: [{ type: "input_text", text: prompt }, { type: "input_image", image_url: dataUrl }] }]`
+- Handle streaming events:
+  - `response.image_generation_call.partial_image`: Progressive images from blurry to detailed
+  - `response.image_generation_call.image_generated`: Final high-quality image
+  - `response.function_call_completed`: Generation completion signal
+- Implement Server-Sent Events for real-time frontend updates
+- **Buffering Fix**: Handle chunked SSE data properly to prevent JSON parsing errors with large base64 images
+
+#### Frontend Streaming Client (`src/routes/(public)/canvas/+page.svelte`)
+- Capture Fabric.js canvas as base64 data URL using `fabricInstance.toDataURL({ format: 'png' })`
+- **Debugging**: Verify canvas data capture before API calls
+- Use fetch with ReadableStream for manual SSE parsing (EventSource doesn't support POST with body)
+- Implement buffering to handle chunked responses from large base64 image data
+- Parse streaming events: `status`, `partial_image`, `final_image`, `completed`, `error`, `done`
+- Progressive image display via `editedImageUrl.set(data.imageData)`
+- Maintain parallel standard generation for comparison
+
+#### Key Benefits
+- **Structurally-faithful generation**: Canvas image properly sent to AI for structure preservation
+- **Progressive refinement**: Users see images improve from blurry to detailed in real-time
+- **Better UX**: Immediate visual feedback instead of waiting for complete generation
+- **Robust streaming**: Proper buffering handles large image data without parse errors
+
+#### Fixed Issues
+- ✅ **Image data not being sent**: Fixed Responses API input format to properly include canvas image
+- ✅ **JSON parse errors**: Implemented proper buffering for chunked SSE data
+- ✅ **Generated images not matching canvas**: Now correctly sends canvas snapshot to AI
+- ✅ **TypeScript compatibility**: Added custom interfaces and type bypassing for new API
+
+### Current Status
+Fully implemented with canvas image capture, streaming backend, and progressive frontend display. System now properly sends user drawings to OpenAI for structure-faithful image generation.
+
+# Plan: Enhance AI Chat Interface Smoothness in src/routes/(public)/stan/+page.svelte
+
+## Goals
+1. Smooth fade-in for each word as the AI streams in new content.
+2. Replace the generic blinking cursor with a branded, animated cursor using #6355FF.
+3. Prevent height shifting/jumping when a long response finishes streaming.
+
+## Detailed Steps
+
+### 1. Smooth Fade-In for Streaming Words
+- As the AI streams in new words, split the message content into words.
+- Render each word in a <span> with a fade-in animation as it appears.
+- Use Svelte's {#each} block and a custom animation (CSS or Svelte transition).
+- Track which words have been revealed to avoid re-animating on re-renders.
+
+### 2. Branded Animated Cursor
+- Replace the blinking block cursor with a custom animated SVG or CSS element.
+- Use the brand color #6355FF.
+- Animation: a pulsing or looping effect (e.g., a glowing dot or animated gradient bar).
+
+### 3. Prevent Height Shifting on Response End
+- Ensure the chat message container always reserves enough space for the streaming message.
+- Use min-height or a fixed height for the message bubble while streaming, then smoothly transition to the final height.
+- Optionally, use a ghost element to reserve space or animate the height change.
+
+### 4. Testing and Polish
+- Test with short and long responses, rapid streaming, and edge cases.
+- Ensure accessibility and mobile responsiveness are preserved.
+
+## Checklist
+- [ ] Add this plan to instructions.md at the project root.
+- [ ] Refactor the assistant message rendering to split streamed content into words and animate each word's appearance.
+- [ ] Implement a branded animated cursor for streaming state.
+- [ ] Refactor the message bubble/container to prevent height shifting at the end of streaming.
+- [ ] Test the interface for smoothness, branding, and no layout jumps.
+- [ ] Ensure no duplicate functions or imports, and all code is complete and non-elided.
+
+## Plan: Live Markdown/Code Formatting During Streaming in Stan Chat Interface
+
+### Problem
+Currently, markdown and code formatting are only applied after the AI finishes streaming its response. During streaming, users see plain text, and only after the response is complete does the markdown and syntax highlighting appear. This is visually jarring and not as smooth as ChatGPT or other modern chat UIs.
+
+### Solution Outline
+1. **Re-render Markdown on Every Stream Update**
+   - As each new chunk/word arrives, re-render the markdown for the entire current message so far.
+   - The Markdown component always renders the latest partial content, not just the final result.
+2. **Handle Partial Markdown**
+   - Accept that sometimes, the markdown will be incomplete (e.g., unclosed code block or list).
+   - Most markdown parsers handle partial input gracefully, rendering what they can.
+3. **Performance Considerations**
+   - Re-rendering markdown on every chunk is not a performance issue for chat UIs, as confirmed by OpenAI community best practices ([ref](https://community.openai.com/t/streaming-markdown-or-other-formatted-text/510268)).
+   - If needed, throttle updates for very long responses.
+4. **Syntax Highlighting for Code Blocks**
+   - As code blocks appear in the streamed markdown, trigger syntax highlighting (e.g., with Prism.js) after each render.
+   - Use Svelte's `tick()` to ensure the DOM is updated before highlighting.
+5. **Fade-in Animation**
+   - The word-by-word fade-in can be removed for markdown output, or adapted to block elements if desired.
+6. **Implementation Steps**
+   - In the Svelte template, for streaming assistant messages, always render the `<Markdown content={message.content} />` (not just after streaming ends).
+   - Remove the word-by-word fade-in for markdown (since markdown output is not word-split), or apply fade-in to block elements if desired.
+   - After each render, call the syntax highlighter for any new code blocks.
+
+### Checklist
+- [ ] Update `instructions.md` with this plan.
+- [ ] Refactor the assistant message rendering so that `<Markdown content={message.content} />` is always used for streaming messages, not just after streaming ends.
+- [ ] Ensure the markdown component is re-rendered on every new chunk.
+- [ ] After each render, trigger syntax highlighting for code blocks.
+- [ ] Test with partial markdown (e.g., incomplete code blocks, lists) to ensure graceful degradation.
+- [ ] Remove or adapt the word-by-word fade-in for markdown output.
+- [ ] Test for performance and smoothness.
+- [ ] Ensure no duplicate code or imports.
+
+## Plan: Fix Layout Shift When Animated Cursor Disappears in Stan Chat Interface
+
+### Problem
+When the AI finishes streaming a response, the animated purple cursor disappears, causing a slight layout shift in the message bubble. This is due to the cursor's space being removed from the DOM, resulting in a visual "pop" or shift that breaks the smoothness of the UI.
+
+### Solution Outline
+1. **Reserve Space for the Cursor at All Times**
+   - Always render a placeholder `<span>` at the end of the message bubble, regardless of streaming state.
+   - When streaming, show the animated cursor.
+   - When not streaming, show an invisible (opacity: 0) or transparent element of the same width.
+2. **Smoothly Fade Out the Cursor**
+   - Instead of instantly removing the cursor, animate its opacity to 0 when streaming ends, then remove it after the animation completes.
+   - Use a CSS transition or Svelte's `transition:fade` for smoothness.
+3. **Prevent Horizontal Reflow**
+   - The placeholder ensures the message bubble's width never changes when the cursor disappears.
+   - The cursor's space is always reserved, so the text and code blocks never shift.
+4. **Implementation Steps**
+   - Refactor the message rendering so that the cursor placeholder is always present.
+   - Use a CSS class or inline style to control visibility and animation.
+   - Optionally, use Svelte's `transition:fade` for a smooth fade-out.
+
+### Checklist
+- [ ] Add this plan to `instructions.md`.
+- [ ] Refactor the assistant message rendering to always include a cursor placeholder at the end of the message.
+- [ ] When streaming, show the animated cursor.
+- [ ] When not streaming, show an invisible placeholder of the same width.
+- [ ] Optionally, animate the cursor's opacity for a smooth fade-out.
+- [ ] Test with short and long messages, code blocks, and edge cases.
+- [ ] Ensure no duplicate code or imports.
+
+## Plan: Add Example Prompts to Stan Chat Interface Start State
+
+### Problem
+The start state of the Stan chat interface only shows a welcome message and an empty input field. New users might not know what to ask or how to get started, creating a "blank page" problem where users face decision paralysis.
+
+### Solution Outline
+1. **Example Prompt Design**
+   - Create 4 clickable prompt cards/buttons below the welcome header
+   - Each button contains one of the specified prompts
+   - Buttons should be visually appealing and consistent with the Stan branding
+   - Layout should work well on both desktop and mobile
+2. **Interaction Behavior**
+   - When a user clicks a prompt button, populate the `omnibarPrompt`
+   - Optionally auto-submit the prompt to immediately start the conversation
+   - Transition smoothly from start state to chat state
+3. **Prompt Selection**
+   - **"What is a Stan Store?"** - Educational about the platform
+   - **"Give me a list of content ideas"** - Content creation assistance
+   - **"Create an outline for a 4-module course on UGC"** - Course/education planning
+   - **"How do I get started making money online?"** - Business/monetization guidance
+4. **Styling**
+   - Cards should match the purple/white theme (#6355FF)
+   - Use hover effects and smooth transitions
+   - Responsive grid layout for the 4 prompts
+   - Clear typography that's easy to read
+
+### Checklist
+- [ ] Add this plan to `instructions.md`
+- [ ] Create a prompt examples section in the start state HTML
+- [ ] Implement 4 clickable prompt buttons with the specified text
+- [ ] Add click handlers to populate omnibarPrompt and optionally submit
+- [ ] Style the prompt cards to match the Stan branding
+- [ ] Ensure responsive layout for mobile and desktop
+- [ ] Test smooth transition from start state to chat state
+- [ ] Ensure no duplicate code or imports

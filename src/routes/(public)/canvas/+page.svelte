@@ -1395,8 +1395,26 @@ Again, return ONLY the SVG code with no additional text.`;
     // Capture latest snapshot for preview and for API payloads
     updateImageData();
 
+    // Add debugging to verify we're capturing canvas data properly
+    console.log('Canvas image data captured:', {
+      hasImageData: !!imageData,
+      imageDataLength: imageData ? imageData.length : 0,
+      fabricObjects: fabricInstance ? fabricInstance.getObjects().length : 0,
+      canvasSize: { width: canvasWidth, height: canvasHeight }
+    });
+
+    // Verify imageData is valid
+    if (!imageData || !imageData.startsWith('data:image/')) {
+      console.error('Invalid or missing canvas image data:', imageData ? imageData.substring(0, 50) + '...' : 'null');
+      errorMessage = "Failed to capture canvas image data. Please ensure you have drawn something on the canvas.";
+      setTimeout(() => { errorMessage = null; }, 3000);
+      isGenerating.set(false);
+      isEditing.set(false);
+      return;
+    }
+
     isGenerating.set(true);
-    isEditing.set(true); // Assuming edit is always part of the generation flow now
+    isEditing.set(true);
     errorMessage = null;
 
     // Reset previous results
@@ -1447,51 +1465,163 @@ Again, return ONLY the SVG code with no additional text.`;
     };
 
     try {
-      if ($selectedModel === 'gpt-image-1') { // Only GPT-Image-1 handled here
-        // Parallel requests: one for new image, one for strict edit
-        const [standardRes, editRes] = await Promise.all([
-          fetchAndLog('/api/ai/generate-image', { // <-- USE fetchAndLog
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(generatePayload)
-          }),
-          fetchAndLog('/api/ai/edit-image', { // <-- USE fetchAndLog (assuming edit-image endpoint will also be updated)
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(editPayload)
-          })
-        ]);
+      if ($selectedModel === 'gpt-image-1') {
+        // Use fetch with streaming response for edit-image
+        const editResponse = fetch('/api/ai/edit-image', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(editPayload)
+        });
 
-        if (standardRes.ok) {
-          const data = await standardRes.json();
-          const url = data.imageUrl || data.url;
-          if (url) {
-            generatedImageUrl.set(url);
-            generatedByModel.set(data.model || 'gpt-image-1');
-            if (data.aspectRatio) generatedImageAspectRatio = data.aspectRatio;
+        // Run standard generation in parallel
+        const standardResponse = fetch('/api/ai/generate-image', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(generatePayload)
+        });
+
+        // Handle streaming edit response with proper buffering
+        editResponse.then(async (response) => {
+          if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
           }
-        } else {
-          console.error('Standard generation failed', await standardRes.text());
-        }
 
-        if (editRes.ok) {
-          const data = await editRes.json();
-          const url = data.imageUrl || data.url;
-          if (url) {
-            editedImageUrl.set(url);
-            editedByModel.set(data.model || 'gpt-image-1-edit'); // Consistent fallback naming
+          if (!response.body) {
+            throw new Error('No response body for streaming');
           }
-        } else {
-          console.error('Edit generation failed', await editRes.text());
-        }
 
-        if (!standardRes.ok && !editRes.ok) {
-          // If both failed, check their individual apiLogEntry (if any) already handled by fetchAndLog
-          throw new Error('Failed to generate image (both standard and edit failed)');
-        }
+          const reader = response.body.getReader();
+          const decoder = new TextDecoder();
+          let buffer = ''; // Buffer to accumulate incomplete data
+
+          try {
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+
+              // Decode the chunk and add to buffer
+              const chunk = decoder.decode(value, { stream: true });
+              buffer += chunk;
+
+              // Process complete SSE messages from buffer
+              const lines = buffer.split('\n');
+
+              // Keep the last potentially incomplete line in buffer
+              buffer = lines.pop() || '';
+
+              for (const line of lines) {
+                if (line.startsWith('data: ')) {
+                  try {
+                    const jsonStr = line.slice(6).trim();
+                    if (jsonStr === '') continue; // Skip empty data lines
+
+                    const data = JSON.parse(jsonStr);
+                    console.log('Received streaming event:', data.type);
+
+                    switch (data.type) {
+                      case 'status':
+                        console.log('Status:', data.message);
+                        break;
+
+                      case 'partial_image':
+                        console.log(`Received partial image ${data.imageIndex}`);
+                        // Update the displayed image with the progressive version
+                        editedImageUrl.set(data.imageData);
+                        editedByModel.set('gpt-4.1-streaming');
+                        break;
+
+                      case 'final_image':
+                        console.log('Final image received:', data.imageUrl);
+                        editedImageUrl.set(data.imageUrl);
+                        editedByModel.set(data.model);
+                        if (data.aspectRatio) generatedImageAspectRatio = data.aspectRatio;
+                        break;
+
+                      case 'completed':
+                        console.log('Image generation completed');
+                        if (data.finalImageUrl) {
+                          editedImageUrl.set(data.finalImageUrl);
+                        }
+                        break;
+
+                      case 'error':
+                        console.error('Streaming error:', data.error);
+                        errorMessage = data.error;
+                        break;
+
+                      case 'done':
+                        console.log('Stream completed');
+                        isGenerating.set(false);
+                        isEditing.set(false);
+                        return; // Exit the function
+                    }
+                  } catch (parseError) {
+                    console.error('Error parsing streaming data:', parseError);
+                    console.log('Problematic line length:', line.length);
+                    console.log('Line preview:', line.substring(0, 100) + (line.length > 100 ? '...' : ''));
+                    // Continue processing other lines instead of failing completely
+                  }
+                }
+              }
+            }
+
+            // Process any remaining complete message in buffer
+            if (buffer.trim() && buffer.startsWith('data: ')) {
+              try {
+                const jsonStr = buffer.slice(6).trim();
+                if (jsonStr !== '') {
+                  const data = JSON.parse(jsonStr);
+                  console.log('Final buffered event:', data.type);
+                  // Process final message if needed
+                }
+              } catch (parseError) {
+                console.error('Error parsing final buffered data:', parseError);
+              }
+            }
+
+          } finally {
+            reader.releaseLock();
+          }
+        }).catch((error) => {
+          console.error('Error in streaming edit:', error);
+          errorMessage = error.message || 'Error during streaming generation';
+          isGenerating.set(false);
+          isEditing.set(false);
+        });
+
+        // Handle standard generation response
+        standardResponse.then(async (response) => {
+          if (!response.ok) {
+            console.error('Standard generation failed with status:', response.status);
+            return;
+          }
+
+          try {
+            const data = await response.json();
+            const url = data.imageUrl || data.url;
+            if (url) {
+              generatedImageUrl.set(url);
+              generatedByModel.set(data.model || 'gpt-image-1');
+              if (data.aspectRatio) generatedImageAspectRatio = data.aspectRatio;
+            }
+          } catch (error) {
+            console.error('Error parsing standard generation response:', error);
+          }
+        }).catch((error) => {
+          console.error('Standard generation failed:', error);
+        });
+
+        // Ensure flags are cleared after both operations
+        Promise.allSettled([editResponse, standardResponse]).then(() => {
+          isGenerating.set(false);
+          isEditing.set(false);
+        });
+
       } else {
-        // Replicate-based models
-        const repRes = await fetchAndLog('/api/ai/edit-replicate', { // <-- USE fetchAndLog (assuming this endpoint will also be updated)
+        // Replicate-based models (non-streaming for now)
+        const repRes = await fetchAndLog('/api/ai/edit-replicate', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ ...generatePayload, model: $selectedModel })
@@ -1510,15 +1640,15 @@ Again, return ONLY the SVG code with no additional text.`;
           editedByModel.set(data.model || $selectedModel);
           if (data.aspectRatio) generatedImageAspectRatio = data.aspectRatio;
         }
+
+        isGenerating.set(false);
+        isEditing.set(false);
       }
     } catch (err) {
       console.error('Error generating image', err);
-      // Error message is set based on the actual error from fetchAndLog or here
-      // No need to set errorMessage if fetchAndLog already logged it via its own apiLogEntry
-      if (!(err.message && err.message.includes('apiLogEntry'))) { // Avoid double logging if error came with log
+      if (!(err.message && err.message.includes('apiLogEntry'))) {
           errorMessage = err instanceof Error ? err.message : 'Unknown error during image generation';
       }
-    } finally {
       isGenerating.set(false);
       isEditing.set(false);
     }

@@ -1585,67 +1585,157 @@
 
       // Different API calls based on selected model
       if ($selectedModel === 'gpt-image-1') {
-        // Call both OpenAI API endpoints in parallel
-        const [standardResponse, editResponse] = await Promise.all([
-          // Standard image generation
-          fetch('/api/ai/generate-image', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(requestPayload)
-          }),
+        // Use streaming for the edit endpoint with GPT-Image-1
+        console.log('Starting streaming image generation...');
 
-          // Edited image generation
-          fetch('/api/ai/edit-image', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(editRequestPayload)
-          })
-        ]);
+        // Use fetch with streaming response for edit-image
+        const editResponse = fetch('/api/ai/edit-image', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(editRequestPayload)
+        });
 
-        // Handle standard image generation response
-        if (standardResponse.ok) {
-          const standardResult = await standardResponse.json();
-          console.log('Standard image generation successful');
+        // Run standard generation in parallel
+        const standardResponse = fetch('/api/ai/generate-image', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(requestPayload)
+        });
 
-          // Handle different response formats robustly
-          const standardImageUrl = standardResult.imageUrl || standardResult.url;
-          if (standardImageUrl) {
-            generatedImageUrl.set(standardImageUrl);
-            generatedByModel.set(standardResult.model || 'gpt-image-1');
-            if (standardResult.aspectRatio) {
-              generatedImageAspectRatio = standardResult.aspectRatio;
+        // Handle streaming edit response
+        try {
+          const response = await editResponse;
+
+          if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+          }
+
+          if (!response.body) {
+            throw new Error('No response body for streaming');
+          }
+
+          const reader = response.body.getReader();
+          const decoder = new TextDecoder();
+          let buffer = ''; // Buffer to accumulate incomplete data
+
+          try {
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+
+              // Decode the chunk and add to buffer
+              const chunk = decoder.decode(value, { stream: true });
+              buffer += chunk;
+
+              // Process complete SSE messages from buffer
+              const lines = buffer.split('\n');
+
+              // Keep the last potentially incomplete line in buffer
+              buffer = lines.pop() || '';
+
+              for (const line of lines) {
+                if (line.startsWith('data: ')) {
+                  try {
+                    const jsonStr = line.slice(6).trim();
+                    if (jsonStr === '') continue; // Skip empty data lines
+
+                    const data = JSON.parse(jsonStr);
+                    console.log('Received streaming event:', data.type);
+
+                    switch (data.type) {
+                      case 'status':
+                        console.log('Status:', data.message);
+                        break;
+
+                      case 'partial_image':
+                        console.log(`Received partial image ${data.imageIndex}`);
+                        // Update the displayed image with the progressive version
+                        editedImageUrl.set(data.imageData);
+                        editedByModel.set('gpt-4.1-streaming');
+                        break;
+
+                      case 'final_image':
+                        console.log('Final image received:', data.imageUrl);
+                        editedImageUrl.set(data.imageUrl);
+                        editedByModel.set(data.model);
+                        if (data.aspectRatio) generatedImageAspectRatio = data.aspectRatio;
+                        break;
+
+                      case 'completed':
+                        console.log('Image generation completed');
+                        if (data.finalImageUrl) {
+                          editedImageUrl.set(data.finalImageUrl);
+                        }
+                        break;
+
+                      case 'error':
+                        console.error('Streaming error:', data.error);
+                        errorMessage = data.error;
+                        break;
+
+                      case 'done':
+                        console.log('Stream completed');
+                        break;
+                    }
+                  } catch (parseError) {
+                    console.error('Error parsing streaming data:', parseError);
+                    console.log('Problematic line length:', line.length);
+                    console.log('Line preview:', line.substring(0, 100) + (line.length > 100 ? '...' : ''));
+                    // Continue processing other lines instead of failing completely
+                  }
+                }
+              }
+            }
+
+            // Process any remaining complete message in buffer
+            if (buffer.trim() && buffer.startsWith('data: ')) {
+              try {
+                const jsonStr = buffer.slice(6).trim();
+                if (jsonStr !== '') {
+                  const data = JSON.parse(jsonStr);
+                  console.log('Final buffered event:', data.type);
+                  // Process final message if needed
+                }
+              } catch (parseError) {
+                console.error('Error parsing final buffered data:', parseError);
+              }
+            }
+
+          } finally {
+            reader.releaseLock();
+          }
+        } catch (streamError) {
+          console.error('Streaming failed:', streamError);
+          errorMessage = streamError instanceof Error ? streamError.message : 'Streaming error occurred';
+        }
+
+        // Handle standard image generation response in parallel
+        try {
+          const stdResponse = await standardResponse;
+          if (stdResponse.ok) {
+            const standardResult = await stdResponse.json();
+            console.log('Standard image generation successful');
+
+            // Handle different response formats robustly
+            const standardImageUrl = standardResult.imageUrl || standardResult.url;
+            if (standardImageUrl) {
+              generatedImageUrl.set(standardImageUrl);
+              generatedByModel.set(standardResult.model || 'gpt-image-1');
+              if (standardResult.aspectRatio) {
+                generatedImageAspectRatio = standardResult.aspectRatio;
+              }
+            } else {
+              console.error('No image URL found in standard response:', standardResult);
             }
           } else {
-            console.error('No image URL found in standard response:', standardResult);
+            console.error('Failed to generate standard image:', stdResponse.status, stdResponse.statusText);
           }
-        } else {
-          console.error('Failed to generate standard image:', standardResponse.status, standardResponse.statusText);
-        }
-
-        // Handle edited image response
-        if (editResponse.ok) {
-          const editResult = await editResponse.json();
-          console.log('Edit image generation successful');
-
-          // Handle different response formats robustly
-          const editImageUrl = editResult.imageUrl || editResult.url;
-          if (editImageUrl) {
-            editedImageUrl.set(editImageUrl);
-            editedByModel.set(editResult.model || 'gpt-image-1-edit');
-          } else {
-            console.error('No image URL found in edit response:', editResult);
-          }
-        } else {
-          console.error('Failed to generate edited image:', editResponse.status, editResponse.statusText);
-        }
-
-        // Check if both requests failed
-        if (!standardResponse.ok && !editResponse.ok) {
-          throw new Error('Failed to generate both standard and edited images');
+        } catch (standardError) {
+          console.error('Standard generation failed:', standardError);
         }
       } else if ($selectedModel === 'flux-canny-pro' || $selectedModel === 'controlnet-scribble' || $selectedModel === 'stable-diffusion' || $selectedModel === 'latent-consistency') {
         // Call the Replicate API for the selected model

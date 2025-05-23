@@ -1,7 +1,5 @@
-import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import OpenAI from 'openai';
-import { File } from 'undici';
 
 // Helper function to fetch an image URL and convert it to a base64 data URL
 async function convertUrlToDataUrl(imageUrl: string): Promise<{ dataUrl: string, imageType: string } | null> {
@@ -48,26 +46,68 @@ async function convertUrlToDataUrl(imageUrl: string): Promise<{ dataUrl: string,
     }
 }
 
+// Extended interfaces for the new streaming events (since they're not in OpenAI types yet)
+interface PartialImageEvent {
+    type: "response.image_generation_call.partial_image";
+    partial_image_index: number;
+    partial_image_b64: string;
+}
+
+interface ImageGeneratedEvent {
+    type: "response.image_generation_call.image_generated";
+    image_url: string;
+}
+
+interface FunctionCallCompletedEvent {
+    type: "response.function_call_completed";
+}
+
+interface StreamErrorEvent {
+    type: "error";
+    error?: string;
+}
+
+type ExtendedStreamEvent = PartialImageEvent | ImageGeneratedEvent | FunctionCallCompletedEvent | StreamErrorEvent;
+
 export const POST: RequestHandler = async (event) => {
   try {
-    console.log('Image edit API called');
+    console.log('Streaming image edit API called');
     const requestData = await event.request.json();
     let {
       drawingContent,
       imageData,
       aspectRatio,
-      prompt: clientPrompt
+      prompt: clientPrompt,
+      additionalContext
     } = requestData;
 
+    // Add debugging for received image data
+    console.log('Received request data:', {
+      hasImageData: !!imageData,
+      imageDataType: typeof imageData,
+      imageDataLength: imageData ? imageData.length : 0,
+      imageDataPrefix: imageData ? imageData.substring(0, 50) + '...' : 'null',
+      aspectRatio,
+      hasPrompt: !!clientPrompt,
+      hasDrawingContent: !!drawingContent
+    });
+
     if (!imageData) {
-        return json({ error: 'Image data or URL is required.' }, { status: 400 });
+        // Return error as JSON for non-streaming errors
+        return new Response(JSON.stringify({ error: 'Image data or URL is required.' }), {
+            status: 400,
+            headers: { 'Content-Type': 'application/json' }
+        });
     }
 
     if (typeof imageData === 'string' && (imageData.startsWith('http://') || imageData.startsWith('https://'))) {
         console.log(`imageData is a URL: ${imageData}. Attempting to fetch and convert.`);
         const conversionResult = await convertUrlToDataUrl(imageData);
         if (!conversionResult || !conversionResult.dataUrl) {
-            return json({ error: 'Failed to fetch or convert image from URL. Ensure the URL points to a supported image format (JPEG, PNG, GIF, WEBP) and is publicly accessible.' }, { status: 400 });
+            return new Response(JSON.stringify({ error: 'Failed to fetch or convert image from URL. Ensure the URL points to a supported image format (JPEG, PNG, GIF, WEBP) and is publicly accessible.' }), {
+                status: 400,
+                headers: { 'Content-Type': 'application/json' }
+            });
         }
         imageData = conversionResult.dataUrl;
     }
@@ -80,25 +120,42 @@ export const POST: RequestHandler = async (event) => {
     const matches = imageData.match(/^data:(image\/\w+);base64,(.+)$/);
     if (!matches || matches.length !== 3) {
       console.error('Invalid image data format. Expected data URL (e.g., data:image/png;base64,...). Received (first 100 chars):', typeof imageData === 'string' ? imageData.substring(0,100) + "..." : "Not a string");
-      return json({ error: 'Invalid image data format. Ensure it is a valid data URL (e.g., data:image/png;base64,...) or a fetchable image URL.' }, { status: 400 });
+      return new Response(JSON.stringify({ error: 'Invalid image data format. Ensure it is a valid data URL (e.g., data:image/png;base64,...) or a fetchable image URL.' }), {
+          status: 400,
+          headers: { 'Content-Type': 'application/json' }
+      });
     }
 
     const imageType = matches[1];
     const base64Data = matches[2];
-    const imgBuffer = Buffer.from(base64Data, 'base64');
 
     // @ts-ignore
     const { OPENAI_API_KEY } = await import('$env/static/private');
 
     if (!OPENAI_API_KEY) {
-      return json({ error: 'OpenAI API key is not configured' }, { status: 500 });
+      return new Response(JSON.stringify({ error: 'OpenAI API key is not configured' }), {
+          status: 500,
+          headers: { 'Content-Type': 'application/json' }
+      });
     }
 
     const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
     if (!clientPrompt || typeof clientPrompt !== 'string' || clientPrompt.trim() === '') {
-      return json({ error: 'Prompt is required and must be a non-empty string.' }, { status: 400 });
+      return new Response(JSON.stringify({ error: 'Prompt is required and must be a non-empty string.' }), {
+          status: 400,
+          headers: { 'Content-Type': 'application/json' }
+      });
     }
+
+    // Combine prompt with additional context if provided
+    let finalPrompt = clientPrompt;
+    if (additionalContext && additionalContext.trim()) {
+        finalPrompt = `${clientPrompt}\n\nAdditional context: ${additionalContext}`;
+    }
+
+    // Add image context to the prompt
+    finalPrompt = `Based on the provided sketch image: ${finalPrompt}`;
 
     let imageSizeTyped: "1024x1024" | "1792x1024" | "1024x1792" = "1024x1024";
     if (aspectRatio) {
@@ -110,89 +167,168 @@ export const POST: RequestHandler = async (event) => {
           imageSizeTyped = '1024x1024';
       }
     }
-    console.log('Using image size for OpenAI edit:', imageSizeTyped);
+    console.log('Using image size for streaming generation:', imageSizeTyped);
 
-    try {
-      const extension = imageType.split('/')[1];
-      const file = new File([imgBuffer], `image.${extension || 'png'}`, { type: imageType });
+    // Create a readable stream for Server-Sent Events
+    const stream = new ReadableStream({
+      async start(controller) {
+        try {
+          console.log('Starting streaming image generation with Responses API');
 
-      // @ts-ignore - Bypassing strict type check for size, as gpt-image-1 may support non-square sizes for edit per cookbook.
-      const response = await openai.images.edit({
-        model: 'gpt-image-1',
-        prompt: clientPrompt,
-        image: file,
-        n: 1,
-        size: imageSizeTyped as any // Cast to any to satisfy linter for model-specific sizes
-      });
+          // Send initial status
+          const encoder = new TextEncoder();
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify({
+            type: 'status',
+            message: 'Starting image generation...'
+          })}\n\n`));
 
-      if (response.data && response.data.length > 0) {
-        const editedImage = response.data[0];
-        if (editedImage.revised_prompt) {
-          console.log('GPT-Image-1 revised prompt:', editedImage.revised_prompt);
-        }
-        if (editedImage.url) {
-          return json({
-            imageUrl: editedImage.url,
-            url: editedImage.url,
-            model: "gpt-image-1",
-            revised_prompt: editedImage.revised_prompt,
-            aspectRatio: aspectRatio
+          // Construct proper message format for Responses API with image content
+          const inputMessages = [
+            {
+              role: "user",
+              content: [
+                {
+                  type: "input_text",
+                  text: finalPrompt
+                },
+                {
+                  type: "input_image",
+                  image_url: imageData  // Use the data URL directly
+                }
+              ]
+            }
+          ];
+
+          console.log('Sending request to OpenAI Responses API with proper image message format');
+
+          // @ts-ignore - Bypass all typing for the new streaming API
+          const responseStream = await (openai as any).responses.create({
+            model: "gpt-4.1",
+            input: inputMessages,
+            stream: true,
+            tools: [{
+              type: "image_generation",
+              partial_images: 3,  // Generate 3 progressive refinements
+              size: imageSizeTyped  // Specify the image size
+            }],
           });
+
+          let imageIndex = 0;
+          let finalImageUrl = null;
+
+          // @ts-ignore - Bypass typing for the streaming events
+          for await (const event of responseStream) {
+            console.log('Received streaming event:', event.type);
+
+            // @ts-ignore - Type assertion for partial image events
+            if (event.type === "response.image_generation_call.partial_image") {
+              const idx = event.partial_image_index;
+              const imageBase64 = event.partial_image_b64;
+
+              console.log(`Received partial image ${idx}`);
+
+              // Send the progressive image to the client
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify({
+                type: 'partial_image',
+                imageIndex: idx,
+                imageData: `data:image/png;base64,${imageBase64}`,
+                isPartial: true
+              })}\n\n`));
+
+              imageIndex = idx;
+            // @ts-ignore - Type assertion for final image events
+            } else if (event.type === "response.image_generation_call.image_generated") {
+              // Final image generated
+              const imageUrl = event.image_url;
+              finalImageUrl = imageUrl;
+
+              console.log('Final image generated:', imageUrl);
+
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify({
+                type: 'final_image',
+                imageUrl: imageUrl,
+                imageData: imageUrl,
+                isPartial: false,
+                aspectRatio: aspectRatio,
+                model: 'gpt-4.1'
+              })}\n\n`));
+            // @ts-ignore - Type assertion for completion events
+            } else if (event.type === "response.function_call_completed") {
+              // Generation completed
+              console.log('Image generation completed');
+
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify({
+                type: 'completed',
+                finalImageUrl: finalImageUrl,
+                aspectRatio: aspectRatio,
+                model: 'gpt-4.1'
+              })}\n\n`));
+            // @ts-ignore - Type assertion for error events
+            } else if (event.type === "error") {
+              console.error('Error in streaming response:', event);
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify({
+                type: 'error',
+                error: event.error || 'Unknown streaming error'
+              })}\n\n`));
+            }
+          }
+
+          // Send completion signal
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify({
+            type: 'done'
+          })}\n\n`));
+
+          controller.close();
+        } catch (error: any) {
+          console.error(`OpenAI Responses API error during streaming: ${error.message}`);
+          if (error.stack) console.error(error.stack);
+
+          const encoder = new TextEncoder();
+          let errorMessage = 'Error generating image with OpenAI Responses API';
+
+          if (error.response) {
+            const errorData = error.response.data;
+            console.error(`OpenAI Error Response Status: ${error.response.status}`);
+            console.error('OpenAI Error Response Data:', errorData);
+
+            if (errorData && typeof errorData === 'object' && errorData.error && typeof errorData.error.message === 'string') {
+                errorMessage = errorData.error.message;
+            } else if (typeof errorData === 'string' && errorData.length < 2000) {
+                errorMessage = errorData;
+            }
+          } else if (error.message) {
+             errorMessage = error.message;
+          }
+
+          if (error.code === 'content_policy_violation' || (typeof errorMessage === 'string' && errorMessage.toLowerCase().includes('content policy'))) {
+              errorMessage = "Your image or prompt was rejected by OpenAI's content policy.";
+          }
+
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify({
+            type: 'error',
+            error: errorMessage
+          })}\n\n`));
+
+          controller.close();
         }
-        else if (editedImage.b64_json) {
-           console.warn('Received b64_json from gpt-image-1 edit, which is unexpected. Using it.');
-           const dataUrl = `data:image/png;base64,${editedImage.b64_json}`;
-           return json({
-            imageUrl: dataUrl,
-            url: dataUrl,
-            model: "gpt-image-1",
-            revised_prompt: editedImage.revised_prompt,
-            aspectRatio: aspectRatio
-          });
-        }
       }
-      console.error('Failed to edit image - unexpected API response format from OpenAI.');
-      if(response?.data) {
-        console.error('OpenAI unexpected response data (first item if array):', Array.isArray(response.data) ? response.data[0] : response.data);
-      } else {
-        console.error('OpenAI response data was missing or empty.');
+    });
+
+    return new Response(stream, {
+      headers: {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Headers': 'Cache-Control'
       }
-      return json({ error: 'Failed to edit image - unexpected API response format' }, { status: 500 });
-    } catch (error: any) {
-      console.error(`OpenAI API error during image edit: ${error.message}`);
-      if (error.stack) console.error(error.stack);
-
-      let errorMessage = 'Error editing image with OpenAI';
-      let errorStatus = 500;
-      let errorDetails = error.message;
-
-      if (error.response) {
-        const errorData = error.response.data;
-        errorStatus = error.response.status || errorStatus;
-        console.error(`OpenAI Error Response Status: ${errorStatus}`);
-        console.error('OpenAI Error Response Data:', errorData);
-
-        if (errorData && typeof errorData === 'object' && errorData.error && typeof errorData.error.message === 'string') {
-            errorMessage = errorData.error.message;
-            errorDetails = errorData.error.message;
-        } else if (typeof errorData === 'string' && errorData.length < 2000) {
-            errorMessage = errorData;
-            errorDetails = errorData;
-        }
-      } else if (error.message) {
-         errorMessage = error.message;
-      }
-
-      if (error.code === 'content_policy_violation' || (typeof errorMessage === 'string' && errorMessage.toLowerCase().includes('content policy'))) {
-          errorMessage = "Your image or prompt was rejected by OpenAI's content policy.";
-          errorStatus = 400;
-          errorDetails = errorMessage;
-      }
-      return json({ error: errorMessage, details: errorDetails }, { status: errorStatus });
-    }
+    });
   } catch (error: any) {
     console.error(`Error in /api/ai/edit-image endpoint: ${error.message}`);
     if (error.stack) console.error(error.stack);
-    return json({ error: error.message || 'Internal server error' }, { status: 500 });
+    return new Response(JSON.stringify({ error: error.message || 'Internal server error' }), {
+        status: 500,
+        headers: { 'Content-Type': 'application/json' }
+    });
   }
 };

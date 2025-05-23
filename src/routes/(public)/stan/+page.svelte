@@ -23,7 +23,7 @@
   let messages: Message[] = [];
   let omnibarPrompt: string = ''; // Bound to Omnibar's additionalContext
   let isOverallLoading: boolean = false; // Tracks if a response is being generated
-  let currentSelectedTextModel: string = 'gpt-4o-mini'; // Updated default text model
+  let currentSelectedTextModel: string = 'claude-3-7-sonnet-20250219'; // Updated default text model
 
   // Map of model IDs to human-friendly labels for display
   const modelLabels: Record<string, string> = {
@@ -606,9 +606,31 @@
       }
     }
   }
+
+  // --- Animated cursor SVG ---
+  // We'll use a pulsing purple dot for the AI streaming cursor
+  const AnimatedCursor = () => `
+    <span class="animated-cursor">
+      <svg width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <circle cx="9" cy="9" r="6" fill="#6355FF">
+          <animate attributeName="r" values="6;8;6" dur="1s" repeatCount="indefinite" />
+          <animate attributeName="opacity" values="1;0.7;1" dur="1s" repeatCount="indefinite" />
+        </circle>
+      </svg>
+    </span>
+  `;
+
+  // Handle example prompt clicks
+  function handleExamplePrompt(promptText: string) {
+    if (isOverallLoading) return;
+
+    omnibarPrompt = promptText;
+    // Auto-submit the prompt
+    handleOmnibarSubmit();
+  }
 </script>
 
-<div id = 'main' in:scale={{ duration: 300, start: 0.95, opacity: 0, easing: cubicOut }}>
+<div id = 'main' class = 'stan' in:scale={{ duration: 300, start: 0.95, opacity: 0, easing: cubicOut }}>
   <button
     class="global-refresh-button"
     title="Clear Chat and History"
@@ -625,8 +647,46 @@
 {#if isStartState}
   <div id="start-state-container" >
     <div class="welcome-header" in:fade={{ delay: 300, duration: 500 }}>
-      <h2>Daydream Chat</h2>
-      <p>Select a model and start a conversation</p>
+      <img src="/stan-avatar.png" alt="Stanley" class="stan-avatar">
+      <h2> Stanley </h2>
+    </div>
+
+    <!-- Example Prompts Section -->
+    <div class="example-prompts" in:fade={{ delay: 500, duration: 500 }}>
+
+      <div class="prompts-grid">
+        <button
+          class="prompt-card"
+          on:click={() => handleExamplePrompt("What is a Stan Store?")}
+          disabled={isOverallLoading}
+        >
+          <span class="prompt-text">What is a Stan Store?</span>
+        </button>
+
+        <button
+          class="prompt-card"
+          on:click={() => handleExamplePrompt("Give me a list of content ideas")}
+          disabled={isOverallLoading}
+        >
+          <span class="prompt-text">Give me a list of content ideas</span>
+        </button>
+
+        <button
+          class="prompt-card"
+          on:click={() => handleExamplePrompt("Create an outline for a 4-module course on UGC")}
+          disabled={isOverallLoading}
+        >
+          <span class="prompt-text">Create an outline for a 4-module course on UGC</span>
+        </button>
+
+        <button
+          class="prompt-card"
+          on:click={() => handleExamplePrompt("How do I get started making money online?")}
+          disabled={isOverallLoading}
+        >
+          <span class="prompt-text">How do I get started making money online?</span>
+        </button>
+      </div>
     </div>
 
      <Omnibar
@@ -638,8 +698,6 @@
         onSubmit={handleOmnibarSubmit}
         parentDisabled={false}
       />
-
-
   </div>
 {:else}
   <div id="image-chat-page"  in:fade={{ duration: 300 }}> <!-- Re-evaluate if this ID should be more generic -->
@@ -667,7 +725,7 @@
             </div>
           {:else if message.role === 'assistant'}
             <div class="message-content-area">
-            <div class="message-bubble assistant-bubble">
+              <div class="message-bubble assistant-bubble" style={message.isStreaming ? `min-height: ${message.content ? '48px' : '32px'}; transition: min-height 0.3s;` : ''}>
                 <div class="markdown-container" bind:this={markdownContainers[message.id]}>
                   <Markdown content={message.content} on:rendered={() => {
                     highlightCodeBlocks(markdownContainers[message.id]);
@@ -675,35 +733,46 @@
                       setupStreamingCodeHighlighter(markdownContainers[message.id], message.id);
                     }
                   }} />
-                  {#if message.isStreaming && message.content}
-                    <span class="streaming-cursor">▍</span>
-                  {:else if message.isStreaming && !message.content}
-                    &nbsp;
-              {/if}
-                                </div>
-
+                  <!-- Always render a cursor placeholder to prevent layout shift -->
+                  <span class="cursor-placeholder">
+                    {#if message.isStreaming}
+                      <span class="animated-cursor cursor-fade" style="opacity:1;">
+                        <svg width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
+                          <circle cx="9" cy="9" r="6" fill="#6355FF">
+                            <animate attributeName="r" values="6;8;6" dur="1s" repeatCount="indefinite" />
+                            <animate attributeName="opacity" values="1;0.7;1" dur="1s" repeatCount="indefinite" />
+                          </circle>
+                        </svg>
+                      </span>
+                    {:else}
+                      <span class="animated-cursor cursor-fade" style="opacity:0; pointer-events:none;">
+                        <svg width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
+                          <circle cx="9" cy="9" r="6" fill="#6355FF" opacity="0" />
+                        </svg>
+                      </span>
+                    {/if}
+                  </span>
+                </div>
                 <div class="assistant-message-footer">
                   {#if message.modelUsed && !message.isStreaming && !message.isLoading}
                     <div class="assistant-model-info">
                       Sent by {getModelLabel(message.modelUsed)}
-                              </div>
-                            {/if}
-
+                    </div>
+                  {/if}
                   {#if message.isLoading}
                     <div class="main-loading-spinner" style="justify-content: flex-start; padding: 5px 0;">
                       <div class="spinner small"></div>
                       <span>Thinking...</span>
-                        </div>
+                    </div>
                   {:else if message.error}
                     <div class="error-placeholder" style="min-height: auto; padding: 5px 0; text-align: left;">
                       <span style="font-size: 0.9em; color: #ff8a8a;">Error: {message.error}</span>
+                    </div>
+                  {/if}
                 </div>
-              {/if}
-                  </div>
-    </div>
-
+              </div>
               {#if !message.isLoading && message.content && !message.error}
-          <button
+                <button
                   class="message-copy-btn"
                   title="Copy response"
                   on:click={() => copyMessage(message.content)}
@@ -712,10 +781,10 @@
                     <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
                     <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
                   </svg>
-          </button>
+                </button>
               {/if}
-          </div>
-            {/if}
+            </div>
+          {/if}
         </div>
       {/each}
     </div>
@@ -753,27 +822,27 @@
     right: 16px;
     z-index: 1000; // Ensure it's above other content
     padding: 8px;
-    width: 40px;
-    height: 40px;
+    width: 36px;
+    height: 36px;
     border-radius: 50%; // Make it circular
     border: none;
-    background-color: rgba(30, 30, 30, 0.8); // Darker, semi-transparent
+    background-color: rgba(#6355FF, 1); // Darker, semi-transparent
     color: white;
     cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
-    transition: background-color 0.2s, transform 0.2s;
-    box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+    transition: .2s ease;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.15);
 
     svg {
-      height: 20px; // Slightly larger icon
-      width: 20px;
+      height: 16px; // Slightly larger icon
+      width: 16px;
     }
 
     &:hover {
-      background-color: rgba(50, 50, 50, 0.9); // Lighter on hover
-      transform: scale(1.1);
+      background-color: #4938fb;
+      transform: scale(1.03);
     }
     &:disabled {
       background-color: rgba(50, 50, 50, 0.5);
@@ -798,18 +867,79 @@
   .welcome-header {
     text-align: center;
     margin-bottom: 20px; // Reduced margin
+    img{
+      height: 160px;
+    }
     h2 {
       font-family: "ivypresto-headline", 'Newsreader', serif;
       font-size: 64px; // Slightly smaller
       font-weight: 500;
       letter-spacing: -.4px;
-      margin: 0 0 8px 0;
+      margin: -8px 0 8px 0;
       color: #fff;
     }
     p {
       font-size: 15px;
       color: rgba(white, .4);
       margin: 0;
+    }
+  }
+
+  .example-prompts {
+    margin-bottom: 32px;
+    width: 100%;
+    max-width: 720px;
+
+    .prompts-label {
+      text-align: center;
+      font-size: 16px;
+      color: rgba(#00106D, .6);
+      margin-bottom: 16px;
+      font-weight: 500;
+    }
+
+    .prompts-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 12px;
+
+      @media (max-width: 768px) {
+        grid-template-columns: 1fr;
+        gap: 10px;
+      }
+    }
+
+    .prompt-card {
+      background: rgba(white, .95);
+      background: rgba(#6355FF, .08);
+      border-radius: 12px;
+      padding: 12px 16px;
+      cursor: pointer;
+      width: fit-content;
+      transition: all 0.2s cubic-bezier(0.4,0,0.2,1);
+
+      &:hover{
+        background: rgba(#6355FF, .12);
+      }
+
+
+      &:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+        transform: none;
+      }
+
+      .prompt-text {
+        font-family: "ivypresto-headline", sans-serif;
+        font-size: 15px;
+        font-weight: 500;
+        letter-spacing: .5px;
+        color: #00106D;
+        text-shadow: -.4px 0 0 #00106D;
+        line-height: 140%;
+        display: block;
+        text-align: left;
+      }
     }
   }
 
@@ -902,6 +1032,9 @@
 
     &.user {
       margin: 12px auto;
+      .message-content-area{
+        justify-content: flex-end;
+      }
     }
 
     &.assistant {
@@ -1302,13 +1435,83 @@
     top: 0;
   }
 
+  .cursor-placeholder {
+    display: inline-block;
+    width: 18px;
+    height: 18px;
+    vertical-align: middle;
+    margin-left: 2px;
+    margin-bottom: 2px;
+    transition: opacity 0.25s cubic-bezier(0.4,0,0.2,1);
+  }
+  .animated-cursor.cursor-fade {
+    display: inline-block;
+    width: 18px;
+    height: 18px;
+    vertical-align: middle;
+    transition: opacity 0.25s cubic-bezier(0.4,0,0.2,1);
+  }
+
   .stan{
-    background: rgba(white, .9);
+    background: rgba(white, 1);
     color: #00106D;
     border-radius: 8px;
 
-    :global(p), :global(h1), :global(h2), :global(h3), :global(h4), :global(h5), :global(h6), :global(li), :global(ol), :global(ul){
-      color: #00106D;
+    position: fixed !important;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 1000;
+
+
+    :global(p), :global(h1), :global(h2), :global(h3), :global(h4), :global(h5), :global(h6), :global(li), :global(ol), :global(ul), :global(strong), :global(em){
+      color: #081249;
+    }
+
+    .message-bubble{
+
+    :global(p){
+      font-weight: 500;
+      font-size: 15px;
+      line-height: 150%;
+      text-shadow: -.15px 0 0 #081249;
+    }
+
+    :global(h1){
+      font-size: 32px;
+      text-shadow: -1px 0 0 #081249;
+      letter-spacing: .5px;
+      margin: 24px 0;
+    }
+
+    :global(h2){
+      font-size: 24px;
+      text-shadow: -.5px 0 0 #081249;
+      letter-spacing: .25px;
+      margin: 18px 0;
+    }
+
+    :global(h3){
+      font-family: "ivypresto-headline", serif;
+      font-size: 20px;
+      text-shadow: -.5px 0 0 #081249;
+      letter-spacing: .25px;
+      margin: 16px 0 10px 0;
+    }
+
+    :global(h4), :global(h5), :global(h6){
+      font-family: "Hedvig Letters Serif", serif;
+      font-size: 15px;
+      text-shadow: -.25px 0 0 #081249;
+      letter-spacing: -.4px;
+      margin: 8px 0;
+    }
+  }
+
+    :global(::selection){
+      background: #ffee7d;
+      color: black;
     }
 
     .message-wrapper{
@@ -1320,14 +1523,24 @@
       box-shadow: none;
       &.user-bubble{
         box-shadow: none;
-        background: #6355FF;
+        background: linear-gradient(to bottom, #6355FF 50%, #5040ff);
+        padding: 11px 18px 12px 18px;
+        border-radius: 18px 18px 4px 18px;
+        box-shadow: inset -1px -2px 8px rgba(black, .15), inset 1px 2px 8px rgba(white, .15), -2px 4px 12px rgba(#00106D, .2);
         p{
           color: white;
+          font-size: 16px;
+          text-shadow: -.5px 0 0 white;
+          letter-spacing: .6px;
+          filter: drop-shadow(-4px 4px 4px rgba(black, .25));
         }
 
       }
       &.assistant-bubble{
         filter: none;
+        font-family: "Hedvig Letters Serif", serif;
+
+        color: #00106D !important;
       }
     }
 
@@ -1340,9 +1553,21 @@
       display: none;
     }
 
+    :global(.omnibar){
+      width: 720px !important;
+      left: calc(50% - 360px) !important;
+
+      @media screen and (max-width: 800px) {
+        width: calc(100vw - 24px) !important;
+        left: 12px !important;
+        bottom: 12px;
+      }
+    }
+
     :global(.input-form){
-      background: rgba(white, .5);
-      box-shadow: -12px 24px 48px rgba(black, .15);
+      background: rgba(white, .95);
+      box-shadow: -12px 24px 48px rgba(#00106D, .25);
+      border: 1.5px solid #6355FF;
 
     }
     :global(textarea){
@@ -1354,16 +1579,36 @@
       color: white;
       border-radius: 24px;
       padding: 8px 12px;
+      box-shadow: inset -1px -2px 4px rgba(black, .08), inset 1px 2px 4px rgba(white, .15), -2px 4px 8px rgba(#030025, .1);
     }
     :global(.submit-button-omnibar:hover){
-      background: #4035bf !important;
+      background: #4e41dd !important;
     }
     :global(select){
       background: rgba(#6355FF, .1) !important;
       color: black !important;
     }
 
+  }
 
+
+
+  @media screen and (max-width: 800px) {
+    #main{
+      border-radius: 0;
+    }
+
+    .chat-messages-container{
+      padding: 0 !important;
+      margin: 0 auto !important;
+    }
+
+    .message-wrapper{
+      margin: 0 !important;
+      padding: 0;
+      width: 100% !important;
+      border: 1px solid red;
+    }
   }
 
 
