@@ -10,14 +10,24 @@
   let Prism: any = null; // Keep at top-level, initialize to null
   let PrismLoaded: boolean = false; // Keep at top-level
 
+  interface AnimatedWord {
+    id: string;
+    text: string;
+    addedTime: number;
+    currentOpacity: number;
+  }
+
   interface Message {
     id: string;
     role: 'user' | 'assistant' | 'system';
     content: string; // Content is now always a string
     isLoading?: boolean; // For assistant message, indicates waiting for response
-    isStreaming?: boolean; // For assistant message, indicates text is streaming
+    isStreaming?: boolean; // For assistant message, indicates text streaming
     modelUsed?: string; // For assistant message, which model generated the response
     error?: string; // For assistant message, if an error occurred
+    animatedWords?: AnimatedWord[];
+    _lastProcessedContentLength?: number;
+    _previousContent?: string; // Track previous content for DOM diffing
   }
 
   let messages: Message[] = [];
@@ -48,6 +58,10 @@
   let pendingAnalysis = false;
 
   let markdownContainers = new Map();
+
+  const ANIMATION_DURATION = 3000; // 3 seconds for opacity transition
+  const INITIAL_OPACITY = 0.5;
+  const FINAL_OPACITY = 1.0;
 
   // Function to apply syntax highlighting to code blocks
   async function highlightCodeBlocks(element) {
@@ -95,11 +109,7 @@
       copyBtn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>';
       copyBtn.title = 'Copy code';
       copyBtn.addEventListener('click', () => {
-        navigator.clipboard.writeText(codeBlock.textContent || '');
-        copyBtn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"></path></svg>';
-        setTimeout(() => {
-          copyBtn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>';
-        }, 2000);
+        copyWithFeedback(copyBtn, codeBlock.textContent || '');
       });
       header.appendChild(copyBtn);
 
@@ -113,6 +123,48 @@
     if (PrismLoaded && Prism && typeof Prism.highlightElement === 'function') {
       Prism.highlightElement(codeBlock);
     }
+  }
+
+  // Universal copy function with checkmark feedback
+  function copyWithFeedback(button, content) {
+    navigator.clipboard.writeText(content);
+
+    // Store original innerHTML
+    const originalHTML = button.innerHTML;
+
+    // Show checkmark
+    button.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"></path></svg>';
+
+    // Restore original after 2 seconds
+    setTimeout(() => {
+      button.innerHTML = originalHTML;
+    }, 2000);
+  }
+
+  // Function to apply smooth opacity animation to streaming content
+  function animateNewContent(container, previousContent, currentContent) {
+    if (!container || !currentContent || currentContent === previousContent) return;
+
+    // Simple approach: add a CSS class that triggers smooth fade-in for new content
+    // This avoids DOM manipulation and uses optimized CSS animations
+    const previousLength = previousContent ? previousContent.length : 0;
+    const newContentLength = currentContent.length - previousLength;
+
+    if (newContentLength <= 0) return;
+
+    // Add a temporary animation class to the entire container
+    container.classList.add('content-updating');
+
+    // Use requestAnimationFrame for smooth timing
+    requestAnimationFrame(() => {
+      container.classList.remove('content-updating');
+      container.classList.add('content-updated');
+
+      // Clean up the animation class after animation completes
+      setTimeout(() => {
+        container.classList.remove('content-updated');
+      }, 150); // Short, smooth animation
+    });
   }
 
   // Create a mutation observer to detect new code blocks during streaming
@@ -155,8 +207,8 @@
   }
 
   // Function to copy message content
-  function copyMessage(content) {
-    navigator.clipboard.writeText(content || '');
+  function copyMessage(content, button) {
+    copyWithFeedback(button, content || '');
   }
 
   async function scrollToBottom() {
@@ -339,7 +391,7 @@
       let assistantContent = '';
 
       messages = messages.map(msg =>
-        msg.id === assistantMessageId ? { ...msg, isLoading: false, isStreaming: true } : msg
+        msg.id === assistantMessageId ? { ...msg, isLoading: false, isStreaming: true, _previousContent: '' } : msg
       );
 
       // Set up a mutation observer for the streaming content
@@ -358,8 +410,6 @@
         done = readerDone;
         if (value) {
           const chunk = decoder.decode(value, { stream: !done });
-
-          // Handle different API response formats
           let processedChunk = chunk;
 
           // Check if this is an API log entry chunk (will be at the end)
@@ -420,14 +470,44 @@
           }
 
           assistantContent += processedChunk;
-          messages = messages.map(msg =>
-            msg.id === assistantMessageId ? { ...msg, content: assistantContent } : msg
-          );
+          messages = messages.map(msg => {
+            if (msg.id === assistantMessageId && msg.isStreaming) {
+              const previousContent = msg._previousContent || '';
+              let currentContent = msg.content || '';
+              currentContent += processedChunk;
+
+              return {
+                ...msg,
+                content: currentContent,
+                _previousContent: previousContent
+              };
+            }
+            return msg;
+          });
+
+          // Simple visual feedback for new content - no jittery animations
+          const container = markdownContainers[assistantMessageId];
+          if (container) {
+            container.classList.add('content-updating');
+            setTimeout(() => {
+              container.classList.remove('content-updating');
+            }, 80);
+          }
         }
       }
-      messages = messages.map(msg =>
-        msg.id === assistantMessageId ? { ...msg, isStreaming: false, content: assistantContent.trim() || "Sorry, I couldn't generate a response." } : msg
-      );
+      messages = messages.map(msg => {
+        if (msg.id === assistantMessageId) {
+          // Clean up animation properties and ensure final content is trimmed
+          const finalContent = (msg.content || "Sorry, I couldn't generate a response.").trim();
+          return {
+            ...msg,
+            isStreaming: false,
+            content: finalContent,
+            _previousContent: ''
+          };
+        }
+        return msg;
+      });
 
       // Final cleanup pass - check if the content might still be JSON
       messages = messages.map(msg => {
@@ -445,20 +525,28 @@
                 return { ...msg, content: jsonObj.content };
               } else if (jsonObj.text && typeof jsonObj.text === 'string') {
                 return { ...msg, content: jsonObj.text };
-      } else {
-                // Remove metadata fields
-                const filtered = { ...jsonObj };
+              }
+            } catch (e) {
+              // If parsing or extraction fails, try to remove metadata if it looks like a structured object
+              // This part of the catch block is a bit of a heuristic
+              try {
+                const jsonObjForFiltering = JSON.parse(content); // Re-parse for filtering attempt
+                 // Remove metadata fields
+                const filtered = { ...jsonObjForFiltering };
                 ['usage', 'input_chars', 'output_chars', 'cost', 'durationMs', 'total_tokens'].forEach(key => {
                   delete filtered[key];
                 });
 
-                // Only use the filtered JSON if it's different
-                if (Object.keys(filtered).length < Object.keys(jsonObj).length) {
+                // Only use the filtered JSON if it's different and not empty
+                if (Object.keys(filtered).length < Object.keys(jsonObjForFiltering).length && Object.keys(filtered).length > 0) {
                   return { ...msg, content: JSON.stringify(filtered, null, 2) };
+                } else if (Object.keys(filtered).length === 0 && Object.keys(jsonObjForFiltering).length > 0) {
+                  // If filtering results in an empty object but original was not, perhaps it was all metadata
+                  return { ...msg, content: "Received a structured response, but it contained only metadata after filtering." };
                 }
+              } catch (filterError) {
+                // Not valid JSON even for filtering, leave as is
               }
-            } catch (e) {
-              // Not valid JSON, leave as is
             }
           }
         }
@@ -469,7 +557,14 @@
       console.error(`Error with ${currentSelectedTextModel}:`, error);
       messages = messages.map(msg =>
         msg.id === assistantMessageId
-          ? { ...msg, isLoading: false, isStreaming: false, error: error.message || 'Unknown error', content: `Error: ${error.message || 'Failed to get response.'}` }
+          ? {
+              ...msg,
+              isLoading: false,
+              isStreaming: false,
+              error: error.message || 'Unknown error',
+              content: `Error: ${error.message || 'Failed to get response.'}`,
+              _previousContent: ''
+            }
           : msg
       );
     } finally {
@@ -532,6 +627,7 @@
                         // Reset transient states for loaded messages
                         isLoading: false,
                         isStreaming: false,
+                        _previousContent: ''
                     }));
                     isStartState = !parsedMessages.some(msg => msg.role === 'user');
                     loadedSuccessfully = true;
@@ -551,7 +647,8 @@
                 {
                     id: generateUniqueId(),
                     role: 'assistant',
-                    content: "Hi there! I'm your friendly chat assistant. How can I help you today?"
+                    content: "Hi there! I'm your friendly chat assistant. How can I help you today?",
+                    _previousContent: ''
                 }
             ];
             isStartState = true;
@@ -708,47 +805,58 @@
         <div class="message-wrapper {message.role}" in:fly={{ y: message.role === 'user' ? 10 : -10, duration: 300, delay:150 }}>
           {#if message.role === 'user'}
             <div class="message-content-area">
-            <div class="message-bubble user-bubble">
-              <p>{message.content}</p>
-              </div>
 
-              <button
+               <button
                 class="message-copy-btn"
                 title="Copy message"
-                on:click={() => copyMessage(message.content)}
+                on:click={(event) => copyMessage(message.content, event.currentTarget)}
               >
                 <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
                   <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
                 </svg>
               </button>
+            <div class="message-bubble user-bubble">
+              <p>{message.content}</p>
+              </div>
+
+
             </div>
           {:else if message.role === 'assistant'}
             <div class="message-content-area">
-              <div class="message-bubble assistant-bubble" style={message.isStreaming ? `min-height: ${message.content ? '48px' : '32px'}; transition: min-height 0.3s;` : ''}>
-                <div class="markdown-container" bind:this={markdownContainers[message.id]}>
+              <div class="message-bubble assistant-bubble" style={message.isStreaming ? `min-height: 32px; transition: min-height 0.3s;` : ''}>
+                <div class="markdown-container animated-text-container" bind:this={markdownContainers[message.id]}>
                   <Markdown content={message.content} on:rendered={() => {
                     highlightCodeBlocks(markdownContainers[message.id]);
                     if (message.isStreaming) {
                       setupStreamingCodeHighlighter(markdownContainers[message.id], message.id);
                     }
                   }} />
-                  <!-- Always render a cursor placeholder to prevent layout shift -->
-                  <span class="cursor-placeholder">
-                    {#if message.isStreaming}
-                      <span class="animated-cursor cursor-fade" style="opacity:1;">
-                        <svg width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
-                          <circle cx="9" cy="9" r="6" fill="#6355FF">
-                            <animate attributeName="r" values="6;8;6" dur="1s" repeatCount="indefinite" />
-                            <animate attributeName="opacity" values="1;0.7;1" dur="1s" repeatCount="indefinite" />
-                          </circle>
-                        </svg>
-                      </span>
-                    {:else}
-                      <span class="animated-cursor cursor-fade" style="opacity:0; pointer-events:none;">
-                        <svg width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
-                          <circle cx="9" cy="9" r="6" fill="#6355FF" opacity="0" />
-                        </svg>
+                  <!-- Cursor and thinking text container -->
+                  <span class="cursor-and-thinking-container">
+                    <!-- Always render a cursor placeholder to prevent layout shift -->
+                    <span class="cursor-placeholder">
+                      {#if message.isStreaming}
+                        <span class="animated-cursor cursor-fade" style="opacity:1;">
+                          <svg width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <circle cx="9" cy="9" r="6" fill="#6355FF">
+                              <animate attributeName="r" values="7;9;7" dur="1s" repeatCount="indefinite" />
+                              <animate attributeName="opacity" values="1;1;1" dur="1s" repeatCount="indefinite" />
+                            </circle>
+                          </svg>
+                        </span>
+                      {:else}
+                        <span class="animated-cursor cursor-fade" style="opacity:0; pointer-events:none;">
+                          <svg width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <circle cx="9" cy="9" r="6" fill="#6355FF" opacity="0" />
+                          </svg>
+                        </span>
+                      {/if}
+                    </span>
+                    <!-- Thinking text next to cursor -->
+                    {#if message.isLoading}
+                      <span class="thinking-text">
+                        <span>Thinking...</span>
                       </span>
                     {/if}
                   </span>
@@ -759,30 +867,25 @@
                       Sent by {getModelLabel(message.modelUsed)}
                     </div>
                   {/if}
-                  {#if message.isLoading}
-                    <div class="main-loading-spinner" style="justify-content: flex-start; padding: 5px 0;">
-                      <div class="spinner small"></div>
-                      <span>Thinking...</span>
-                    </div>
-                  {:else if message.error}
+                  {#if message.error}
                     <div class="error-placeholder" style="min-height: auto; padding: 5px 0; text-align: left;">
                       <span style="font-size: 0.9em; color: #ff8a8a;">Error: {message.error}</span>
                     </div>
                   {/if}
                 </div>
               </div>
-              {#if !message.isLoading && message.content && !message.error}
-                <button
-                  class="message-copy-btn"
-                  title="Copy response"
-                  on:click={() => copyMessage(message.content)}
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-                  </svg>
-                </button>
-              {/if}
+              <!-- Always show copy button, but control opacity -->
+              <button
+                class="message-copy-btn"
+                title="Copy response"
+                style="opacity: {message.isLoading || message.isStreaming || message.error ? '0' : '1'}; transition: opacity 0.3s ease;"
+                on:click={(event) => copyMessage(message.content, event.currentTarget)}
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                </svg>
+              </button>
             </div>
           {/if}
         </div>
@@ -1007,7 +1110,7 @@
     height: 100%;
     max-height: 100vh;
     // Adjusted padding: top, sides, bottom (to clear fixed Omnibar)
-    padding: 16px 24px calc(80px + 24px + 20px) 24px; // 80px omnibar + 24px bottom offset + 20px buffer
+    padding: 16px 24px 180px 24px; // 80px omnibar + 24px bottom offset + 20px buffer
 
     box-sizing: border-box;
     display: flex;
@@ -1034,11 +1137,20 @@
       margin: 12px auto;
       .message-content-area{
         justify-content: flex-end;
+        align-items: center;
+        gap: 12px;
       }
     }
 
     &.assistant {
       margin-right: auto;
+      .message-content-area{
+        flex-direction: column;
+      }
+      .message-copy-btn{
+        margin-top: -48px !important;
+        margin-left: 12px;
+      }
     }
   }
 
@@ -1096,6 +1208,7 @@
       // Adjust for markdown container
       .markdown-container {
         margin-bottom: 0; // No margin needed within bubble
+        padding: 0;
 
         // Remove top margin from first element and bottom margin from last element
         :global(*:first-child) {
@@ -1106,6 +1219,8 @@
           margin-bottom: 0;
         }
       }
+
+
     }
   }
 
@@ -1220,9 +1335,6 @@
     justify-content: center;
     border-radius: 4px;
     transition: color 0.2s, background-color 0.2s;
-    margin-left: 8px;
-    align-self: flex-start;
-    margin-top: 10px;
 
       &:hover {
       color: white;
@@ -1240,6 +1352,11 @@
   .markdown-container {
     width: 100%;
     margin-bottom: 8px; /* Space below text if multiple items */
+
+    // Add this to ensure the container has a block layout even when only spans are inside
+    &.animated-text-container {
+      display: block;
+    }
 
     :global(p), :global(ul), :global(ol), :global(h5), :global(h6) {
       font-size: 14px;
@@ -1422,6 +1539,33 @@
       width: 16px;
       height: 16px;
     }
+
+    // Smooth content streaming animations
+    .animated-text-container {
+      will-change: opacity, transform;
+    }
+
+    .animated-text-container.content-updating {
+      opacity: 0.98;
+      transform: translateY(0.5px);
+    }
+
+    .animated-text-container.content-updated {
+      opacity: 1;
+      transform: translateY(0);
+      animation: contentFadeIn 80ms cubic-bezier(0.25, 0.46, 0.45, 0.94);
+    }
+
+    @keyframes contentFadeIn {
+      from {
+        opacity: 0.92;
+        transform: translateY(0.5px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
   }
 
   .streaming-cursor {
@@ -1448,8 +1592,27 @@
     display: inline-block;
     width: 18px;
     height: 18px;
-    vertical-align: middle;
+
     transition: opacity 0.25s cubic-bezier(0.4,0,0.2,1);
+  }
+
+  .cursor-and-thinking-container {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    vertical-align: middle;
+  }
+
+  .thinking-text {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.9em;
+    color: #030025;
+
+    span {
+       color: #030025;
+    }
   }
 
   .stan{
@@ -1469,7 +1632,24 @@
       color: #081249;
     }
 
+    .message-copy-btn{
+      :global(svg){
+        stroke: rgba(black, .3);
+        transition: .2s ease;
+      }
+      &:hover{
+        svg{
+          stroke: rgba(black, .5);
+        }
+      }
+    }
+
     .message-bubble{
+
+      :global(pre){
+        background: black;
+        box-shadow: -8px 12px 24px rgba(black, .2);
+      }
 
     :global(p){
       font-weight: 500;
@@ -1524,7 +1704,7 @@
       &.user-bubble{
         box-shadow: none;
         background: linear-gradient(to bottom, #6355FF 50%, #5040ff);
-        padding: 11px 18px 12px 18px;
+        padding: 10px 18px 12px 18px;
         border-radius: 18px 18px 4px 18px;
         box-shadow: inset -1px -2px 8px rgba(black, .15), inset 1px 2px 8px rgba(white, .15), -2px 4px 12px rgba(#00106D, .2);
         p{
@@ -1551,6 +1731,13 @@
       margin-top: 12px;
       background: rgba(white, .5);
       display: none;
+    }
+
+    .thinking-text {
+      span{
+        color: #030025;
+        font-weight: 500;
+      }
     }
 
     :global(.omnibar){
@@ -1600,14 +1787,14 @@
 
     .chat-messages-container{
       padding: 0 !important;
-      margin: 0 auto !important;
+      margin: 24px auto !important;
     }
 
     .message-wrapper{
-      margin: 0 !important;
+      margin: 0px auto !important;
       padding: 0;
-      width: 100% !important;
-      border: 1px solid red;
+      max-width: 100%;
+      width: 90% !important;
     }
   }
 

@@ -2,6 +2,82 @@
 
 ## All AI-generated code instructions go here.
 
+## Chat Interface UX Improvements
+
+### Problem
+The chat interface in `src/routes/(public)/stan/+page.svelte` had several UX issues:
+1. The "Thinking..." text was positioned below the blinking purple cursor instead of inline with it
+2. The copy button for assistant messages was overlapping with the blinking cursor during generation
+3. Copy buttons lacked consistent visual feedback (checkmark animation) across the interface
+
+### Solution Outline
+1. **Inline "Thinking..." Text:**
+   - Created a new container `cursor-and-thinking-container` to hold both the cursor and thinking text
+   - Moved the "Thinking..." spinner from `assistant-message-footer` to be inline with the cursor
+   - Used `display: inline-flex` with proper gap spacing
+
+2. **Copy Button Opacity Control:**
+   - Copy buttons are always present but start with `opacity: 0` during generation
+   - Transition to `opacity: 1` when generation completes
+   - This prevents layout shift while avoiding overlap with the cursor
+
+3. **Universal Checkmark Feedback:**
+   - Updated `copyMessage` function to use `copyWithFeedback`
+   - Changed event handler to pass `event.currentTarget` instead of `this`
+   - All copy buttons now show a checkmark for 2 seconds after copying
+
+### Implementation Details
+- **File:** `src/routes/(public)/stan/+page.svelte`
+- **Functions modified:** `copyMessage`, `copyWithFeedback`
+- **Template changes:** Restructured cursor and thinking text positioning
+- **CSS additions:** Added styles for cursor containers and thinking text
+
+### Testing
+- Verify "Thinking..." appears next to the blinking cursor during generation
+- Confirm copy buttons fade in only after generation completes
+- Test that all copy buttons show checkmark feedback when clicked
+
+## Waterfall Opacity Animation for Streaming Text
+
+### Problem
+User requested a "waterfall" effect where newly generated words start at low opacity (0.5) and gradually fade to full opacity (1.0) over 3 seconds, while maintaining live markdown formatting during generation.
+
+### Solution Outline
+1. **Always Use Markdown Rendering:**
+   - Maintain consistent formatting throughout generation by always using the Markdown component
+   - Remove the dual rendering system (plain text during streaming, markdown after completion)
+
+2. **DOM-Based Animation:**
+   - Implemented `animateNewContent()` function that detects newly added text in rendered markdown
+   - Applies opacity animations to new text nodes using DOM manipulation
+   - Creates spans with `animated-new-text` class for smooth opacity transitions
+
+3. **Content Tracking:**
+   - Added `_previousContent` property to message interface to track content changes
+   - Compare previous and current content to identify new text sections
+   - Apply animations only to newly added content portions
+
+### Implementation Details
+- **File:** `src/routes/(public)/stan/+page.svelte`
+- **New Function:** `animateNewContent(container, previousContent, currentContent)`
+- **Modified Interface:** Added `_previousContent` property to Message interface
+- **Animation Logic:** Text nodes are split and wrapped in animated spans with 3-second opacity transition
+- **CSS:** Added `.animated-new-text` class with transition properties
+
+### Technical Approach
+1. During streaming, update message content and track previous content
+2. After each content update, call `animateNewContent()` with a 50ms delay
+3. Function uses `TreeWalker` to find all text nodes in the rendered markdown
+4. Calculates which portions are new based on character count comparison
+5. Splits text nodes and wraps new content in animated spans
+6. New spans start at opacity 0.5 and transition to 1.0 over 3 seconds
+
+### Benefits
+- Maintains live markdown formatting (code blocks, headings, etc.) during generation
+- Creates smooth "waterfall" effect for newly added content
+- No sudden style changes when generation completes
+- Preserves syntax highlighting and other markdown features throughout the process
+
 ## Implement correct GPT-Image-1 edit endpoint
 
 ### Problem
