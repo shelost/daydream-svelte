@@ -1445,9 +1445,9 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
         color: #3f4d9c;
         text-shadow: -.5px 0 0 #00106D;
         line-height: 140%;
-        width: 100%;
         display: block;
         text-align: left;
+        white-space: nowrap; // Prevent text wrapping for consistent card sizes
       }
 
     }
@@ -2213,6 +2213,10 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
       width: 720px !important;
       left: calc(50% - 360px) !important;
 
+      background: linear-gradient(160deg, #6355FF 25%, rgb(64, 172, 255));
+      padding: 2px;
+      border-radius: 26px;
+
       @media screen and (max-width: 800px) {
         width: calc(100vw - 24px) !important;
         left: 12px !important;
@@ -2221,9 +2225,9 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
     }
 
     :global(.input-form){
-      background: rgba(white, .95);
+      background: rgba(white, 1);
       box-shadow: -12px 24px 48px rgba(#00106D, .25);
-      border: 1.5px solid #6355FF;
+
 
     }
     :global(textarea){
