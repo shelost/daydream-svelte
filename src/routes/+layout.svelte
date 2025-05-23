@@ -7,20 +7,9 @@
   const isProd = import.meta.env.PROD;
   injectAnalytics({ mode: isProd ? 'production' : 'development' });
 
-  function preventDefault(e){
-    e.preventDefault();
-  }
-
-  function disableScroll(){
-      document.body.addEventListener('touchmove', preventDefault, { passive: false });
-  }
-  function enableScroll(){
-      document.body.removeEventListener('touchmove', preventDefault);
-  }
-
-  onMount(() => {
-    disableScroll();
-  });
+  // Removed disableScroll functionality that was preventing touch scrolling
+  // If selective scroll prevention is needed for specific areas, it should be
+  // implemented at the component level, not globally
 
 </script>
 

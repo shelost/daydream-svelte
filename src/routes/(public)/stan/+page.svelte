@@ -1927,12 +1927,13 @@
       &.user-bubble{
         box-shadow: none;
         background: linear-gradient(to bottom, #6355FF 50%, #5040ff);
-        padding: 10px 18px 12px 18px;
+        padding: 13px 18px 16px 18px;
         border-radius: 18px 18px 4px 18px;
         box-shadow: inset -1px -2px 8px rgba(black, .15), inset 1px 2px 8px rgba(white, .15), -2px 4px 12px rgba(#00106D, .2);
         p{
           color: white;
           font-size: 16px;
+          line-height: 110%;
           text-shadow: -.5px 0 0 white;
           letter-spacing: .6px;
           filter: drop-shadow(-4px 4px 4px rgba(black, .25));

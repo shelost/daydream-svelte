@@ -2010,3 +2010,51 @@ Based on research from [Xebia blog](https://xebia.com/blog/fixing-scroll-issues-
 This solution addresses all known mobile touch scrolling issues and implements industry best practices for mobile web development. The fix ensures smooth native scrolling behavior across all mobile devices and browsers.
 
 Implementation completed  ✔︎
+
+## Critical Mobile Touch Scrolling Fix - Root Cause Found (Final Solution)
+
+### 1. **Root Cause Discovery**
+The mobile touch scrolling issue was **NOT** caused by CSS properties in the Stan chat interface. The actual root cause was in `src/routes/+layout.svelte` where JavaScript code was explicitly disabling ALL touch scrolling across the entire application:
+
+```javascript
+function disableScroll(){
+    document.body.addEventListener('touchmove', preventDefault, { passive: false });
+}
+
+onMount(() => {
+  disableScroll(); // This was blocking ALL touch scrolling!
+});
+```
+
+This code added a global event listener that prevented the default behavior of ALL `touchmove` events with `{ passive: false }`, which completely disabled touch scrolling on mobile devices.
+
+### 2. **Why Previous CSS Fixes Didn't Work**
+No amount of CSS properties (`-webkit-overflow-scrolling: touch`, `touch-action: pan-y`, hardware acceleration, etc.) could override JavaScript that actively calls `preventDefault()` on all touch events. This is exactly the issue described in the [SvelteKit GitHub issue #2733](https://github.com/sveltejs/kit/issues/2733) where aggressive event prevention can break mobile scrolling.
+
+### 3. **Solution Implemented**
+**Removed the global scroll prevention code entirely** from `src/routes/+layout.svelte`:
+- Deleted `preventDefault()`, `disableScroll()`, and `enableScroll()` functions
+- Removed the `onMount(() => { disableScroll(); })` call
+- Added documentation explaining that selective scroll prevention should be implemented at the component level if needed
+
+### 4. **Technical Explanation**
+The original code was likely intended to prevent overscroll bouncing or handle specific mobile behaviors, but it was too aggressive:
+- `{ passive: false }` allows the event listener to call `preventDefault()`
+- `preventDefault()` on `touchmove` events completely blocks native scrolling
+- This happens at the document body level, affecting ALL child elements
+
+### 5. **Files Modified**
+- `src/routes/+layout.svelte` - Removed global scroll prevention code
+- `src/routes/(public)/stan/+page.svelte` - CSS improvements (these are still beneficial)
+- `instructions.md` - Updated documentation
+
+### 6. **Best Practices for Future**
+If selective scroll prevention is needed:
+- Implement it at the specific component level, not globally
+- Use more targeted selectors instead of document.body
+- Consider using `touch-action: none` in CSS instead of JavaScript prevention
+- Test thoroughly on actual mobile devices
+
+This fix should restore full native touch scrolling functionality across the entire application while maintaining all other features.
+
+Implementation completed  ✔︎
