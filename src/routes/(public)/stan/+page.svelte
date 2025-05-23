@@ -485,13 +485,22 @@
             return msg;
           });
 
-          // Simple visual feedback for new content - no jittery animations
+          // Smooth visual feedback for new content - now more visible
           const container = markdownContainers[assistantMessageId];
           if (container) {
+            // Add updating state
             container.classList.add('content-updating');
+
+            // After a brief moment, transition to updated state
             setTimeout(() => {
               container.classList.remove('content-updating');
-            }, 80);
+              container.classList.add('content-updated');
+
+              // Clean up the updated class after animation completes
+              setTimeout(() => {
+                container.classList.remove('content-updated');
+              }, 300); // Match animation duration
+            }, 150); // Visible updating state duration
           }
         }
       }
@@ -915,8 +924,9 @@
   #main{
     height: 100%;
     max-height: 100vh;
-    overflow: hidden;
-    position: relative; // Added for positioning the refresh button
+    overflow: auto;
+    position: relative;
+    touch-action: pan-y pan-x;
   }
 
   .global-refresh-button {
@@ -965,6 +975,10 @@
     width: 100%;
     height: 90vh; // Adjusted to give more space if Omnibar is taller
     max-width: 100vw;
+    // Enable touch scrolling for start state on mobile
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-y;
   }
 
   .welcome-header {
@@ -1111,6 +1125,11 @@
     max-height: 100vh;
     // Adjusted padding: top, sides, bottom (to clear fixed Omnibar)
     padding: 16px 24px 180px 24px; // 80px omnibar + 24px bottom offset + 20px buffer
+
+    // Add touch-action for mobile scrolling
+    touch-action: pan-y;
+    // Enable momentum scrolling on iOS
+    -webkit-overflow-scrolling: touch;
 
     box-sizing: border-box;
     display: flex;
@@ -1540,30 +1559,42 @@
       height: 16px;
     }
 
-    // Smooth content streaming animations
+    // Smooth content streaming animations - more visible but still smooth
     .animated-text-container {
-      will-change: opacity, transform;
+      will-change: opacity, transform, filter;
+      transition: all 200ms ease-out;
     }
 
     .animated-text-container.content-updating {
-      opacity: 0.98;
-      transform: translateY(0.5px);
+      opacity: 0.85;
+      transform: translateY(1px);
+      filter: brightness(1.1);
+      text-shadow: 0 0 8px rgba(99, 85, 255, 0.15);
     }
 
     .animated-text-container.content-updated {
       opacity: 1;
       transform: translateY(0);
-      animation: contentFadeIn 80ms cubic-bezier(0.25, 0.46, 0.45, 0.94);
+      filter: brightness(1);
+      text-shadow: 0 0 4px rgba(99, 85, 255, 0.1);
+      animation: contentPulse 300ms ease-out;
     }
 
-    @keyframes contentFadeIn {
-      from {
-        opacity: 0.92;
-        transform: translateY(0.5px);
+    @keyframes contentPulse {
+      0% {
+        opacity: 0.8;
+        transform: translateY(1px) scale(0.999);
+        text-shadow: 0 0 12px rgba(99, 85, 255, 0.2);
       }
-      to {
+      50% {
+        opacity: 0.9;
+        transform: translateY(0.5px) scale(1.001);
+        text-shadow: 0 0 6px rgba(99, 85, 255, 0.15);
+      }
+      100% {
         opacity: 1;
-        transform: translateY(0);
+        transform: translateY(0) scale(1);
+        text-shadow: none;
       }
     }
   }
@@ -1783,18 +1814,28 @@
   @media screen and (max-width: 800px) {
     #main{
       border-radius: 0;
+      // Ensure touch scrolling works properly on mobile
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+      touch-action: pan-y;
     }
 
     .chat-messages-container{
-      padding: 0 !important;
-      margin: 24px auto !important;
+      padding: 16px 12px 180px 12px !important; // Reduced side padding for mobile
+      margin: 0 auto !important; // Remove top margin
+      height: calc(100vh - 32px); // Ensure proper height calculation
+      max-height: calc(100vh - 32px);
+      // Ensure scrolling works on mobile
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+      touch-action: pan-y;
     }
 
     .message-wrapper{
-      margin: 0px auto !important;
+      margin: 12px auto !important; // Restore some margin between messages
       padding: 0;
       max-width: 100%;
-      width: 90% !important;
+      width: 95% !important; // Slightly wider for better mobile experience
     }
   }
 
