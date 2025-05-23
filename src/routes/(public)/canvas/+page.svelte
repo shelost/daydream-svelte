@@ -45,6 +45,11 @@
           PrismLoaded = false;
         }
 
+        resizeCanvas()
+        setTimeout(() => {
+          resizeCanvas()
+        }, 1000);
+
         if (!document.querySelector('link[href*="prism-okaidia"]')) {
           const link = document.createElement('link');
           link.rel = 'stylesheet';
@@ -1879,6 +1884,9 @@ Again, return ONLY the SVG code with no additional text.`;
   let fileInput: HTMLInputElement;
   let isDraggingOver = false;
   let imageUploadScale = 1.0;
+
+  // Add canvas background color variable
+  let canvasBackgroundColor = '#f8f8f8'; // Default light gray background
 
   function addTextObject(e: PointerEvent) {
     if (!fabricInstance) {
@@ -4091,6 +4099,7 @@ Guidelines:
       //margin: 12px 0;
       min-width: 400px;
       width: 95vw;
+      padding: 8px 16px;
       height: 100%;
       position: relative;
 

@@ -2093,6 +2093,10 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
     height: 100%;
     z-index: 1000;
 
+    :global(.custom-caret){
+      color: rgba(black, 0.9) !important;
+    }
+
 
     :global(p), :global(h1), :global(h2), :global(h3), :global(h4), :global(h5), :global(h6), :global(li), :global(ol), :global(ul), :global(strong), :global(em){
       color: #081249;
