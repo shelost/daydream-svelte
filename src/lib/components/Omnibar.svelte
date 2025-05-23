@@ -211,6 +211,8 @@
     </div>
   {/if}
 
+
+  <div class = 'omnibar-container'>
   <form on:submit|preventDefault={handleButtonClick} class="input-form">
     <textarea
       class="text-input-area-omnibar"
@@ -272,6 +274,7 @@
       </button>
     </div>
   </form>
+</div>
 </div>
 
 <style lang="scss">
@@ -436,6 +439,12 @@
     gap: 8px;
     z-index: 10; /* Ensure it's above other content if fixed */
     box-sizing: border-box;
+
+    .omnibar-container{
+      padding: 2px;
+      width: 100%;
+      align-self: stretch;
+    }
 
     .input-form {
       display: flex;

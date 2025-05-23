@@ -2213,15 +2213,19 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
       width: 720px !important;
       left: calc(50% - 360px) !important;
 
-      background: linear-gradient(160deg, #6355FF 25%, rgb(64, 172, 255));
-      padding: 2px;
-      border-radius: 26px;
 
       @media screen and (max-width: 800px) {
         width: calc(100vw - 24px) !important;
         left: 12px !important;
         bottom: 12px;
       }
+    }
+
+
+    :global(.omnibar-container){
+      background: linear-gradient(160deg, #6355FF 25%, rgb(64, 172, 255));
+      padding: 2px;
+      border-radius: 26px;
     }
 
     :global(.input-form){
