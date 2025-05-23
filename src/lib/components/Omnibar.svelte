@@ -1,5 +1,6 @@
 <script lang="ts">
   import { createEventDispatcher } from 'svelte';
+  import { onMount } from 'svelte';
 
   import {fly, scale, fade} from 'svelte/transition';
   export let settingType = 'image'; // 'image', 'text', etc.
@@ -8,7 +9,10 @@
   export let currentSelectedModel = 'gpt-image-1';
   export let isGenerating = false;
   export let onSubmit = () => {};
+  export let onStop = () => {}; // New prop for stopping generation
   export let parentDisabled = false; // External conditions for disabling
+  export let followUpQuestions: string[] = []; // Follow-up questions to display
+  export let onFollowUpClick = (question: string) => {}; // Callback for follow-up clicks
 
   // Define model lists based on settingType - these would be passed as props in a real scenario
   // For now, we'll define a default for image.
@@ -106,13 +110,82 @@
     }
   }
 
-  // Reactive combined disabled state
-  $: isDisabled = isGenerating || parentDisabled;
+  function handleButtonClick() {
+    if (isGenerating) {
+      onStop();
+    } else if (!parentDisabled) {
+      onSubmit();
+    }
+  }
+
+  // Only disable when not generating and parentDisabled is true
+  $: isDisabled = !isGenerating && parentDisabled;
+
+  // Debug follow-up questions
+  $: {
+    console.log('🎭 Omnibar received followUpQuestions:', followUpQuestions);
+    console.log('🎭 followUpQuestions length:', followUpQuestions?.length);
+    console.log('🎭 followUpQuestions type:', typeof followUpQuestions);
+  }
+
+  let followUpContainer;
+
+  // Function to handle follow-up question alignment based on content overflow
+  function updateFollowUpAlignment() {
+    if (followUpContainer) {
+      const hasOverflow = followUpContainer.scrollWidth > followUpContainer.clientWidth;
+      if (hasOverflow) {
+        followUpContainer.classList.add('has-overflow');
+      } else {
+        followUpContainer.classList.remove('has-overflow');
+      }
+    }
+  }
+
+  // Update alignment when follow-up questions change
+  $: if (followUpQuestions) {
+    setTimeout(updateFollowUpAlignment, 0); // Wait for DOM update
+  }
+
+  // Set up resize observer to handle window resize
+  onMount(() => {
+    const resizeObserver = new ResizeObserver(() => {
+      updateFollowUpAlignment();
+    });
+
+    if (followUpContainer) {
+      resizeObserver.observe(followUpContainer);
+    }
+
+    return () => {
+      resizeObserver.disconnect();
+    };
+  });
 
 </script>
 
 <div class="omnibar" in:fly={{ y: 50, duration: 400 }}>
-  <form on:submit|preventDefault={onSubmit} class="input-form">
+  {#if followUpQuestions && followUpQuestions.length > 0}
+    <div
+      class="follow-up-questions"
+      bind:this={followUpContainer}
+      in:fly={{ y: 10, duration: 300, delay: 200 }}
+      out:fade={{ duration: 150 }}
+    >
+      {#each followUpQuestions as question, index (question)}
+        <button
+          class="follow-up-pill"
+          on:click={() => onFollowUpClick(question)}
+          disabled={isGenerating}
+          in:fly={{ y: 15, duration: 250, delay: index * 100 }}
+        >
+          {question}
+        </button>
+      {/each}
+    </div>
+  {/if}
+
+  <form on:submit|preventDefault={handleButtonClick} class="input-form">
     <textarea
       class="text-input-area-omnibar"
       bind:value={additionalContext}
@@ -160,12 +233,13 @@
       </div>
       <button
         type="submit"
-        class="submit-button-omnibar"
+        class="submit-button-omnibar {isGenerating ? 'stop-mode' : ''}"
         disabled={isDisabled}
-        title={isGenerating ? 'Generating...' : (settingType === 'image' ? 'Generate Image' : 'Generate Text')}
+        title={isGenerating ? 'Stop Generation' : (settingType === 'image' ? 'Generate Image' : 'Generate Text')}
+        on:click={handleButtonClick}
       >
         {#if isGenerating}
-          <div class="mini-spinner-omnibar"></div>
+          <span class="material-symbols-outlined stop-icon">stop</span>
         {:else}
           <span class="material-symbols-outlined">arrow_upward</span>
         {/if}
@@ -175,6 +249,106 @@
 </div>
 
 <style lang="scss">
+  .follow-up-questions {
+    display: flex;
+    gap: 8px;
+    margin-bottom: -16px;
+    max-width: 100%;
+    width: 720px;
+    padding: 24px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none; /* Firefox */
+    -ms-overflow-style: none; /* Internet Explorer 10+ */
+    justify-content: center; /* Center by default */
+    transition: justify-content 0.2s ease;
+
+    /* Hide scrollbar for Chrome/Safari */
+    &::-webkit-scrollbar {
+      display: none;
+    }
+
+    /* Apply gradient fade mask to create scroll shadows */
+    mask: linear-gradient(
+      to right,
+      transparent 0,
+      black 32px,
+      black calc(100% - 32px),
+      transparent 100%
+    );
+    -webkit-mask: linear-gradient(
+      to right,
+      transparent 0,
+      black 32px,
+      black calc(100% - 32px),
+      transparent 100%
+    );
+
+    /* When content overflows, switch to left-aligned for better scrolling */
+    &.has-overflow {
+      justify-content: flex-start;
+
+      /* Adjust mask for scrolling content */
+      mask: linear-gradient(
+        to right,
+        transparent 0,
+        black 40px,
+        black calc(100% - 40px),
+        transparent 100%
+      );
+      -webkit-mask: linear-gradient(
+        to right,
+        transparent 0,
+        black 40px,
+        black calc(100% - 40px),
+        transparent 100%
+      );
+    }
+  }
+
+  .follow-up-pill {
+    background: #6355FF;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 20px;
+    padding: 8px 14px;
+    color: rgba(255, 255, 255, 0.9);
+    font-family: "Inter", sans-serif;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    text-align: center;
+    line-height: 1.3;
+    backdrop-filter: blur(10px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    white-space: nowrap;
+    flex-shrink: 0;
+
+    font-family: "ivypresto-headline", serif;
+
+    font-size: 16px;
+    font-weight: 500;
+    letter-spacing: .4px;
+
+    &:hover:not(:disabled) {
+      background: rgba(255, 255, 255, 0.12);
+      border-color: rgba(255, 255, 255, 0.25);
+      transform: translateY(-1px);
+      box-shadow: 0 6px 16px rgba(0, 0, 0, 0.2);
+    }
+
+    &:active:not(:disabled) {
+      transform: translateY(0);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+    }
+
+    &:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      transform: none;
+    }
+  }
+
   .omnibar {
     width: 550px;
     max-width: 90vw;
@@ -330,20 +504,20 @@
         cursor: not-allowed;
         opacity: 0.7;
       }
-    }
 
-    .mini-spinner-omnibar {
-      width: 20px; /* Increased size slightly for visibility */
-      height: 20px; /* Increased size slightly for visibility */
-      border: 3px solid rgba(255, 255, 255, 0.3);
-      border-top-color: white;
-      border-radius: 50%;
-      animation: spinner-kf 0.8s linear infinite;
-    }
+      &.stop-mode {
+       background: #ff4444; /* Red background for stop button */
+       background: #00106D;
 
-    @keyframes spinner-kf {
-      to {
-        transform: rotate(360deg);
+        &:hover:not(:disabled) {
+       //   background: #cd1111 !important;
+       background: #1b2c8e !important;
+        }
+
+        .stop-icon {
+          font-size: 16px;
+          font-variation-settings: 'FILL' 1, 'wght' 500, 'GRAD' 0, 'opsz' 24;
+        }
       }
     }
   }
@@ -355,6 +529,8 @@
       left: calc(4vw - 12px);
       bottom: 6px;
     }
+
+
   }
 
 

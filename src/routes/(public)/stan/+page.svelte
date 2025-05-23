@@ -34,6 +34,8 @@
   let omnibarPrompt: string = ''; // Bound to Omnibar's additionalContext
   let isOverallLoading: boolean = false; // Tracks if a response is being generated
   let currentSelectedTextModel: string = 'claude-3-7-sonnet-20250219'; // Updated default text model
+  let currentAbortController: AbortController | null = null; // For stopping generation
+  let currentFollowUpQuestions: string[] = []; // For follow-up prompts to show above Omnibar
 
   // Map of model IDs to human-friendly labels for display
   const modelLabels: Record<string, string> = {
@@ -231,6 +233,7 @@
     isStartState = true;
     omnibarPrompt = '';
     isOverallLoading = false;
+    currentFollowUpQuestions = []; // Clear follow-up prompts
   }
 
   function clearChatAndStorage() {
@@ -243,9 +246,80 @@
     }
   }
 
+  function handleStop() {
+    if (currentAbortController) {
+      currentAbortController.abort();
+      currentAbortController = null;
+    }
+    isOverallLoading = false;
+
+    // Update the last message to show it was stopped
+    messages = messages.map(msg => {
+      if (msg.isStreaming || msg.isLoading) {
+        return {
+          ...msg,
+          isLoading: false,
+          isStreaming: false,
+          content: msg.content || "Generation stopped by user.",
+          error: undefined
+        };
+      }
+      return msg;
+    });
+  }
+
+  function parseFollowUpQuestions(content: string): { mainContent: string, followUpQuestions: string[] } {
+    console.log('🔍 Parsing follow-up prompts from content length:', content.length);
+    console.log('🔍 Content sample:', content.slice(-500)); // Show more content to see the follow-up section
+
+    const followUpMatch = content.match(/⟪---FOLLOWUP---(.*?)---ENDFOLLOWUP---/s);
+
+    if (followUpMatch) {
+      console.log('✅ Found follow-up section:', followUpMatch[1]);
+      const mainContent = content.replace(/⟪---FOLLOWUP---(.*?)---ENDFOLLOWUP---/s, '').trim();
+      const followUpSection = followUpMatch[1].trim();
+
+      // Extract questions from numbered list - make more flexible
+      const questions = followUpSection
+        .split('\n')
+        .map(line => line.trim())
+        .filter(line => line.length > 0) // Any non-empty line
+        .map(line => {
+          // Try different patterns for numbered questions
+          if (line.match(/^\d+\.\s*\[(.*)\]$/)) {
+            return line.replace(/^\d+\.\s*\[(.*)\]$/, '$1');
+          } else if (line.match(/^\d+\.\s*(.+)$/)) {
+            return line.replace(/^\d+\.\s*(.+)$/, '$1');
+          } else if (line.match(/^[-*]\s*(.+)$/)) {
+            return line.replace(/^[-*]\s*(.+)$/, '$1');
+          } else if (line.length > 5) { // Any substantial line
+            return line;
+          }
+          return null;
+        })
+        .filter(q => q && q.length > 0);
+
+      console.log('🎯 Extracted questions:', questions);
+
+      return {
+        mainContent,
+        followUpQuestions: questions.slice(0, 3) // Ensure max 3 questions
+      };
+    }
+
+    console.log('❌ No follow-up section found in content');
+    return {
+      mainContent: content,
+      followUpQuestions: []
+    };
+  }
+
   async function handleOmnibarSubmit() {
     const currentPrompt = omnibarPrompt.trim();
     if (!currentPrompt || isOverallLoading) return;
+
+    // Create new AbortController for this request
+    currentAbortController = new AbortController();
 
     if (isStartState) {
       isStartState = false;
@@ -300,7 +374,17 @@
         }
 
         // Add a reminder of the model's identity
-        const modelIdentityGuide = `You are ${getModelLabel(currentSelectedTextModel)}, a helpful AI assistant created by Anthropic.`;
+        const modelIdentityGuide = `You are ${getModelLabel(currentSelectedTextModel)}, a helpful AI assistant created by Anthropic.
+
+IMPORTANT: After your response, provide exactly 3 SHORT, relevant follow-up prompts that the USER might want to ask YOU to continue the conversation. Keep each question under 6 words when possible.
+
+Use this EXACT format at the very end, with the special delimiter ⟪ to signal the start:
+
+⟪---FOLLOWUP---
+1. [Short question]
+2. [Short question]
+3. [Short question]
+---ENDFOLLOWUP---`;
 
         requestBody = {
           prompt: `${modelIdentityGuide}\n\n${formattedPrompt}`,
@@ -330,7 +414,17 @@
         }
 
         // Add a reminder of the model's identity at the beginning
-        const modelIdentityGuide = `You are ${getModelLabel(currentSelectedTextModel)}, a helpful AI assistant created by Google.`;
+        const modelIdentityGuide = `You are ${getModelLabel(currentSelectedTextModel)}, a helpful AI assistant created by Google.
+
+IMPORTANT: After your response, provide exactly 3 SHORT, relevant follow-up prompts or questions that the USER might want to prompt YOU to continue the conversation. Keep each question under 6 words when possible.
+
+Use this EXACT format at the very end, with the special delimiter ⟪ to signal the start:
+
+⟪---FOLLOWUP---
+1. [Short prompt]
+2. [Short prompt]
+3. [Short prompt]
+---ENDFOLLOWUP---`;
         requestBody = {
           prompt: `${modelIdentityGuide}\n\n${formattedPrompt}`,
           model: currentSelectedTextModel,
@@ -358,7 +452,17 @@
         if (!systemMessageAdded && processedMessages.length > 0) {
           processedMessages.unshift({
             role: 'system',
-            content: `You are ${getModelLabel(currentSelectedTextModel)}, a helpful AI assistant created by OpenAI.`
+            content: `You are ${getModelLabel(currentSelectedTextModel)}, a helpful AI assistant created by OpenAI.
+
+IMPORTANT: After your response, provide exactly 3 SHORT, relevant follow-up prompts that the USER might want to prompt or ask YOU to continue the conversation. Keep each prompt under 6 words when possible.
+
+Use this EXACT format at the very end, with the special delimiter ⟪ to signal the start:
+
+⟪---FOLLOWUP---
+1. [Short prompt]
+2. [Short prompt]
+3. [Short prompt]
+---ENDFOLLOWUP---`
           });
         }
 
@@ -372,7 +476,8 @@
       const response = await fetchAndLog(endpoint, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(requestBody)
+          body: JSON.stringify(requestBody),
+          signal: currentAbortController?.signal
       }, {
         page: 'Chat',
         model: currentSelectedTextModel,
@@ -389,6 +494,8 @@
       const decoder = new TextDecoder();
       let done = false;
       let assistantContent = '';
+      let followUpContent = ''; // Track follow-up content separately
+      let inFollowUpSection = false; // Track if we're in the follow-up section
 
       messages = messages.map(msg =>
         msg.id === assistantMessageId ? { ...msg, isLoading: false, isStreaming: true, _previousContent: '' } : msg
@@ -467,6 +574,62 @@
               // If JSON parsing fails, use the chunk as is
               console.log('Could not parse Gemini response as JSON:', e);
             }
+          }
+
+          // Check for the special delimiter to stop main content streaming
+          if (!inFollowUpSection && processedChunk.includes('⟪')) {
+            console.log('🛑 Detected follow-up delimiter, stopping main content stream');
+
+            // Split the chunk at the delimiter
+            const delimiterIndex = processedChunk.indexOf('⟪');
+            const beforeDelimiter = processedChunk.substring(0, delimiterIndex);
+            const afterDelimiter = processedChunk.substring(delimiterIndex);
+
+            // Add the content before delimiter to main content
+            if (beforeDelimiter) {
+              assistantContent += beforeDelimiter;
+              messages = messages.map(msg => {
+                if (msg.id === assistantMessageId && msg.isStreaming) {
+                  const previousContent = msg._previousContent || '';
+                  let currentContent = msg.content || '';
+                  currentContent += beforeDelimiter;
+
+                  return {
+                    ...msg,
+                    content: currentContent,
+                    _previousContent: previousContent
+                  };
+                }
+                return msg;
+              });
+            }
+
+            // Switch to follow-up mode
+            inFollowUpSection = true;
+            followUpContent = afterDelimiter;
+
+            // Immediately try to parse and set follow-up prompts
+            const tempFollowUpResult = parseFollowUpQuestions('⟪' + followUpContent);
+            if (tempFollowUpResult.followUpQuestions.length > 0) {
+              currentFollowUpQuestions = tempFollowUpResult.followUpQuestions;
+              console.log('🎯 Immediately set follow-up prompts:', currentFollowUpQuestions);
+            }
+
+            continue; // Skip the normal processing for this chunk
+          }
+
+          if (inFollowUpSection) {
+            // We're in follow-up section, collect content but don't display in main response
+            followUpContent += processedChunk;
+
+            // Try to parse follow-up prompts as we get more content
+            const tempFollowUpResult = parseFollowUpQuestions('⟪' + followUpContent);
+            if (tempFollowUpResult.followUpQuestions.length > 0) {
+              currentFollowUpQuestions = tempFollowUpResult.followUpQuestions;
+              console.log('🔄 Updated follow-up prompts:', currentFollowUpQuestions);
+            }
+
+            continue; // Don't add follow-up content to main response
           }
 
           assistantContent += processedChunk;
@@ -562,8 +725,54 @@
         return msg;
       });
 
+      // Parse follow-up prompts from the final content
+      const finalMessage = messages.find(msg => msg.id === assistantMessageId);
+      if (finalMessage && finalMessage.content) {
+        console.log('🔄 Processing final message for follow-ups...');
+
+        // Only parse if we haven't already set follow-up prompts during streaming
+        if (currentFollowUpQuestions.length === 0) {
+          const parsedResult = parseFollowUpQuestions(finalMessage.content);
+
+          console.log('📝 Parsed main content length:', parsedResult.mainContent.length);
+          console.log('❓ Parsed follow-up prompts:', parsedResult.followUpQuestions);
+
+          // Update the message content to exclude follow-up prompts
+          messages = messages.map(msg =>
+            msg.id === assistantMessageId
+              ? { ...msg, content: parsedResult.mainContent }
+              : msg
+          );
+
+          // Set follow-up prompts for the Omnibar
+          currentFollowUpQuestions = parsedResult.followUpQuestions;
+          console.log('✨ Set currentFollowUpQuestions to:', currentFollowUpQuestions);
+        } else {
+          console.log('✅ Follow-up questions already set during streaming:', currentFollowUpQuestions);
+
+          // Clean the main content of any follow-up remnants just in case
+          const cleanedContent = finalMessage.content.replace(/⟪---FOLLOWUP---(.*?)---ENDFOLLOWUP---/s, '').trim();
+          if (cleanedContent !== finalMessage.content) {
+            messages = messages.map(msg =>
+              msg.id === assistantMessageId
+                ? { ...msg, content: cleanedContent }
+                : msg
+            );
+          }
+        }
+      } else {
+        console.log('❌ No final message found or content is empty');
+      }
+
     } catch (error: any) {
       console.error(`Error with ${currentSelectedTextModel}:`, error);
+
+      // Don't update messages if the request was aborted
+      if (error.name === 'AbortError') {
+        console.log('Request was aborted by user');
+        return;
+      }
+
       messages = messages.map(msg =>
         msg.id === assistantMessageId
           ? {
@@ -578,8 +787,19 @@
       );
     } finally {
         isOverallLoading = false;
+        currentAbortController = null;
       // scrollToBottom(); // Will be handled by reactive messages update
     }
+  }
+
+  function handleFollowUpClick(question: string) {
+    if (isOverallLoading) return;
+
+    omnibarPrompt = question;
+    currentFollowUpQuestions = []; // Clear follow-up prompts
+
+    // Auto-submit the follow-up question
+    handleOmnibarSubmit();
   }
 
   onMount(() => {
@@ -883,6 +1103,9 @@
         imageModels={[]}
         isGenerating={isOverallLoading}
         onSubmit={handleOmnibarSubmit}
+        onStop={handleStop}
+        followUpQuestions={currentFollowUpQuestions}
+        onFollowUpClick={handleFollowUpClick}
         parentDisabled={false}
       />
   </div>
@@ -989,6 +1212,9 @@
       imageModels={[]}
       isGenerating={isOverallLoading}
       onSubmit={handleOmnibarSubmit}
+      onStop={handleStop}
+      followUpQuestions={currentFollowUpQuestions}
+      onFollowUpClick={handleFollowUpClick}
       parentDisabled={false}
     />
 
@@ -1874,6 +2100,12 @@
         box-shadow: -8px 12px 24px rgba(black, .2);
       }
 
+      :global(strong){
+        font-family: "Hedvig Letters Serif", serif;
+        font-weight: 600;
+        letter-spacing: 0px;
+      }
+
     :global(p){
       font-weight: 500;
       font-size: 15px;
@@ -1998,6 +2230,25 @@
     :global(select){
       background: rgba(#6355FF, .1) !important;
       color: black !important;
+    }
+    :global(.follow-up-pill) {
+      background: white !important;
+      border: 2px solid rgba(white, 0.9) !important;
+      color: #00106D !important;
+      text-shadow: -0.5px 0 0 #00106D !important;
+      letter-spacing: .5px !important;
+
+      box-shadow: -6px 6px 18px rgba(#030025, .1);
+
+      line-height: 1.2 !important;
+      font-weight: 400;
+
+      &:hover:not(:disabled) {
+        background: rgba(#6355FF, 0.1) !important;
+        box-shadow: -6px 6px 18px rgba(#030025, .15);
+        //border-color: rgba(#6355FF, 0.35) !important;
+        color: #00106D !important;
+      }
     }
 
   }

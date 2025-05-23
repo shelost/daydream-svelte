@@ -2058,3 +2058,102 @@ If selective scroll prevention is needed:
 This fix should restore full native touch scrolling functionality across the entire application while maintaining all other features.
 
 Implementation completed  ✔︎
+
+## Stop Button Functionality in Omnibar Component
+
+### Implementation Details
+Added stop generation functionality to the Omnibar component to allow users to cancel ongoing text generation:
+
+#### Changes Made:
+
+**1. Omnibar Component Updates (`src/lib/components/Omnibar.svelte`):**
+- Added `onStop` callback prop for handling stop actions
+- Modified submit button to show a red stop icon (square) when `isGenerating` is true
+- Button remains enabled during generation but changes action from submit to stop
+- Added `.stop-mode` CSS class with red background and hover effects
+- Removed spinner animation in favor of stop icon
+- Updated button click handler to call either `onSubmit` or `onStop` based on state
+
+**2. Stan Page Updates (`src/routes/(public)/stan/+page.svelte`):**
+- Added `currentAbortController` variable to track active requests
+- Implemented `handleStop()` function that:
+  - Aborts current fetch request using AbortController
+  - Resets loading state
+  - Updates streaming messages to show "Generation stopped by user"
+- Modified `handleOmnibarSubmit()` to:
+  - Create new AbortController for each request
+  - Pass abort signal to fetch request
+  - Handle AbortError in catch block
+  - Clean up controller in finally block
+- Passed `handleStop` function to both Omnibar instances
+
+**3. User Experience:**
+- When generation starts, submit button transforms to red stop button with square icon
+- Users can click stop button to immediately cancel generation
+- Stopped generation shows appropriate message instead of incomplete response
+- Button provides clear visual feedback with red coloring to indicate stop action
+
+**4. Technical Implementation:**
+- Uses modern AbortController API for proper request cancellation
+- Graceful error handling for aborted requests
+- Proper cleanup of resources and state management
+- Compatible with all supported AI models (OpenAI, Anthropic, Google)
+
+This enhancement provides users with immediate control over generation processes, improving the overall user experience by allowing cancellation of unwanted or slow responses.
+
+## Follow-Up Questions Feature Implementation
+
+### Overview
+Added intelligent follow-up question functionality that displays 3 relevant questions after each AI response, allowing users to continue conversations naturally with one-click prompts.
+
+#### Implementation Details:
+
+**1. API Integration:**
+- Modified all AI model endpoints (OpenAI, Anthropic, Google) to include follow-up generation instructions
+- Added specific formatting requirements for AI responses: `---FOLLOWUP---` and `---ENDFOLLOWUP---` markers
+- Responses include 3 relevant questions formatted as: `1. [Question text]`
+
+**2. Response Parsing (`src/routes/(public)/stan/+page.svelte`):**
+- Created `parseFollowUpQuestions()` function to extract follow-up questions from AI responses
+- Separates main content from follow-up questions using regex pattern matching
+- Ensures maximum of 3 questions are extracted and stored
+- Updates message content to exclude follow-up markers from display
+
+**3. UI Components (`src/lib/components/Omnibar.svelte`):**
+- Added `followUpQuestions` and `onFollowUpClick` props to Omnibar component
+- Created floating pill-style buttons above the input form
+- Implemented staggered animations using Svelte transitions:
+  - Container slides up with 300ms duration and 200ms delay
+  - Individual pills animate with 250ms duration, staggered by 100ms each
+- Added responsive design for mobile devices
+
+**4. User Interaction:**
+- Created `handleFollowUpClick()` function to auto-populate and submit follow-up questions
+- Follow-up questions clear automatically when clicked or when starting new conversations
+- Questions are disabled during generation to prevent conflicts
+
+**5. Styling & Theme Integration:**
+- Base styling: Glass-morphism effect with backdrop blur and subtle shadows
+- Stan theme integration: Purple accent colors matching brand palette
+- Hover effects: Smooth scale transitions and enhanced shadows
+- Mobile responsive: Adjusted spacing and font sizes for mobile devices
+
+**6. State Management:**
+- Added `currentFollowUpQuestions` array to track active follow-up questions
+- Integrated with existing loading states and abort functionality
+- Follow-up questions persist until user interaction or chat clearing
+
+#### User Experience Benefits:
+- **Conversation Continuity**: Natural conversation flow with contextually relevant follow-ups
+- **Reduced Friction**: One-click access to related topics without manual typing
+- **Discovery**: Helps users explore topics they might not have considered
+- **Visual Appeal**: Smooth animations and modern pill-style design
+- **Accessibility**: Clear visual hierarchy and keyboard-friendly interactions
+
+#### Technical Features:
+- **Smart Parsing**: Robust extraction of follow-up questions from varied AI response formats
+- **Error Handling**: Graceful fallback when follow-up parsing fails
+- **Performance**: Efficient DOM updates and minimal re-renders
+- **Compatibility**: Works across all supported AI models and devices
+
+This feature significantly enhances the conversational experience by providing intelligent conversation pathways, making the AI assistant more discoverable and engaging for users.
