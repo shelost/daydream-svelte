@@ -1038,7 +1038,7 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
       </div>
 
       <!-- Second carousel row - scrolls right to left -->
-      <div class="carousel-container">
+      <div class="carousel-container second">
         <div class="carousel-track carousel-right-to-left">
           <button
             class="prompt-card"
@@ -1340,7 +1340,12 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
       height: 60px; // Fixed height for consistent layout
       // Ensure carousel doesn't interfere with page scrolling
       touch-action: pan-y;
+
+
     }
+
+
+
 
     .carousel-track {
       display: flex;
@@ -1471,6 +1476,14 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
           text-wrap: wrap;
           line-height: 120%;
         }
+      }
+    }
+
+    // Hide second row of prompts when screen height is less than 500px
+    @media (max-height: 600px) {
+      .carousel-container.second {
+        display: none;
+
       }
     }
   }
@@ -2312,12 +2325,14 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
       width: 200px;
       padding: 12px 16px;
       margin: 0;
+
       // Allow parent scrolling to work
       touch-action: pan-y;
 
       .prompt-text {
         width: 100%;
         text-wrap: wrap;
+        vertical-align: top;
         line-height: 120%;
       }
     }

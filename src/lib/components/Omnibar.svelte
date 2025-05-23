@@ -133,25 +133,50 @@
   // Function to handle follow-up question alignment based on content overflow
   function updateFollowUpAlignment() {
     if (followUpContainer) {
-      const hasOverflow = followUpContainer.scrollWidth > followUpContainer.clientWidth;
+      // Force a layout calculation
+      followUpContainer.offsetHeight;
+
+      const containerWidth = followUpContainer.clientWidth;
+      const contentWidth = followUpContainer.scrollWidth;
+      const hasOverflow = contentWidth > containerWidth;
+
+      console.log('🔍 Overflow check:', {
+        containerWidth,
+        contentWidth,
+        hasOverflow,
+        currentClasses: followUpContainer.className
+      });
+
       if (hasOverflow) {
         followUpContainer.classList.add('has-overflow');
+        console.log('✅ Added has-overflow class');
       } else {
         followUpContainer.classList.remove('has-overflow');
+        console.log('❌ Removed has-overflow class');
       }
     }
   }
 
-  // Update alignment when follow-up questions change
-  $: if (followUpQuestions) {
-    setTimeout(updateFollowUpAlignment, 0); // Wait for DOM update
+  // Update alignment when follow-up questions change with better timing
+  $: if (followUpQuestions && followUpQuestions.length > 0) {
+    // Use multiple timeouts to ensure DOM is fully rendered
+    setTimeout(() => updateFollowUpAlignment(), 10);
+    setTimeout(() => updateFollowUpAlignment(), 100);
+    setTimeout(() => updateFollowUpAlignment(), 300);
   }
 
   // Set up resize observer to handle window resize
   onMount(() => {
     const resizeObserver = new ResizeObserver(() => {
-      updateFollowUpAlignment();
+      setTimeout(updateFollowUpAlignment, 50);
     });
+
+    // Also listen for window resize events
+    const handleResize = () => {
+      setTimeout(updateFollowUpAlignment, 50);
+    };
+
+    window.addEventListener('resize', handleResize);
 
     if (followUpContainer) {
       resizeObserver.observe(followUpContainer);
@@ -159,6 +184,7 @@
 
     return () => {
       resizeObserver.disconnect();
+      window.removeEventListener('resize', handleResize);
     };
   });
 
@@ -263,11 +289,6 @@
     justify-content: center; /* Center by default */
     transition: justify-content 0.2s ease;
 
-    /* Hide scrollbar for Chrome/Safari */
-    &::-webkit-scrollbar {
-      display: none;
-    }
-
     /* Apply gradient fade mask to create scroll shadows */
     mask: linear-gradient(
       to right,
@@ -284,25 +305,74 @@
       transparent 100%
     );
 
+    /* Hide scrollbar for Chrome/Safari */
+    &::-webkit-scrollbar {
+      display: none;
+    }
+
     /* When content overflows, switch to left-aligned for better scrolling */
     &.has-overflow {
       justify-content: flex-start;
+      padding: 0 32px;
 
       /* Adjust mask for scrolling content */
       mask: linear-gradient(
         to right,
         transparent 0,
-        black 40px,
-        black calc(100% - 40px),
+        black 48px,
+        black calc(100% - 48px),
         transparent 100%
       );
       -webkit-mask: linear-gradient(
         to right,
         transparent 0,
-        black 40px,
-        black calc(100% - 40px),
+        black 48px,
+        black calc(100% - 48px),
         transparent 100%
       );
+    }
+
+    @media screen and (max-width: 800px) {
+      justify-content: flex-start;
+      width: 100%;
+      max-width: 90vw;
+      padding: 16px;
+
+      /* Adjust mask for smaller screens */
+      mask: linear-gradient(
+        to right,
+        transparent 0,
+        black 20px,
+        black calc(100% - 20px),
+        transparent 100%
+      );
+      -webkit-mask: linear-gradient(
+        to right,
+        transparent 0,
+        black 20px,
+        black calc(100% - 20px),
+        transparent 100%
+      );
+
+      &.has-overflow {
+        padding: 0 24px;
+
+        /* Adjust mask for scrolling on mobile */
+        mask: linear-gradient(
+          to right,
+          transparent 0,
+          black 32px,
+          black calc(100% - 32px),
+          transparent 100%
+        );
+        -webkit-mask: linear-gradient(
+          to right,
+          transparent 0,
+          black 32px,
+          black calc(100% - 32px),
+          transparent 100%
+        );
+      }
     }
   }
 
