@@ -196,7 +196,7 @@
       background: rgba(white, 0.1);
 
       span {
-        color: #55ff9c;
+        color: var(--highlight);
       }
     }
 
@@ -206,10 +206,10 @@
 
     // Active state for tool buttons
     &.active {
-      background: rgba(#a0ffc8, 1);
+      background: var(--highlight);
 
       span {
-        color: black;
+        color: white;
       }
     }
   }
@@ -241,12 +241,12 @@
       .main-shape-button, .shape-dropdown-trigger {
        background: none;
          span {
-          color: #55ff9c;
+          color: var(--highlight);
         }
       }
     }
     .main-shape-button.active, .main-shape-button.active + .shape-dropdown-trigger {
-       background: rgba(#a0ffc8, 1);
+       background: var(--highlight);
         span {
           color: black;
         }

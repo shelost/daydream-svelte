@@ -3621,7 +3621,6 @@ Guidelines:
               {:else}
                 <!-- CANVAS BACKGROUND COLOR when no shape is selected -->
                 <div class="tool-group">
-                  <span class="tool-label">Background</span>
                   <input
                     type="color"
                     value={canvasBackgroundColor}
