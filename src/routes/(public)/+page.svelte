@@ -73,7 +73,7 @@
 </script>
 
 <svelte:head>
-  <title>Daydream - A Powerful Canvas Drawing App</title>
+  <title>Opal Computer</title>
   <meta name="description" content="Create beautiful drawings and canvas compositions with Daydream" />
 </svelte:head>
 
@@ -87,6 +87,7 @@
       <h1>
         Daydream
       </h1>
+      <h2> by Opal </h2>
       <p>
         Copyright &copy; 2025 ahw. All rights reserved.
       </p>
@@ -210,7 +211,7 @@
     }
 
     .mast{
-      margin: 24px 0 48px 0;
+      margin: 12px 0 48px 0;
       color: white;
       h1{
         font-family: "ivypresto-headline", serif;
@@ -218,13 +219,14 @@
         font-weight: 500;
         letter-spacing: -.5px;
         color: white;
-        margin-bottom: 24px;
       }
       h2{
         font-size: 18px;
-        font-weight: 400;
-        letter-spacing: -.5px;
-        color: rgba(white, .5);
+        font-weight: 500;
+        letter-spacing: -.3px;
+        color: rgba(white, .2);
+        margin-left: 240px;
+        margin-top: -12px;
       }
       p {
         font-size: 14px;

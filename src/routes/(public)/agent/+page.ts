@@ -4,9 +4,3 @@
 export const prerender = false;  // Disable prerendering for dynamic content
 export const ssr = false;        // Disable server-side rendering
 export const csr = true;         // Enable client-side rendering
-
-export function load() {
-  return {
-    // No initial data needed
-  };
-}
