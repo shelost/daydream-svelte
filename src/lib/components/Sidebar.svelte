@@ -58,7 +58,10 @@
 
 <aside class:collapsed={!$isSidebarOpen} class="sidebar">
   <div class="sidebar-header">
-    <img src="/arachne-icon.png" alt="Arachne" class="sidebar-logo" />
+
+
+
+    <img src="wing.png" alt="Arachne" class="sidebar-logo" />
     <h2>Daydream</h2>
     <button on:click={toggleSidebar} class="toggle-button">
       <span class="material-icons">
@@ -130,29 +133,27 @@
 </aside>
 
 <style lang="scss">
-  .material-icons {
-    font-size: 20px;
-  }
+
 
   .sidebar {
-    background-color: rgba(white, .05);
     height: 100%;
-
     box-sizing: border-box;
     width: 200px;
-    transition: width $transition-normal;
+    transition: $transition-normal;
     display: flex;
     flex-direction: column;
     overflow-y: auto;
-
-    border: 1px solid rgba(white, .1);
-
-    box-shadow: -8px 18px 32px rgba(black, 0.8), inset -2px -6px 12px rgba(black, 0.03);
-    border-radius: $border-radius-lg;
+    background: var(--sidebar-bg);
+    border: none;
+    box-shadow: none;
 
     &.collapsed {
-      width: 60px;
+      width: 60px !important;
     }
+  }
+
+  .collapsed{
+    width: 60px !important;
   }
 
   .sidebar-header {
@@ -163,16 +164,20 @@
     border-bottom: 1px solid $border-color;
 
     img{
-      height: 24px;
+      height: 26px;
+      border-radius: 6px;
     }
 
     h2 {
-      font-size: 1.2rem;
-      font-weight: 600;
+      font-size: 18px;
+      font-weight: 700;
       margin: 0;
+      margin-left: 8px;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
+
+      flex: 1;
     }
   }
 
@@ -265,12 +270,16 @@
     padding: 0;
     margin: 0;
 
+    .material-icons {
+      font-size: 16px;
+    }
+
     li {
       font-size: 14px;
-      font-weight: 500;
+      font-weight: 600;
       display: flex;
       align-items: center;
-      gap: 4px;
+      gap: 6px;
       padding: 8px 8px;
       margin: 2px 12px;
       cursor: pointer;
@@ -278,15 +287,15 @@
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
-      transition: .1s ease;
+      transition: .2s ease;
 
       &:hover {
-        background-color: rgba(var(--text-color), 0.5);
+        background-color: rgba(black, 0.05);
       }
 
       &.active {
-        background-color: var(--text-color);
-        color: var(--background-color);
+        background-color: var(--card-shadow);
+        color: var(--text-color);
         font-weight: 600;
       }
     }
@@ -296,8 +305,8 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 24px;
-    height: 24px;
+    width: 16px;
+    height: 16px;
     flex-shrink: 0;
   }
 

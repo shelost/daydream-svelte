@@ -1,7 +1,8 @@
+@import url("https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:ital,opsz,wght@0,9..40,100..1000;1,9..40,100..1000&family=DM+Serif+Display:ital@0;1&family=EB+Garamond:ital,wght@0,400..800;1,400..800&family=Geist:wght@100..900&family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&family=Lora:ital,wght@0,400..700;1,400..700&family=Newsreader:ital,opsz,wght@0,6..72,200..800;1,6..72,200..800&family=Playfair+Display:ital,wght@0,400..900;1,400..900&family=Plus+Jakarta+Sans:ital,wght@0,200..800;1,200..800&display=swap");
 :root {
   --primary-color: #00106d;
   --secondary-color: #ff3e00;
-  --background-color: #ffffff;
+  --background-color: #272b35;
   --text-color: #030025;
   --sidebar-bg: #f9f9f9;
   --border-color: #e5e5e5;
@@ -17,12 +18,13 @@
   --tool-active-bg: rgba(66, 133, 244, 0.1);
   --tool-active-color: #4285f4;
   --tool-hover-bg: rgba(0, 0, 0, 0.05);
+  --highlight: #ff3974;
 }
 
 .theme-dark {
   --primary-color: #5e6bff;
   --secondary-color: #ff7b54;
-  --background-color: #121212;
+  --background-color: #252528;
   --text-color: #f0f0f0;
   --sidebar-bg: #1a1a1a;
   --border-color: #333333;
@@ -43,7 +45,7 @@
 .theme-light {
   --primary-color: #00106d;
   --secondary-color: #ff3e00;
-  --background-color: #ffffff;
+  --background-color: #272b35;
   --text-color: #030025;
   --sidebar-bg: #f9f9f9;
   --border-color: #e5e5e5;
@@ -70,18 +72,18 @@
 html, body {
   height: 100%;
   width: 100%;
-  font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-family: "Geist", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   font-size: 16px;
   color: var(--text-color, #030025);
   letter-spacing: -0.03em;
-  background-color: var(--background-color, #ffffff);
+  background-color: var(--background-color, #272b35);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   transition: background-color 250ms ease, color 250ms ease;
 }
 
 h1, h2, h3, h4, h5, h6 {
-  font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-family: "Geist", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   letter-spacing: -0.03em;
   font-weight: 700;
   margin-bottom: 0.5em;
@@ -89,6 +91,16 @@ h1, h2, h3, h4, h5, h6 {
 
 p {
   margin-bottom: 1em;
+}
+
+::-moz-selection {
+  background-color: white;
+  color: black;
+}
+
+::selection {
+  background-color: white;
+  color: black;
 }
 
 a {
@@ -105,19 +117,21 @@ button, .button {
   background-color: var(--primary-color, #00106d);
   color: var(--button-text, white);
   border: none;
-  border-radius: 8px;
+  border-radius: 12px;
   padding: 8px 16px;
   font-size: 12px;
   letter-spacing: -0.5px;
   font-weight: 500;
-  font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-family: "Geist", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   transition: all 150ms ease;
+}
+button h2, .button h2 {
+  font-size: 18px;
+  font-weight: 600;
+  text-shadow: 0 4px 4px rgba(0, 0, 0, 0.08);
 }
 button:hover, .button:hover {
   opacity: 0.9;
-}
-button:active, .button:active {
-  transform: translateY(1px);
 }
 button:disabled, .button:disabled {
   opacity: 0.5;
@@ -145,7 +159,7 @@ button.text:hover, .button.text:hover {
 }
 
 input, textarea, select {
-  font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-family: "Geist", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   font-size: 16px;
   padding: 8px 12px;
   border: 1px solid var(--border-color, #e5e5e5);
@@ -154,14 +168,14 @@ input, textarea, select {
 }
 input:focus, textarea:focus, select:focus {
   outline: none;
-  border-color: var(--primary-color, #00106d);
 }
 
 input[type=range] {
   flex: 1;
   margin: 0 8px;
   height: 32px;
-  background: rgba(255, 255, 255, 0.15);
+  width: 100%;
+  background: rgba(255, 255, 255, 0.9);
   border: none !important;
   -webkit-appearance: none;
      -moz-appearance: none;
@@ -385,4 +399,55 @@ input[type=range]::-webkit-slider-thumb:hover {
 
 .canvas-page, .drawing-page {
   background-color: #ffffff !important;
+}
+
+.svelte-flow__node {
+  transition: 0.2s ease;
+}
+.svelte-flow__node label {
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: -0.2px;
+  padding-bottom: 12px;
+  display: flex;
+  height: 12px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.svelte-flow__node label img {
+  height: 12px;
+  filter: invert(1) brightness(100);
+}
+.svelte-flow__node.selected .node {
+  border: 0.5px solid rgba(255, 255, 255, 0.15);
+  box-shadow: -8px 16px 40px rgba(0, 0, 0, 0.35);
+}
+.svelte-flow__node:hover .node {
+  transform: translateY(-0.5px);
+}
+
+.node {
+  padding: 8px 6px;
+  background: rgba(0, 0, 0, 0.5);
+  background-image: linear-gradient(-20deg, rgba(255, 255, 255, 0) 25%, rgba(255, 255, 255, 0.01) 50%, rgba(255, 255, 255, 0) 75%);
+  border: 0.5px solid rgba(255, 255, 255, 0.05);
+  border-radius: 12px;
+  -webkit-backdrop-filter: blur(20px);
+          backdrop-filter: blur(20px);
+  transition: none;
+  color: white;
+  box-shadow: -8px 16px 32px rgba(0, 0, 0, 0.3);
+}
+.node textarea {
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: -0.25px;
+  color: white;
+  background: none;
+  border-radius: 4px;
+  border: none !important;
+  width: 100% !important;
+  box-sizing: border-box;
 }/*# sourceMappingURL=global.css.map */

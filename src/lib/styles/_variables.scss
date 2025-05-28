@@ -1,7 +1,11 @@
+@import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:ital,opsz,wght@0,9..40,100..1000;1,9..40,100..1000&family=DM+Serif+Display:ital@0;1&family=EB+Garamond:ital,wght@0,400..800;1,400..800&family=Geist:wght@100..900&family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&family=Lora:ital,wght@0,400..700;1,400..700&family=Newsreader:ital,opsz,wght@0,6..72,200..800;1,6..72,200..800&family=Playfair+Display:ital,wght@0,400..900;1,400..900&family=Plus+Jakarta+Sans:ital,wght@0,200..800;1,200..800&display=swap');
+
 // Light theme colors
 $light-primary-color: #00106d;
 $light-secondary-color: #ff3e00;
-$light-background-color: #ffffff;
+$light-background-color: #c9d0dc;
+$light-background-color:  #373c47;
+$light-background-color:  #272b35;
 $light-text-color: #030025;
 $light-sidebar-bg: #f9f9f9;
 $light-border-color: #e5e5e5;
@@ -17,7 +21,7 @@ $light-button-text: #ffffff;
 // Dark theme colors
 $dark-primary-color: #5e6bff;
 $dark-secondary-color: #ff7b54;
-$dark-background-color: #121212;
+$dark-background-color: #252528;
 $dark-text-color: #f0f0f0;
 $dark-sidebar-bg: #1a1a1a;
 $dark-border-color: #333333;
@@ -29,6 +33,9 @@ $dark-card-bg: #1e1e1e;
 $dark-card-shadow: rgba(0, 0, 0, 0.3);
 $dark-hover-bg: rgba(255, 255, 255, 0.05);
 $dark-button-text: #f0f0f0;
+
+
+$highlight: #ff3974;
 
 // Default to light theme variables
 $primary-color: var(--primary-color, $light-primary-color);
@@ -47,7 +54,7 @@ $hover-bg: var(--hover-bg, $light-hover-bg);
 $button-text: var(--button-text, $light-button-text);
 
 // Font settings
-$font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+$font-family: 'Geist', 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
 $font-family-secondary: 'DM Sans', sans-serif;
 $font-family-serif: 'Newsreader', serif;
 $letter-spacing: -0.03em;

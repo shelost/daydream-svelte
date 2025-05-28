@@ -8,9 +8,12 @@
   import { pages } from '$lib/stores/pages';
   import type { Tool, CanvasContent, DrawingContent } from '$lib/types';
   import { updatePageContent, createPage, getPage, uploadThumbnail } from '$lib/supabase/pages';
-  import { getSvgPathFromStroke } from '$lib/utils/drawingUtils';
+  import { getSvgPathFromStroke } from '$lib/utils/drawingUtils.js';
   import { user } from '$lib/stores/auth';
   import ZoomControl from './ZoomControl.svelte';
+
+  // Create event dispatcher
+  const dispatch = createEventDispatcher();
 
   // Type definition for the fabric library
   interface FabricLib {
@@ -97,8 +100,26 @@
 
   // Update exported properties when selection changes
   $: {
+    // Make sure we explicitly set selectedObjectType based on objectType
     selectedObjectType = objectType || null;
+
+    // Also set the ID if available
     selectedObjectId = selectedObject ? getObjectId(selectedObject) : null;
+
+    // More detailed logging about what is being exported
+    console.log('Canvas exporting object info:', {
+      objectType,
+      selectedObjectType,
+      selectedObjectId,
+      hasObject: !!selectedObject
+    });
+
+    // Dispatch selection change event to parent component
+    dispatch('selectionChange', {
+      object: selectedObject,
+      objects: selectedObject ? [selectedObject] : [],
+      type: selectedObjectType
+    });
   }
 
   // Styling presets for toolbar
@@ -156,7 +177,13 @@
       fontFamily: 'Inter',
       fontSize: 18,
       charSpacing: -20,
-      fill: '#333333'
+      fill: '#333333',
+      scaleX: 1,
+      scaleY: 1,
+      originX: 'left',
+      originY: 'top',
+      textAlign: 'left',
+      padding: 0 // Add padding to improve bounding box consistency
     },
     welcomeText: {
       fontFamily: 'Arial',
@@ -165,7 +192,10 @@
       fontWeight: 'bold',
       textAlign: 'center',
       originX: 'center',
-      originY: 'center'
+      originY: 'center',
+      scaleX: 1,
+      scaleY: 1,
+      padding: 0 // Add padding to improve bounding box consistency
     }
   };
 
@@ -175,8 +205,32 @@
     return JSON.parse(JSON.stringify(obj));
   }
 
+  // Configure initial fabric settings
+  function setupFabricGlobals(fabricLib: any) {
+    if (!fabricLib) return;
+
+    // Configure global object caching settings for better rendering consistency
+    fabricLib.fabric.Object.prototype.objectCaching = true;
+
+    // Increase cache dimensions for better quality
+    fabricLib.fabric.Object.prototype.cacheProperties =
+      fabricLib.fabric.Object.prototype.cacheProperties.concat([
+        'strokeWidth', 'strokeDashArray', 'fontSize', 'fontFamily', 'charSpacing'
+      ]);
+
+    // Set higher dirty rendering tolerance to force more re-renders
+    fabricLib.fabric.Object.prototype.statefullCache = true;
+    fabricLib.fabric.Object.prototype.noScaleCache = false;
+
+    // Ensure text objects use consistent scaling behavior
+    fabricLib.fabric.IText.prototype.lockScalingFlip = true;
+
+    // Improve text metrics calculation
+    fabricLib.fabric.Text.prototype.dynamicMinWidth = true;
+  }
+
   // Main component initialization
-  onMount(() => {
+  onMount(async () => {
     const initPromise = async () => {
       try {
         log('Canvas component mounting...');
@@ -208,12 +262,99 @@
 
         // Initialize the canvas
         try {
+          // Ensure fabricLib is not null before using it
+          if (!fabricLib) {
+            throw new Error('Fabric library not loaded');
+          }
+
+          // Setup global fabric settings
+          setupFabricGlobals(fabricLib);
+
           canvas = new fabricLib.fabric.Canvas(canvasEl, {
             backgroundColor: '#ffffff',
             preserveObjectStacking: true,
             stopContextMenu: true,
-            fireRightClick: true
+            fireRightClick: true,
+            // Add these settings to improve rendering consistency:
+            renderOnAddRemove: true,
+            stateful: true,
+            imageSmoothingEnabled: true // Better rendering quality
           });
+
+          // Set default control appearance for all objects
+          fabricLib.fabric.Object.prototype.set({
+            cornerStyle: 'circle',
+            cornerColor: 'white',
+            cornerStrokeColor: '#6355FF',
+            cornerStrokeWidth: 3,
+            cornerSize: 8,
+            padding: 1, // Increased padding for better selection handling
+            transparentCorners: false,
+            borderColor: '#6355FF',
+            borderScaleFactor: 1.5,
+            borderOpacityWhenMoving: .5,
+            touchCornerSize: 20,
+          });
+
+          // Set selection appearance
+          canvas.selectionColor = 'rgba(20,0,255,0.05)';
+          canvas.selectionBorderColor = '#6355FF';
+          canvas.selectionLineWidth = 2;
+
+          canvas.hoverCursor = 'pointer';
+
+  function animate(e: any, dir: any) {
+    if (e.target) {
+      // Skip animation for text objects to prevent scaling issues
+      if (e.target.type === 'text' || e.target.type === 'i-text' || e.target.type === 'textbox') {
+        // For text objects, just highlight with border change
+        const originalBorderColor = e.target.borderColor;
+        e.target.set({
+          borderColor: dir ? '#ff0000' : '#6355FF'
+        });
+        canvas.requestRenderAll();
+
+        // Reset border color after animation
+        setTimeout(() => {
+          e.target.set({ borderColor: originalBorderColor });
+          canvas.requestRenderAll();
+        }, 100);
+        return;
+      }
+
+      // For non-text objects, use original animation
+      if (fabricLib && canvas) {
+        fabricLib.fabric.util.animate({
+          startValue: e.target.angle,
+          endValue: dir ? 10 : 0,
+          duration: 100,
+          onChange: function(value: any) {
+            e.target.rotate(value);
+            canvas.renderAll();
+          },
+          onComplete: function() {
+            e.target.setCoords();
+          }
+        });
+
+        fabricLib.fabric.util.animate({
+          startValue: e.target.scaleX,
+          endValue: dir ? 1.2 : 1,
+          duration: 100,
+          onChange: function(value: any) {
+            e.target.scale(value);
+            canvas.renderAll();
+          },
+          onComplete: function() {
+            e.target.setCoords();
+          }
+        });
+      }
+    }
+  }
+  canvas.on('mouse:down', function(e: any) { animate(e, 1); });
+  canvas.on('mouse:up', function(e: any) { animate(e, 0); });
+
 
           // Initialize fabric canvas event handlers for text scaling fix
           initializeFabricCanvas();
@@ -253,6 +394,31 @@
         // Setup selection handlers
         setupSelectionHandlers();
 
+        // Add a custom event listener for object updates
+        if (canvasEl) {
+          // Create an event listener for updating objects
+          canvasEl.addEventListener('fabric:update-object', (event: any) => {
+            console.log('Canvas received fabric:update-object event:', event.detail);
+            const { object, updates } = event.detail;
+            if (object && updates) {
+              updateObject(object, updates);
+            }
+          });
+        }
+
+        // Make this instance available globally for debugging/access
+        if (window) {
+          // Cast window to any to avoid TypeScript errors
+          (window as any).canvasInstance = {
+            updateObject,
+            clearSelection: () => canvas && canvas.discardActiveObject(),
+            groupSelection: () => console.log('Group selection not implemented'),
+            ungroupSelection: () => console.log('Ungroup selection not implemented'),
+            alignSelection: () => console.log('Align selection not implemented'),
+            distributeSelection: () => console.log('Distribute selection not implemented')
+          };
+        }
+
         // Load content if available
         if (content && Object.keys(content).length > 0) {
           await loadCanvasContent(content);
@@ -282,10 +448,21 @@
       window.removeEventListener('resize', handleResize);
       window.removeEventListener('keydown', handleKeyDown);
 
+      if (canvasEl) {
+        canvasEl.removeEventListener('fabric:update-object', () => {});
+      }
+
       // Dispose of the canvas if it was initialized
       if (canvas) {
         canvas.dispose();
       }
+
+      // Clean up global instance
+      if (window && (window as any).canvasInstance) {
+        (window as any).canvasInstance = null;
+      }
+
+      console.log('Canvas component unmounted');
     };
   });
 
@@ -464,36 +641,21 @@
 
       const obj = event.target;
 
-      // Special handling for text objects to convert scaling to font size
-      if ((obj.type === 'text' || obj.type === 'i-text') && (obj.scaleX !== 1 || obj.scaleY !== 1)) {
+      // Use our normalization function for all object types
         untrack(() => {
-          // Calculate new font size based on scaling
-          const newFontSize = Math.round(obj.fontSize * obj.scaleX);
-
-          // Apply the new font size
-          obj.set({
-            fontSize: newFontSize,
-            // Reset scaling to avoid double-scaling
-            scaleX: 1,
-            scaleY: 1
-          });
-
-          // Force object to clear its cache and update
-          obj._clearCache();
-          if (obj.setCoords) obj.setCoords();
+        normalizeObjectScaling(obj);
 
           // Update the canvas
           canvas.renderAll();
-        });
-      }
+
+        // Schedule auto save after modifying the object
+        scheduleAutoSave();
 
       // Update toolbar properties if this is the selected object
-      if (selectedObject) {
+        if (selectedObject === obj) {
         updateToolbarProperties();
       }
-
-      // Always schedule an autosave after modifications
-      scheduleAutoSave();
+      });
     });
 
     // Handle text editing events
@@ -510,31 +672,12 @@
 
       const obj = event.target;
 
-      // Ensure the object has proper scaling
-      if (obj.scaleX !== 1 || obj.scaleY !== 1) {
+      // Use our normalization function for consistent handling
         untrack(() => {
-          // Convert scaling to font size
-          const newFontSize = Math.round(obj.fontSize * obj.scaleX);
-
-          // Apply the new font size and reset scaling
-          obj.set({
-            fontSize: newFontSize,
-            scaleX: 1,
-            scaleY: 1
-          });
-
-          // Clear cache and update
-          obj._clearCache();
-          if (obj.setCoords) obj.setCoords();
+        normalizeObjectScaling(obj);
           canvas.renderAll();
-
-          // Schedule autosave
           scheduleAutoSave();
         });
-      } else {
-        // Just schedule an autosave if no scaling changes
-        scheduleAutoSave();
-      }
     });
 
     // Make sure objects are properly selectable
@@ -575,6 +718,13 @@
           && selectedTool !== 'rectangle' && selectedTool !== 'text') {
         setTool('select');
       }
+
+      // Dispatch selection cleared event
+      dispatch('selectionChange', {
+        object: null,
+        objects: [],
+        type: null
+      });
     });
   }
 
@@ -631,8 +781,24 @@
         objectType = '';
         showToolbar = false;
         logSelectionState('handle-selected-no-object');
+
+        // Dispatch selection cleared event
+        dispatch('selectionChange', {
+          object: null,
+          objects: [],
+          type: null
+        });
+
         return;
       }
+
+      // Log more detailed information about the selected object
+      console.log('Object selected:', {
+        type: activeObject.type,
+        data: activeObject.data,
+        id: activeObject.id,
+        isText: activeObject.type === 'i-text' || activeObject.type === 'text'
+      });
 
       // Set selected object
       selectedObject = activeObject;
@@ -645,36 +811,54 @@
       // Determine object type more carefully
       if (activeObject.type === 'i-text' || activeObject.type === 'text') {
         objectType = 'text';
-
-        // Don't change tool on selection - only on double-click now
-        // Keep the select tool for moving text objects
+        console.log('Identified as TEXT object');
       } else if (activeObject.type === 'rect' && !activeObject.data?.type) {
         // Only treat as rectangle if it's not part of a drawing
         objectType = 'rectangle';
-
-        // Keep the select tool for moving rectangle objects
+        console.log('Identified as RECTANGLE object');
       } else if (activeObject.type === 'circle') {
         objectType = 'circle';
-
-        // Keep the select tool for moving circle objects
+        console.log('Identified as CIRCLE object');
       } else if (activeObject.type === 'path') {
         objectType = 'path';
-
-        // Keep the select tool for moving path objects
+        console.log('Identified as PATH object');
       } else if (activeObject.type === 'group' && activeObject.data?.type === 'drawing') {
         objectType = 'drawing';
+        console.log('Identified as DRAWING object');
       } else {
         objectType = activeObject.type;
-
-        // Keep the select tool for moving other objects
+        console.log('Identified as OTHER object type:', activeObject.type);
       }
 
       // Log object details for debugging
       logSelectionState('handle-object-selected');
 
+      // Immediately update exported properties to ensure consistency
+      selectedObjectType = objectType || null;
+      selectedObjectId = selectedObject ? getObjectId(selectedObject) : null;
+
+      // Add an extra log for clarity when identifying text objects
+      if (objectType === 'text') {
+        console.log('TEXT OBJECT SELECTED - details:', {
+          text: activeObject.text,
+          fontFamily: activeObject.fontFamily,
+          fontSize: activeObject.fontSize,
+          type: activeObject.type
+        });
+      }
+
       // Don't show toolbar for drawing objects, they have their own interface
       if (objectType === 'drawing') {
         showToolbar = false;
+
+        // Dispatch selection change event immediately
+        console.log('Dispatching selectionChange event for drawing');
+        dispatch('selectionChange', {
+          object: selectedObject,
+          objects: [selectedObject],
+          type: objectType
+        });
+
         return;
       }
 
@@ -691,6 +875,14 @@
       showToolbar = true;
 
       console.log('Object selected:', objectType, 'Toolbar showing:', showToolbar);
+
+      // Dispatch selection change event to parent component
+      console.log('Dispatching selectionChange event with type:', objectType);
+      dispatch('selectionChange', {
+        object: selectedObject,
+        objects: [selectedObject],
+        type: objectType
+      });
     });
   }
 
@@ -787,22 +979,27 @@
     if (!canvas || !fabricLib) return;
 
     untrack(() => {
-      // Use fabricLib.fabric.IText instead of fabricLib.IText
+      // Create a new IText object with proper settings
       const text = new fabricLib.fabric.IText('Double-click to edit', {
         left: pointer.x,
         top: pointer.y,
         ...defaultStyles.text,
-        // Ensure scale is explicitly set to 1 to prevent scaling issues
+        // Explicitly set all scale-related properties for consistency
         scaleX: 1,
         scaleY: 1,
-        // Use default origins (top-left) to ensure object appears exactly where clicked
         originX: 'left',
-        originY: 'top'
+        originY: 'top',
+        // Add unique ID to help with selection tracking and restoration
+        data: { id: fabricLib.fabric.util.uuid() }
       });
 
+      // Add to canvas and select it
       canvas.add(text);
       canvas.setActiveObject(text);
       canvas.renderAll();
+
+      // Make sure the text object is properly positioned
+      text.setCoords();
 
       // Schedule save before entering edit mode
       scheduleAutoSave();
@@ -1291,6 +1488,9 @@
         return;
       }
 
+      // Synchronize canvas layers before saving to ensure correct display
+      syncCanvasLayers();
+
       // Get the current selected object before saving (to restore selection after save)
       const activeObject = canvas.getActiveObject();
       let activeObjectId = null;
@@ -1338,12 +1538,17 @@
             if (activeObject && canvas.contains(activeObject)) {
               // If the original object is still there, re-select it
               canvas.setActiveObject(activeObject);
-              canvas.renderAll();
+
+              // Force a sync after selection to ensure proper display
+              syncCanvasLayers();
 
               // Make sure toolbar shows up for this object
               handleObjectSelected({ target: activeObject });
             }
           });
+        } else {
+          // Even if we don't have a selection to restore, sync canvas layers
+          syncCanvasLayers();
         }
 
         onSaveStatus('saved');
@@ -1352,6 +1557,11 @@
     } catch (err) {
       console.error('Unexpected error saving canvas:', err);
       onSaveStatus('error');
+
+      // Try to sync canvas layers even after error
+      if (canvas) {
+        syncCanvasLayers();
+      }
     } finally {
       // Important: Reset these flags AFTER saving is complete
       isSaving = false;
@@ -1762,10 +1972,9 @@
       untrack(() => {
         // Only process external content changes when they're genuinely different
         // and not during active operations
-        const contentStr = JSON.stringify(content);
-        const localContentStr = JSON.stringify(localContent);
+        if (!isActivelyDrawing && !isSaving && content &&
+            (!localContent || JSON.stringify(content) !== JSON.stringify(localContent))) {
 
-        if (contentStr !== localContentStr && !isActivelyDrawing && !isSaving) {
           log('External content change detected');
 
           // Check if this is a complete refresh needed or a minor update
@@ -1782,7 +1991,7 @@
             // Update local content reference
             localContent = safeClone(content);
 
-            // Set flag to prevent viewport save
+            // Set flag to prevent circular updates
             skipNextViewportSave = true;
 
             // Don't reload the entire canvas, just update viewport if needed
@@ -1793,7 +2002,14 @@
                 content.viewport.panX || 0,
                 content.viewport.panY || 0
               ]);
-              canvas.renderAll();
+
+              // Ensure all object coordinates are updated after viewport change
+              canvas.forEachObject((obj: any) => {
+                if (obj.setCoords) obj.setCoords();
+              });
+
+              // Force a complete sync of display and interactive layers
+              syncCanvasLayers();
             }
 
             log('Soft refresh with selection preservation');
@@ -1824,7 +2040,8 @@
                   ]);
                 }
 
-                canvas.renderAll();
+                // Force a complete sync of all object coordinates and display
+                syncCanvasLayers();
               });
             }
           }
@@ -2398,6 +2615,7 @@
     // Handle object modification
     canvas.on('object:modified', (e: any) => {
       console.log('Object modified:', e.target?.type);
+      e.target?.setCoords()
 
       // Set flag to false after completion
       isActivelyDrawing = false;
@@ -2752,14 +2970,25 @@
   }
 
   // Save canvas content to database
-  async function saveCanvasContent(shouldGenerateThumbnail = false) {
-    if (!pageId || !$user || !initialized || !contentLoaded) return false;
+  async function saveCanvasContent(shouldGenerateThumbnail = false): Promise<boolean> {
+    if (!canvas || !pageId || !initialized || !contentLoaded) {
+      return false;
+    }
 
     try {
       // Set saving state
       isSaving = true;
       onSaving(true);
       onSaveStatus('saving');
+
+      // First, force sync all objects to ensure they're properly rendered
+      if (canvas) {
+        // Fix text rendering issues before saving
+        fixTextRendering();
+
+        // Force a full re-render to ensure display is current
+        canvas.renderAll();
+      }
 
       // Export canvas content as JSON
       const data = canvas.toJSON(['id', 'data']);
@@ -2786,6 +3015,15 @@
         console.error('Error saving canvas:', error);
         onSaveStatus('error');
         return false;
+      }
+
+      // After saving, force another sync to ensure everything is properly displayed
+      if (canvas) {
+        // Fix text rendering again to ensure consistency
+        fixTextRendering();
+
+        // Force a full re-render again
+        canvas.requestRenderAll();
       }
 
       // Generate and upload thumbnail if requested
@@ -3316,28 +3554,33 @@
           // Load canvas objects without triggering reactivity
           canvas.loadFromJSON(contentToLoad, () => {
             try {
-              // After loading canvas, setup objects
+              console.log('Canvas loaded from JSON, fixing text objects...');
+
+              // After loading canvas, identify and fix text objects first
+              canvas.forEachObject((obj: any) => {
+                if (obj.type === 'text' || obj.type === 'i-text' || obj.type === 'textbox') {
+                  // Apply specific fixes for text objects
+                  fixTextPositioningOnLoad(obj);
+                }
+              });
+
+              // Then handle all remaining objects
               canvas.forEachObject((obj: any) => {
                 // Setup drawing objects
                 if (obj && obj.data?.type === 'drawing') {
                   setupDrawingObject(obj);
                 }
 
-                // Fix scaling for text objects
-                if (obj && (obj.type === 'text' || obj.type === 'i-text') && (obj.scaleX !== 1 || obj.scaleY !== 1)) {
-                  const newFontSize = Math.round(obj.fontSize * obj.scaleX);
-
-                  // Apply font size and reset scaling
-                  obj.set({
-                    fontSize: newFontSize,
-                    scaleX: 1,
-                    scaleY: 1
-                  });
-
-                  // Clear cache and update coordinates
-                  obj._clearCache();
-                  if (obj.setCoords) obj.setCoords();
+                // For non-text objects, apply general normalization
+                if (obj.type !== 'text' && obj.type !== 'i-text' && obj.type !== 'textbox') {
+                  normalizeObjectScaling(obj);
                 }
+
+                // Ensure object coordinates are updated
+                if (obj.setCoords) obj.setCoords();
+
+                // Mark as dirty to force redraw
+                if (obj.set) obj.set({ dirty: true });
               });
 
               // Set viewport after loading, still within untrack
@@ -3350,7 +3593,12 @@
                 ]);
               }
 
+              // Force complete sync of display and interactive layers
+              syncCanvasLayers();
+
+              // Do a final render to ensure everything is displayed correctly
               canvas.renderAll();
+
               contentLoaded = true;
               initialized = true;
               resolve();
@@ -3372,7 +3620,7 @@
   }
 
   function initializeFabricCanvas() {
-    // ... existing code ...
+    if (!canvas) return;
 
     // Add object:modified handler to handle scaling for text objects
     canvas.on('object:modified', function(event: any) {
@@ -3381,28 +3629,11 @@
       const obj = event.target;
 
       // Special handling for text objects to convert scaling to font size
-      if ((obj.type === 'text' || obj.type === 'i-text') && (obj.scaleX !== 1 || obj.scaleY !== 1)) {
+      if ((obj.type === 'text' || obj.type === 'i-text' || obj.type === 'textbox') &&
+          (obj.scaleX !== 1 || obj.scaleY !== 1)) {
         untrack(() => {
-          // Calculate new font size based on scaling
-          const newFontSize = Math.round(obj.fontSize * obj.scaleX);
-
-          // Apply the new font size
-          obj.set({
-            fontSize: newFontSize,
-            // Reset scaling to avoid double-scaling
-            scaleX: 1,
-            scaleY: 1
-          });
-
-          // Force object to clear its cache and update
-          obj._clearCache();
-          if (obj.setCoords) obj.setCoords();
-
-          // Update the canvas
-          canvas.renderAll();
-
-          // Schedule auto save after modifying the object
-          scheduleAutoSave();
+          // Use our comprehensive normalization function
+          normalizeObjectScaling(obj);
 
           // Update toolbar properties if this is the selected object
           if (selectedObject === obj) {
@@ -3414,14 +3645,30 @@
       else {
         scheduleAutoSave();
       }
+
+      // Make sure to sync display and interactive layers after any modification
+      syncCanvasLayers();
     });
 
     // Add text:changed handler to ensure proper text object handling after editing
     canvas.on('text:changed', function(event: any) {
       if (!event.target) return;
 
+      // Force cache regeneration for text objects
+      if (event.target._clearCache) {
+        event.target._clearCache();
+      }
+
+      // Ensure coordinates are updated after text changes
+      if (event.target.setCoords) {
+        event.target.setCoords();
+      }
+
       // Schedule an autosave when text content changes
       scheduleAutoSave();
+
+      // Force a sync after text changes
+      syncCanvasLayers();
     });
 
     // Handle exiting text edit mode to ensure proper object dimensions
@@ -3430,35 +3677,64 @@
 
       const obj = event.target;
 
-      // Ensure the object has proper scaling
+      // Use our normalization function for consistent handling
+      untrack(() => {
+        // Apply full normalization
+        normalizeObjectScaling(obj);
+
+        // Extra step to ensure dimensions are accurate
+        obj._clearCache();
+        obj.setCoords();
+
+        // Render and save
+        canvas.renderAll();
+        scheduleAutoSave();
+
+        // Sync layers after exiting text editing mode
+        syncCanvasLayers();
+      });
+    });
+
+    // Add specific handler for text objects to fix scaling issues when typing
+    canvas.on('text:editing:entered', function(event: any) {
+      if (!event.target) return;
+
+      // Ensure scaling is reset when entering edit mode
+      // This fixes issues where text could appear at wrong scale during editing
+      const obj = event.target;
+
       if (obj.scaleX !== 1 || obj.scaleY !== 1) {
         untrack(() => {
-          // Convert scaling to font size
-          const newFontSize = Math.round(obj.fontSize * obj.scaleX);
-
-          // Apply the new font size and reset scaling
-          obj.set({
-            fontSize: newFontSize,
-            scaleX: 1,
-            scaleY: 1
-          });
-
-          // Clear cache and update
-          obj._clearCache();
-          if (obj.setCoords) obj.setCoords();
+          normalizeObjectScaling(obj);
           canvas.renderAll();
-
-          // Schedule autosave
-          scheduleAutoSave();
         });
-      } else {
-        // Just schedule an autosave if no scaling changes
-        scheduleAutoSave();
       }
     });
 
-    // ... existing code ...
+    // Add handler for object scaling to ensure proper display
+    canvas.on('object:scaling', function(event: any) {
+      if (!event.target) return;
+
+      // Update coordinates during scaling to keep interactive layer in sync
+      if (event.target.setCoords) {
+        event.target.setCoords();
+      }
+    });
+
+    // Listen for object position changes
+    canvas.on('object:moving', function(event: any) {
+      if (!event.target) return;
+
+      // Update coordinates during movement to keep interactive layer in sync
+      if (event.target.setCoords) {
+        event.target.setCoords();
+      }
+    });
   }
+
+  // ... existing code ...
+
+  // ... existing code ...
 
   // ... existing code ...
 
@@ -3488,7 +3764,462 @@
     }
   }
 
-  // The duplicate loadCanvasContent function was removed from here
+  // Add a new function to normalize object scaling after the setupEventHandlers function
+  function normalizeObjectScaling(obj: any) {
+    if (!obj) return;
+
+    try {
+      // Apply default scales if they're missing
+      if (obj.scaleX === undefined || obj.scaleX === null) obj.scaleX = 1;
+      if (obj.scaleY === undefined || obj.scaleY === null) obj.scaleY = 1;
+
+      // Handle text objects specifically
+      if (obj.type === 'text' || obj.type === 'i-text' || obj.type === 'textbox') {
+        // For scaled text, update the fontSize instead of keeping the scale
+        if (obj.scaleX !== 1 || obj.scaleY !== 1) {
+          // Apply default fontSize if it's missing
+          if (obj.fontSize === undefined || obj.fontSize === null) obj.fontSize = 20;
+
+          // Convert scaling to font size for text objects - use the average of X and Y scales
+          // to handle cases where the user might have scaled non-uniformly
+          const avgScale = (obj.scaleX + obj.scaleY) / 2;
+          const newFontSize = Math.round(obj.fontSize * avgScale);
+
+          obj.set({
+            fontSize: newFontSize,
+            scaleX: 1,
+            scaleY: 1,
+            // Ensure padding is appropriate for the new fontSize
+            padding: 0,
+          });
+
+          // Make sure originX and originY are properly set
+          // for consistent positioning behavior
+          if (!obj.originX) obj.originX = 'left';
+          if (!obj.originY) obj.originY = 'top';
+
+          // For center-aligned text, make sure the positioning is consistent
+          if (obj.textAlign === 'center') {
+            // Fix positioning for center-aligned text
+            obj.left = obj.left + (obj.width * (obj.scaleX - 1) / 2);
+          }
+          else if (obj.textAlign === 'right') {
+            // Fix positioning for right-aligned text
+            obj.left = obj.left + (obj.width * (obj.scaleX - 1));
+          }
+        }
+
+        // Ensure consistent caching and dimensions for text objects
+        // to prevent visual glitches
+        obj.set({
+          dirty: true,
+          // Enforce lockUniScaling to prevent non-uniform scaling from causing issues
+          lockUniScaling: false
+        });
+      }
+      // Handle shapes and other objects
+      else if (obj.type === 'rect' || obj.type === 'circle' || obj.type === 'path') {
+        // If object has non-uniform scaling, normalize it
+        if (obj.scaleX !== 1 || obj.scaleY !== 1) {
+          // For shapes, apply scaling to dimensions
+          if (obj.width !== undefined && obj.height !== undefined) {
+            obj.set({
+              width: obj.width * obj.scaleX,
+              height: obj.height * obj.scaleY,
+              scaleX: 1,
+              scaleY: 1
+            });
+          }
+          // For path objects or objects without explicit dimensions
+          else if (obj.type === 'path') {
+            // For path objects, we preserve scale as they often need it
+            // Just ensure both scales are the same to avoid distortion
+            const avgScale = (obj.scaleX + obj.scaleY) / 2;
+            obj.set({
+              scaleX: avgScale,
+              scaleY: avgScale
+            });
+          }
+        }
+      }
+
+      // For any object type, ensure we clear cache and update coordinates
+      if (obj._clearCache) obj._clearCache();
+      if (obj.setCoords) obj.setCoords();
+
+      // Ensure object's dirty state is set to force re-rendering
+      if (obj.set) {
+        obj.set({ dirty: true });
+      }
+
+      // If the object has objects (like a group), normalize all of them
+      if (obj._objects && Array.isArray(obj._objects)) {
+        obj._objects.forEach((childObj: any) => {
+          normalizeObjectScaling(childObj);
+        });
+      }
+
+      // Force object to update its appearance after modifications
+      if (obj.canvas && obj.canvas.renderAll) {
+        obj.canvas.renderAll();
+      }
+    } catch (err) {
+      console.error('Error normalizing object scaling:', err, obj);
+    }
+  }
+
+  // ... existing code ...
+
+  // ... existing code ...
+
+  // ... existing code ...
+
+  // Add a new method to update object properties from sidebar changes
+  export function updateObject(object: any, updates: any) {
+    if (!object || !canvas) return;
+
+    // For debug logging of updates
+    console.log('Updating object with:', updates);
+
+    // Make a copy of updates to avoid modifying the original
+    const updatesToApply = { ...updates };
+
+    // Special handling for text alignment
+    if (object.type === 'text' || object.type === 'i-text' || object.type === 'textbox') {
+      // If text alignment is changing, adjust position to maintain visual position
+      if (updatesToApply.textAlign && updatesToApply.textAlign !== object.textAlign) {
+        fixTextPositionForAlignmentChange(object, object.textAlign, updatesToApply.textAlign);
+      }
+
+      // For fontSize changes, ensure scale is reset
+      if (updatesToApply.fontSize) {
+        updatesToApply.scaleX = 1;
+        updatesToApply.scaleY = 1;
+      }
+
+      // For font family changes, we need to regenerate the cache
+      if (updatesToApply.fontFamily) {
+        // Set dirty flag to force redraw
+        updatesToApply.dirty = true;
+      }
+    }
+
+    // Apply updates to the object
+    object.set(updatesToApply);
+
+    // Special handling for text objects after update
+    if (object.type === 'text' || object.type === 'i-text' || object.type === 'textbox') {
+      // Force cache regeneration for text objects
+      object._clearCache();
+
+      // Update padding based on font size if needed
+      if (updatesToApply.fontSize && object.padding < 5) {
+        object.set({ padding: Math.max(5, Math.round(object.fontSize * 0.15)) });
+      }
+    }
+
+    // Update coordinates and render
+    object.setCoords();
+    canvas.renderAll();
+
+    // Special handling for color changes - force a proper redraw
+    if (updatesToApply.fill || updatesToApply.stroke) {
+      // Re-render to ensure color changes are applied
+      setTimeout(() => {
+        canvas.requestRenderAll();
+      }, 0);
+    }
+
+    // Schedule an autosave after object update
+    scheduleAutoSave();
+  }
+
+  // Helper function to find an object by ID
+  function findObjectById(id: string) {
+    if (!canvas) return null;
+
+    // First look in the active selection if there is one
+    const activeSelection = canvas.getActiveObject();
+    if (activeSelection && activeSelection.type === 'activeSelection' && activeSelection._objects) {
+      for (const obj of activeSelection._objects) {
+        if (obj.id === id || (obj.data && obj.data.id === id)) {
+          return obj;
+        }
+      }
+    }
+
+    // Then look through all objects
+    const objects = canvas.getObjects();
+    return objects.find(obj => obj.id === id || (obj.data && obj.data.id === id)) || null;
+  }
+
+  // Helper function to find an object by position
+  function findObjectByPosition(left: number, top: number, tolerance: number = 5) {
+    if (!canvas) return null;
+
+    const objects = canvas.getObjects();
+    return objects.find(obj => {
+      return Math.abs(obj.left - left) <= tolerance &&
+             Math.abs(obj.top - top) <= tolerance;
+    }) || null;
+  }
+
+  // ... existing code ...
+
+  // Add a function to fix canvas positioning issues
+  function fixCanvasPosition() {
+    if (!canvas || !canvasContainer) return;
+
+    try {
+      // Get all canvas-container elements created by Fabric.js
+      const fabricContainers = canvasContainer.querySelectorAll('.canvas-container');
+
+      // Force absolute positioning to avoid display shift issues
+      fabricContainers.forEach((container: HTMLElement) => {
+        container.style.position = 'absolute';
+        container.style.top = '0';
+        container.style.left = '0';
+      });
+
+      // Ensure our canvas wrapper has the correct positioning
+      const wrapper = canvasContainer.querySelector('.canvas-wrapper');
+      if (wrapper) {
+        (wrapper as HTMLElement).style.position = 'relative';
+      }
+    } catch (err) {
+      console.error('Error fixing canvas position:', err);
+    }
+  }
+
+  // Setup canvas and bind events
+  onMount(async () => {
+    // Setup the initial canvas
+    await initializeFabricCanvas();
+
+    // Fix canvas positioning
+    fixCanvasPosition();
+
+    // Setup event handlers if canvas is initialized
+    if (canvas) {
+      setupEventHandlers();
+      setupSelectionHandlers();
+
+      try {
+        // Set up object update event listeners
+        if (canvasEl) {
+          // Create an event listener for updating objects
+          canvasEl.addEventListener('fabric:update-object', (event: any) => {
+            console.log('Canvas received fabric:update-object event:', event.detail);
+            const { object, updates } = event.detail;
+            if (object && updates) {
+              updateObject(object, updates);
+            }
+          });
+        }
+
+        if (window) {
+          // Make canvas instance methods available externally
+          (window as any).canvasAPI = {
+            updateObject,
+            clearSelection: () => canvas && canvas.discardActiveObject(),
+            groupSelection,
+            ungroupSelection,
+            alignSelection,
+            distributeSelection
+          };
+        }
+
+        // Make this instance available globally for debugging/access
+        if (window) {
+          // Cast window to any to avoid TypeScript errors
+          (window as any).canvasInstance = {
+            updateObject,
+            clearSelection: () => canvas && canvas.discardActiveObject(),
+            groupSelection: () => console.log('Group selection not implemented'),
+            ungroupSelection: () => console.log('Ungroup selection not implemented'),
+            alignSelection: () => console.log('Align selection not implemented'),
+            distributeSelection: () => console.log('Distribute selection not implemented')
+          };
+        }
+      } catch (err) {
+        console.error('Error setting up canvas API:', err);
+      }
+    }
+
+    // Now that canvas is ready, attach keyboard and resize handlers
+    window.addEventListener('resize', handleResize);
+
+    // Set up keyboard shortcuts
+    window.addEventListener('keydown', handleKeyDown);
+
+    // Setup initial viewport
+    initializeViewport();
+
+    // Run a full layer sync after initialization
+    syncCanvasLayers();
+
+    // Run fix canvas position again after a short delay to handle any post-init layout changes
+    setTimeout(fixCanvasPosition, 500);
+
+    initialized = true;
+  });
+
+  // Add a function to sync display and interactive layers
+  function syncCanvasLayers() {
+    if (!canvas) return;
+
+    try {
+      // Force all objects to update their caches and coordinates
+      canvas.forEachObject((obj: any) => {
+        // Clear any caches
+        if (obj._clearCache) obj._clearCache();
+
+        // Update coordinates
+        if (obj.setCoords) obj.setCoords();
+
+        // Mark as dirty to force redraw
+        if (obj.set) obj.set({ dirty: true });
+
+        // Special handling for text objects that might have a separate display
+        if (obj.type === 'text' || obj.type === 'i-text') {
+          // Ensure text rendering and interactive areas match
+          if (obj.initDimensions) obj.initDimensions();
+          if (obj.__lastRenderedText !== obj.text) {
+            obj.__lastRenderedText = obj.text;
+          }
+        }
+
+        // If it's a group, handle all child objects
+        if (obj._objects && Array.isArray(obj._objects)) {
+          obj._objects.forEach((childObj: any) => {
+            if (childObj._clearCache) childObj._clearCache();
+            if (childObj.setCoords) childObj.setCoords();
+            if (childObj.set) childObj.set({ dirty: true });
+          });
+        }
+      });
+
+      // Force a complete redraw of the canvas
+      canvas.requestRenderAll();
+    } catch (err) {
+      console.error('Error syncing canvas layers:', err);
+    }
+  }
+
+  // Add a new function to fix text rendering for all text objects
+  function fixTextRendering() {
+    if (!canvas) return;
+
+    canvas.forEachObject((obj: any) => {
+      if (obj.type === 'text' || obj.type === 'i-text' || obj.type === 'textbox') {
+        // Apply comprehensive fix for text objects
+        fixTextPositioningOnLoad(obj);
+      }
+    });
+
+    // Force a complete render
+    canvas.renderAll();
+  }
+
+  // Add a function to fix position for text alignment changes
+  function fixTextPositionForAlignmentChange(obj: any, oldAlign: string, newAlign: string) {
+    if (!obj || obj.type !== 'text' && obj.type !== 'i-text' && obj.type !== 'textbox') {
+      return;
+    }
+
+    // Calculate object width
+    const width = obj.width * obj.scaleX;
+
+    // Adjust position based on alignment change
+    if (oldAlign === 'left' && newAlign === 'center') {
+      // Left -> Center: move right by half width
+      obj.left += width / 2;
+    }
+    else if (oldAlign === 'left' && newAlign === 'right') {
+      // Left -> Right: move right by full width
+      obj.left += width;
+    }
+    else if (oldAlign === 'center' && newAlign === 'left') {
+      // Center -> Left: move left by half width
+      obj.left -= width / 2;
+    }
+    else if (oldAlign === 'center' && newAlign === 'right') {
+      // Center -> Right: move right by half width
+      obj.left += width / 2;
+    }
+    else if (oldAlign === 'right' && newAlign === 'left') {
+      // Right -> Left: move left by full width
+      obj.left -= width;
+    }
+    else if (oldAlign === 'right' && newAlign === 'center') {
+      // Right -> Center: move left by half width
+      obj.left -= width / 2;
+    }
+
+    // Update object coordinates
+    obj.setCoords();
+  }
+
+  // Function to explicitly fix text positioning issues on load
+  function fixTextPositioningOnLoad(obj: any) {
+    if (!obj || (obj.type !== 'text' && obj.type !== 'i-text' && obj.type !== 'textbox')) {
+      return;
+    }
+
+    try {
+      // 1. Ensure scale is 1:1
+      const wasScaled = obj.scaleX !== 1 || obj.scaleY !== 1;
+      const oldFontSize = obj.fontSize || 18;
+      let newFontSize = oldFontSize;
+
+      // If the text was scaled, adjust font size
+      if (wasScaled) {
+        const avgScale = (obj.scaleX + obj.scaleY) / 2;
+        newFontSize = Math.round(oldFontSize * avgScale);
+      }
+
+      // 2. Ensure origin settings are consistent
+      if (!obj.originX) obj.originX = 'left';
+      if (!obj.originY) obj.originY = 'top';
+
+      // 3. Calculate width before applying changes
+      const originalWidth = obj.width * obj.scaleX;
+      const originalHeight = obj.height * obj.scaleY;
+
+      // 4. Apply consistent settings
+      obj.set({
+        fontSize: newFontSize,
+        scaleX: 1,
+        scaleY: 1,
+        padding: Math.max(5, Math.round(newFontSize * 0.15)),
+        dirty: true
+      });
+
+      // 5. Fix positioning based on textAlign
+      // For center or right-aligned text, the position needs adjustment
+      // because the bounding box origin changes when scale is reset
+      if (obj.textAlign === 'center') {
+        // Calculate new width after scaling reset
+        obj._clearCache();
+        const newWidth = obj.width;
+        // Adjust horizontal position to keep text centered at same spot
+        obj.left += (originalWidth - newWidth) / 2;
+      }
+      else if (obj.textAlign === 'right') {
+        // Calculate new width after scaling reset
+        obj._clearCache();
+        const newWidth = obj.width;
+        // Adjust horizontal position to keep right edge at same spot
+        obj.left += (originalWidth - newWidth);
+      }
+
+      // 6. Force regeneration of all caches
+      obj._clearCache();
+      obj.setCoords();
+    } catch (err) {
+      console.error('Error fixing text positioning:', err);
+    }
+  }
 </script>
 
 <svelte:head>
@@ -3558,6 +4289,13 @@
     overflow: hidden;
     background: #f5f5f5;
     display: flex;
+
+    /* This forces all fabric.js containers to have consistent positioning */
+    .canvas-container {
+      position: absolute !important;
+      top: 0;
+      left: 0;
+    }
 
     .canvas-wrapper {
       position: relative;

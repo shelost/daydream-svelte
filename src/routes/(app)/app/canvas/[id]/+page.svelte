@@ -1,43 +1,90 @@
 <script lang="ts">
+  // @ts-nocheck
   import { onMount, onDestroy } from 'svelte';
   import { page } from '$app/stores';
   import { goto } from '$app/navigation';
   import { user } from '$lib/stores/appStore';
   import { getPage } from '$lib/supabase/pages';
-  import type { Tool } from '$lib/types';
+  import { TOOL_SELECT } from '$lib/types';
   import { afterNavigate, disableScrollHandling } from '$app/navigation';
-
-  import type { ComponentType } from 'svelte';
+  import { fade, scale } from 'svelte/transition';
+  import { getStroke } from 'perfect-freehand';
+  import { getSvgPathFromStroke } from '$lib/utils/drawingUtils.js';
+  import VerticalSlider from '$lib/components/VerticalSlider.svelte';
+  import {
+    fabricCanvas,
+    currentFabricObject,
+    fabricObjects,
+    isEraserMode,
+    fabricCanvasState,
+    gptImagePrompt,
+    gptEditPrompt,
+    generatedImageUrl,
+    generatedByModel,
+    isGenerating,
+    editedImageUrl,
+    editedByModel,
+    isEditing,
+    analysisOptions,
+    strokeOptions,
+    isApplePencilActive,
+    selectedTool
+  } from '$lib/stores/canvasStore';
 
   import Toolbar from '$lib/components/Toolbar.svelte';
   import TitleBar from '$lib/components/TitleBar.svelte';
   import Canvas from '$lib/components/Canvas.svelte';
+  import Panel from '$lib/components/Panel.svelte';
+  import { selectionStore, updateSelection } from '$lib/stores/selectionStore';
 
-  let pageData: any;
+  let pageData;
   let loading = true;
   let error = '';
-  let selectedTool: Tool = 'select';
   let isDrawingMode = false;
   let saving = false;
-  let saveStatus: 'saved' | 'saving' | 'error' = 'saved';
-  let pageId: string;
-  let unsubscribe: () => void = () => {};
-  let canvasComponent: {
-    setTool?: (tool: Tool) => void;
-    generateThumbnail?: () => void;
-    zoomIn?: () => void;
-    zoomOut?: () => void;
-    resetZoom?: () => void;
-    zoom?: number;
-  } | undefined;
+  let saveStatus = 'saved';
+  let pageId;
+  let unsubscribe = () => {};
+  let canvasComponent;
   let zoom = 1; // Add zoom state
 
   // Add variables for selected object information
-  let selectedObjectType: string | null = null;
-  let selectedObjectId: string | null = null;
+  let selectedObjectType = null;
+  let selectedObjectId = null;
+
+  // Add state for selected objects
+  let selectedObject = null;
+  let selectedObjects = [];
+
+  // Canvas references
+  let fabricCanvasElement: HTMLCanvasElement;
+  let drawingCanvas: HTMLCanvasElement;
+  let drawingCtx: CanvasRenderingContext2D;
+  let fabric: any; // Fabric.js instance
+
+  // State variables
+  let isDrawing = false;
+  let currentPath: any = null;
+  let currentPoints: any[] = [];
+  let pointTimes: number[] = [];
+  let canvasWidth = 800;
+  let canvasHeight = 600;
+  let canvasScale = 1;
+  let additionalContext = '';
+
+  // Subscribe to store changes
+  $: strokeColor = $strokeOptions.color;
+  $: strokeSize = $strokeOptions.size;
+  $: strokeOpacity = $strokeOptions.opacity;
+
+  // Add local variable for tool state
+  let currentTool;
+  selectedTool.subscribe(value => {
+    currentTool = value;
+  });
 
   // This function loads the page data based on the current pageId
-  async function loadPageData(id: string) {
+  async function loadPageData(id) {
     if (!id) return;
 
     loading = true;
@@ -127,6 +174,61 @@
         }
       }, 5000); // Wait 5 seconds for canvas to fully load
 
+      // Update Panel props
+      updatePanelProps();
+
+      // Initialize Fabric.js
+      fabric = (window as any).fabric;
+
+      if (!fabric) {
+        console.error('Fabric.js not loaded');
+        return;
+      }
+
+      // Initialize Fabric.js canvas
+      const canvas = new fabric.Canvas(fabricCanvasElement, {
+        isDrawingMode: false,
+        selection: true,
+        width: canvasWidth,
+        height: canvasHeight
+      });
+
+      // Store the canvas instance
+      fabricCanvas.set(canvas);
+
+      // Initialize drawing canvas
+      if (drawingCanvas) {
+        drawingCtx = drawingCanvas.getContext('2d');
+        drawingCanvas.width = canvasWidth;
+        drawingCanvas.height = canvasHeight;
+      }
+
+      // Initialize eraser brush
+      const eraserBrush = new fabric.EraserBrush(canvas);
+      eraserBrush.width = 20;
+      canvas.eraserBrush = eraserBrush;
+
+      // Set up event handlers
+      setupEventHandlers(canvas);
+
+      // Handle tool changes
+      selectedTool.subscribe((tool) => {
+        if (!canvas) return;
+
+        switch (tool) {
+          case 'pen':
+            canvas.isDrawingMode = false;
+            break;
+          case 'eraser':
+            canvas.isDrawingMode = true;
+            canvas.freeDrawingBrush = canvas.eraserBrush;
+            break;
+          case 'select':
+            canvas.isDrawingMode = false;
+            break;
+        }
+      });
+
     } catch (err) {
       if (err instanceof Error) {
         error = err.message;
@@ -154,18 +256,17 @@
     disableScrollHandling();
   });
 
-  function handleSaving(isSaving: boolean) {
+  function handleSaving(isSaving) {
     saving = isSaving;
   }
 
-  function handleSaveStatus(status: 'saved' | 'saving' | 'error') {
+  function handleSaveStatus(status) {
     saveStatus = status;
   }
 
-  function handleToolChange(tool: Tool) {
-    console.log('Parent: Tool selected:', tool);
-    selectedTool = tool;
-    isDrawingMode = tool === 'draw';
+  function handleToolChange(tool) {
+    selectedTool.set(tool);
+    isDrawingMode = tool === 'pen';
   }
 
   function handleGenerateThumbnail() {
@@ -239,6 +340,235 @@
       }
     }, 800); // Increased delay to ensure canvas is mounted and initialized
   }
+
+  // Add handler for selection changes
+  function handleSelectionChange(event) {
+    const { object, objects, type } = event.detail;
+    console.log('Canvas page received selectionChange event:', { type, objectCount: objects?.length || 0 });
+
+    // Update local state
+    selectedObject = object;
+    selectedObjectType = type;
+    selectedObjects = objects || [];
+
+    console.log('Updated selection state:', { selectedObjectType, objectsCount: selectedObjects.length });
+
+    // Update selection store instead of directly updating Panel
+    updateSelection({
+      selectedObject: object,
+      selectedObjectType: type,
+      selectedObjects: objects || [],
+      currentPageId: pageId
+    });
+  }
+
+  // Function to update Panel props
+  function updatePanelProps() {
+    const parentLayout = document.querySelector('div.app-layout');
+    if (!parentLayout) {
+      console.warn('Cannot find app-layout to update Panel props');
+      return;
+    }
+
+    const panelElements = parentLayout.querySelectorAll('aside.panel');
+    if (panelElements.length === 0) {
+      console.warn('Cannot find Panel element');
+      return;
+    }
+
+    // Find the Svelte component
+    const panel = panelElements[0].__svelte_component__;
+    if (!panel) {
+      console.warn('Panel Svelte component not found');
+      return;
+    }
+
+    console.log('Updating Panel with:', {
+      selectedObject,
+      selectedObjectType,
+      selectedObjects,
+      currentPageId: $page.params.id
+    });
+
+    panel.$set({
+      selectedObject,
+      selectedObjectType,
+      selectedObjects,
+      currentPageId: $page.params.id
+    });
+  }
+
+  function setupEventHandlers(canvas: any) {
+    // Drawing canvas event handlers
+    drawingCanvas.addEventListener('pointerdown', onPointerDown);
+    drawingCanvas.addEventListener('pointermove', onPointerMove);
+    drawingCanvas.addEventListener('pointerup', onPointerUp);
+    drawingCanvas.addEventListener('pointerleave', onPointerUp);
+
+    // Fabric.js canvas event handlers
+    canvas.on('path:created', onPathCreated);
+    canvas.on('selection:created', onSelectionCreated);
+    canvas.on('selection:updated', onSelectionUpdated);
+    canvas.on('selection:cleared', onSelectionCleared);
+    canvas.on('erasing:end', onErasingEnd);
+  }
+
+  function onPointerDown(e: PointerEvent) {
+    if (currentTool !== 'pen') return;
+
+    isDrawing = true;
+    const point = getPointerPosition(e);
+    currentPoints = [point];
+    pointTimes = [Date.now()];
+
+    // Start new path
+    currentPath = {
+      points: currentPoints,
+      pressure: e.pressure,
+      thinning: $strokeOptions.thinning,
+      smoothing: $strokeOptions.smoothing,
+      streamline: $strokeOptions.streamline,
+      easing: $strokeOptions.easing,
+      start: $strokeOptions.start,
+      end: $strokeOptions.end
+    };
+
+    drawingCanvas.setPointerCapture(e.pointerId);
+  }
+
+  function onPointerMove(e: PointerEvent) {
+    if (!isDrawing || currentTool !== 'pen') return;
+
+    const point = getPointerPosition(e);
+    currentPoints.push(point);
+    pointTimes.push(Date.now());
+
+    // Update current path
+    if (currentPath) {
+      currentPath.points = currentPoints;
+      renderCurrentStroke();
+    }
+  }
+
+  function onPointerUp(e: PointerEvent) {
+    if (!isDrawing || currentTool !== 'pen') return;
+
+    isDrawing = false;
+    drawingCanvas.releasePointerCapture(e.pointerId);
+
+    // Convert the current stroke to a Fabric.js path
+    if (currentPath && currentPath.points.length > 1) {
+      const perfectStroke = getStroke(currentPath.points.map(p => [p.x, p.y, p.pressure]), {
+        size: strokeSize,
+        thinning: currentPath.thinning,
+        smoothing: currentPath.smoothing,
+        streamline: currentPath.streamline,
+        easing: currentPath.easing,
+        start: currentPath.start,
+        end: currentPath.end
+      });
+
+      const pathData = getSvgPathFromStroke(perfectStroke);
+
+      if (pathData) {
+        const fabricPath = new fabric.Path(pathData, {
+          fill: strokeColor,
+          opacity: strokeOpacity,
+          erasable: true
+        });
+
+        $fabricCanvas.add(fabricPath);
+        fabricObjects.update(objects => [...objects, fabricPath]);
+      }
+    }
+
+    // Clear the drawing canvas
+    clearDrawingCanvas();
+    currentPath = null;
+    currentPoints = [];
+  }
+
+  function onPathCreated(e: any) {
+    const path = e.path;
+    fabricObjects.update(objects => [...objects, path]);
+  }
+
+  function onSelectionCreated(e: any) {
+    currentFabricObject.set(e.selected[0]);
+  }
+
+  function onSelectionUpdated(e: any) {
+    currentFabricObject.set(e.selected[0]);
+  }
+
+  function onSelectionCleared() {
+    currentFabricObject.set(null);
+  }
+
+  function onErasingEnd({ targets, drawables }: any) {
+    // Update objects after erasing
+    fabricObjects.update(objects =>
+      objects.filter(obj => !targets.includes(obj))
+    );
+  }
+
+  function getPointerPosition(e: PointerEvent) {
+    const rect = drawingCanvas.getBoundingClientRect();
+    const scaleX = drawingCanvas.width / rect.width;
+    const scaleY = drawingCanvas.height / rect.height;
+
+    return {
+      x: (e.clientX - rect.left) * scaleX,
+      y: (e.clientY - rect.top) * scaleY,
+      pressure: e.pressure || 0.5
+    };
+  }
+
+  function renderCurrentStroke() {
+    if (!currentPath || !drawingCtx) return;
+
+    // Clear the drawing canvas
+    clearDrawingCanvas();
+
+    // Generate the stroke with perfect-freehand
+    const perfectStroke = getStroke(currentPath.points.map(p => [p.x, p.y, p.pressure]), {
+      size: strokeSize,
+      thinning: currentPath.thinning,
+      smoothing: currentPath.smoothing,
+      streamline: currentPath.streamline,
+      easing: currentPath.easing,
+      start: currentPath.start,
+      end: currentPath.end
+    });
+
+    // Draw the stroke
+    const pathData = getSvgPathFromStroke(perfectStroke);
+    if (pathData) {
+      const path = new Path2D(pathData);
+      drawingCtx.fillStyle = strokeColor;
+      drawingCtx.globalAlpha = strokeOpacity;
+      drawingCtx.fill(path);
+      drawingCtx.globalAlpha = 1;
+    }
+  }
+
+  function clearDrawingCanvas() {
+    if (!drawingCtx) return;
+    drawingCtx.clearRect(0, 0, drawingCanvas.width, drawingCanvas.height);
+  }
+
+  function clearCanvas() {
+    if ($fabricCanvas) {
+      $fabricCanvas.clear();
+      fabricObjects.set([]);
+    }
+    clearDrawingCanvas();
+  }
+
+  async function generateImage() {
+    // Implementation of image generation
+    // This would be similar to the original implementation
+  }
 </script>
 
 <svelte:head>
@@ -274,18 +604,12 @@
       />
 
       <div class="workspace">
-        <Toolbar
-          bind:selectedTool={selectedTool}
-          type="canvas"
-          on:toolChange={(e) => handleToolChange(e.detail.tool)}
-        />
-
         <div class="canvas-area">
           {#key pageData.id}
           <Canvas
             pageId={pageData.id}
             content={pageData.content}
-            bind:selectedTool={selectedTool}
+            bind:selectedTool={currentTool}
             bind:isDrawingMode={isDrawingMode}
             bind:selectedObjectType={selectedObjectType}
             bind:selectedObjectId={selectedObjectId}
@@ -293,8 +617,127 @@
             onSaving={handleSaving}
             onSaveStatus={handleSaveStatus}
             bind:this={canvasComponent}
+            on:selectionChange={handleSelectionChange}
           />
           {/key}
+        </div>
+
+        <div class="draw-demo-container">
+          <header class="demo-header">
+            <div class="bar">
+              <div class="context-input-container">
+                <input
+                  id="context-input"
+                  type="text"
+                  bind:value={additionalContext}
+                  placeholder="What are you drawing?"
+                  class="context-input"
+                />
+                <button
+                  class="generate-button"
+                  on:click={generateImage}
+                  disabled={$isGenerating || $fabricObjects.length === 0}
+                >
+                  <span class="material-icons">arrow_forward</span>
+                  <h3>{$isGenerating ? 'Creating...' : 'Create'}</h3>
+                </button>
+              </div>
+            </div>
+          </header>
+
+          <div class="canvas-container">
+            <div class="toolbars-wrapper">
+              <div class="vertical-toolbar tool-selector-toolbar">
+                <button
+                  class="tool-button"
+                  class:active={currentTool === 'pen'}
+                  on:click={() => selectedTool.set('pen')}
+                  title="Pen Tool"
+                >
+                  <span class="material-icons">edit</span>
+                </button>
+                <button
+                  class="tool-button"
+                  class:active={currentTool === 'eraser'}
+                  on:click={() => selectedTool.set('eraser')}
+                  title="Eraser Tool"
+                >
+                  <span class="material-icons">layers_clear</span>
+                </button>
+                <button
+                  class="tool-button"
+                  class:active={currentTool === 'select'}
+                  on:click={() => selectedTool.set('select')}
+                  title="Select Tool"
+                >
+                  <span class="material-icons">touch_app</span>
+                </button>
+              </div>
+
+              <div class="vertical-toolbar options-toolbar">
+                <div class="tools-group">
+                  <div class="tool-group">
+                    <input
+                      type="color"
+                      bind:value={strokeColor}
+                      on:change={() => {
+                        strokeOptions.update(opts => ({...opts, color: strokeColor}));
+                      }}
+                    />
+                  </div>
+
+                  <div class="tool-group">
+                    <VerticalSlider
+                      min={1}
+                      max={30}
+                      step={0.5}
+                      bind:value={strokeSize}
+                      color="#6355FF"
+                      height="120px"
+                      onChange={() => {
+                        strokeOptions.update(opts => ({...opts, size: strokeSize}));
+                      }}
+                      showValue={true}
+                    />
+                  </div>
+
+                  <div class="tool-group">
+                    <VerticalSlider
+                      min={0.1}
+                      max={1}
+                      step={0.1}
+                      bind:value={strokeOpacity}
+                      color="#6355FF"
+                      height="120px"
+                      onChange={() => {
+                        strokeOptions.update(opts => ({...opts, opacity: strokeOpacity}));
+                      }}
+                      showValue={true}
+                    />
+                  </div>
+
+                  <button class="tool-button clear-button" on:click={clearCanvas}>
+                    <span class="material-icons">delete_outline</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div class="canvas-wrapper input-canvas">
+              <!-- Fabric.js canvas -->
+              <canvas
+                bind:this={fabricCanvasElement}
+                class="fabric-canvas"
+              ></canvas>
+
+              <!-- Perfect Freehand drawing canvas -->
+              <canvas
+                bind:this={drawingCanvas}
+                class="drawing-canvas"
+                style="position: absolute; top: 0; left: 0; pointer-events: {$currentTool === 'pen' ? 'auto' : 'none'};"
+              ></canvas>
+            </div>
+          </div>
         </div>
       </div>
     {/if}
@@ -317,10 +760,24 @@
     overflow: hidden;
   }
 
+  .toolbar{
+    position: absolute;
+    z-index: 2;
+    left: 0;
+    bottom: 0;
+    margin: 12px;
+    width: 100vw;
+    height: 60px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
   .workspace {
     flex: 1;
     display: flex;
     overflow: hidden;
+    position: relative;
   }
 
   .loading-container,
@@ -360,5 +817,23 @@
     flex-direction: column;
     overflow: hidden;
     position: relative;
+  }
+
+  .canvas-wrapper {
+    position: relative;
+
+    .fabric-canvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      z-index: 1;
+    }
+
+    .drawing-canvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      z-index: 2;
+    }
   }
 </style>

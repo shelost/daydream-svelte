@@ -4,8 +4,9 @@
   import type { Tool, DrawingContent, Stroke, StrokePoint } from '$lib/types';
   import { updatePageContent, uploadThumbnail } from '$lib/supabase/pages';
   import { getStroke } from 'perfect-freehand';
-  import { getSvgPathFromStroke, getPerfectFreehandOptions, calculatePressureFromVelocity } from '$lib/utils/drawingUtils';
+  import { getSvgPathFromStroke, getPerfectFreehandOptions, calculatePressureFromVelocity } from '$lib/utils/drawingUtils.js';
   import { drawingSettings, activeDrawingId } from '$lib/stores/drawingStore';
+  import { currentDrawingContent } from '$lib/stores/drawingContentStore';
 
   export let pageId: string;
   export let content: DrawingContent;
@@ -15,6 +16,58 @@
   export let onSaveStatus: (status: 'saved' | 'saving' | 'error') => void;
   // Export zoom for TitleBar
   export let zoom: number = 1;
+
+  // Add export for capturing canvas image
+  export function captureCanvasImage(): string | null {
+    if (!canvas || !ctx) return null;
+
+    try {
+      // First render all strokes to make sure the canvas is up to date
+      renderStrokes();
+
+      // For very large canvases, create a smaller version for the snapshot
+      // to avoid excessive token usage with the OpenAI API
+      if (canvas.width > 1200 || canvas.height > 1200) {
+        // Create a temporary canvas at a reduced size
+        const tmpCanvas = document.createElement('canvas');
+        const maxWidth = 1000;
+        const maxHeight = 1000;
+
+        // Calculate new dimensions preserving aspect ratio
+        let newWidth = canvas.width;
+        let newHeight = canvas.height;
+
+        if (canvas.width > maxWidth) {
+          newWidth = maxWidth;
+          newHeight = (canvas.height * maxWidth) / canvas.width;
+        }
+
+        if (newHeight > maxHeight) {
+          newHeight = maxHeight;
+          newWidth = (canvas.width * maxHeight) / canvas.height;
+        }
+
+        tmpCanvas.width = newWidth;
+        tmpCanvas.height = newHeight;
+
+        // Get context and draw resized image
+        const tmpCtx = tmpCanvas.getContext('2d');
+        if (!tmpCtx) return canvas.toDataURL('image/png');
+
+        // Draw the original canvas resized to the temporary one
+        tmpCtx.drawImage(canvas, 0, 0, canvas.width, canvas.height, 0, 0, newWidth, newHeight);
+
+        // Return the data URL from the temporary canvas
+        return tmpCanvas.toDataURL('image/jpeg', 0.85); // JPEG with 85% quality to reduce size
+      }
+
+      // For smaller canvases, use the original with PNG format
+      return canvas.toDataURL('image/png');
+    } catch (error) {
+      console.error('Error capturing canvas image:', error);
+      return null;
+    }
+  }
 
   // Set up event dispatcher
   const dispatch = createEventDispatcher();
@@ -36,6 +89,7 @@
       };
     }
     dispatch('contentUpdate', { content });
+    currentDrawingContent.set(content);
   }
 
   // Sync tool from props with store
@@ -113,6 +167,40 @@
   let resizeHandle = ''; // 'tl', 'tr', 'bl', 'br', etc.
   let selectionControlsVisible = false;
 
+  // Listen for AI modification events
+  let aiModificationListener: (event: CustomEvent) => void;
+
+  // Listen for external changes to content
+  const unsubDrawingContent = currentDrawingContent.subscribe(newContent => {
+    if (newContent && newContent !== content) {
+      content = newContent;
+      renderStrokes();
+      saveHistoryState();
+    }
+  });
+
+  // Listen for canvas setting changes
+  const unsubDrawingSettings = drawingSettings.subscribe(settings => {
+    // Re-render strokes when relevant settings change
+    if (settings.canvasColor || settings.backgroundColor) {
+      renderStrokes();
+    }
+
+    // Update canvas bounds if they change
+    if (content && (settings.canvasWidth !== content.bounds?.width ||
+                    settings.canvasHeight !== content.bounds?.height)) {
+      content = {
+        ...content,
+        bounds: {
+          width: settings.canvasWidth,
+          height: settings.canvasHeight
+        }
+      };
+      renderStrokes();
+      autoSave();
+    }
+  });
+
   onMount(() => {
     try {
       // Check pointer capabilities
@@ -125,6 +213,18 @@
       window.addEventListener('resize', resizeCanvas);
       window.addEventListener('keydown', handleKeyDown);
       window.addEventListener('keyup', handleKeyUp);
+
+      // Listen for AI modifications
+      aiModificationListener = (event: CustomEvent) => {
+        if (event.detail?.strokes && Array.isArray(event.detail.strokes)) {
+          content.strokes = event.detail.strokes;
+          renderStrokes();
+          saveHistoryState();
+          autoSave();
+        }
+      };
+
+      document.addEventListener('ai:drawing-modified', aiModificationListener);
 
       // Hide instructions after 3 seconds
       setTimeout(() => {
@@ -141,6 +241,11 @@
       window.removeEventListener('resize', resizeCanvas);
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
+      document.removeEventListener('ai:drawing-modified', aiModificationListener);
+
+      // Also clean up the drawing content subscription
+      if (unsubDrawingContent) unsubDrawingContent();
+      unsubDrawingSettings();
     };
   });
 
@@ -232,34 +337,38 @@
     }
   }
 
+  // Initialize the drawing (called once on component mount)
   function initializeDrawing() {
-    // Initialize the drawing canvas
-    if (canvas) {
-      ctx = canvas.getContext('2d');
+    if (!canvas) return;
 
-      if (!ctx) {
-        console.error('Could not get canvas context');
-        return;
-      }
+    // Get the 2D rendering context for the canvas
+    ctx = canvas.getContext('2d');
+    if (!ctx) return;
 
-      // Set canvas size
-      resizeCanvas();
+    // Set up the canvas size
+    resizeCanvas();
 
-      // Initialize content if it doesn't exist
-      if (!content.strokes) {
-        content.strokes = [];
-      }
-
-      // Initialize stroke history
-      strokeHistory = [];
-      currentHistoryIndex = -1;
-      saveHistoryState();
-
-      // Render existing strokes
-      renderStrokes();
-    } else {
-      console.error('Canvas element is not defined');
+    // Initialize content if needed
+    if (!content) {
+      content = { strokes: [], bounds: { width: canvas.width, height: canvas.height } };
     }
+
+    // Render the initial strokes
+    renderStrokes();
+
+    // Update the viewport information
+    dispatchViewportUpdate();
+
+    // Save the initial state to history
+    saveHistory();
+
+    // Hide instructions after a timeout
+    setTimeout(() => {
+      showInstructions = false;
+    }, 3000);
+
+    // Center the canvas with auto-fit enabled
+    centerCanvas(true, true);
   }
 
   function resizeCanvas() {
@@ -295,7 +404,8 @@
 
     try {
       // Clear canvas
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = $drawingSettings.backgroundColor;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
 
       // Save context state for transformations
       ctx.save();
@@ -303,6 +413,19 @@
       // Apply zoom and pan
       ctx.translate(offsetX, offsetY);
       ctx.scale(zoom, zoom);
+
+      // Get canvas dimensions
+      const canvasWidth = content.bounds?.width || $drawingSettings.canvasWidth;
+      const canvasHeight = content.bounds?.height || $drawingSettings.canvasHeight;
+
+      // Draw canvas background
+      ctx.fillStyle = $drawingSettings.canvasColor;
+      ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+
+      // Draw a subtle border around the canvas area to clearly show bounds
+      ctx.strokeStyle = 'rgba(0, 0, 0, 0.1)';
+      ctx.lineWidth = 1 / zoom;
+      ctx.strokeRect(0, 0, canvasWidth, canvasHeight);
 
       // Render each stroke
       for (let i = 0; i < content.strokes.length; i++) {
@@ -367,6 +490,9 @@
 
       // Restore context state
       ctx.restore();
+
+      // Dispatch viewport update after rendering
+      dispatchViewportUpdate();
     } catch (error) {
       console.error('Error rendering strokes:', error);
     }
@@ -375,14 +501,21 @@
   function startDrawing(e: PointerEvent) {
     console.log('Starting drawing with tool:', selectedTool); // Add for debugging
 
+    // Get pointer position
+    const point = getPointerPosition(e);
+
+    // Check if point is within canvas bounds
+    if (!isPointInCanvasBounds(point) && selectedTool !== 'pan') {
+      console.log('Ignoring drawing start outside canvas bounds');
+      return; // Don't start drawing outside canvas bounds
+    }
+
     if (selectedTool === 'pan') {
       startPanning(e);
       return;
     }
 
     if (selectedTool === 'select') {
-      const point = getPointerPosition(e);
-
       // Check if clicking on a resize handle
       if ($drawingSettings.selectedStrokes.length > 0 && selectionControlsVisible) {
         const handle = getResizeHandleAtPoint(point);
@@ -407,9 +540,6 @@
     isDrawing = true;
     lastTime = Date.now();
     pointTimes = [];
-
-    // Get pointer position
-    const point = getPointerPosition(e);
 
     // Capture pressure if available
     const pressure = pointerCapabilities.pressure && e.pressure !== 0
@@ -450,6 +580,12 @@
   }
 
   function continueDrawing(e: PointerEvent) {
+    // Get pointer position first to use for cursor updates
+    const point = getPointerPosition(e);
+
+    // Always update cursor based on canvas bounds
+    updateCursorForCanvasBounds(point);
+
     if (selectedTool === 'pan' && isPanning) {
       continuePanning(e);
       return;
@@ -476,24 +612,36 @@
     // Rest of existing continueDrawing code
     if (!isDrawing || !currentStroke || !ctx) return;
 
-    // Get pointer position
-    const point = getPointerPosition(e);
+    // For drawing tools, check if we're inside canvas bounds
+    // If drawing started inside but moved outside, clamp the point to canvas boundaries
+    if (isDrawing && currentStroke.points.length > 0) {
+      // Capture pressure if available
+      const pressure = pointerCapabilities.pressure && e.pressure !== 0
+        ? e.pressure
+        : simulatePressure ? calculateVelocityPressure() : 0.5;
 
-    // Capture pressure if available
-    const pressure = pointerCapabilities.pressure && e.pressure !== 0
-      ? e.pressure
-      : simulatePressure ? calculateVelocityPressure() : 0.5;
+      // Get canvas bounds
+      const width = content.bounds?.width || $drawingSettings.canvasWidth;
+      const height = content.bounds?.height || $drawingSettings.canvasHeight;
 
-    // Add point to current stroke
-    currentStroke.points.push({...point, pressure});
+      // Clamp the point to canvas boundaries
+      const clampedPoint = {
+        x: Math.max(0, Math.min(point.x, width)),
+        y: Math.max(0, Math.min(point.y, height)),
+        pressure
+      };
 
-    // Track time for velocity-based pressure
-    const now = Date.now();
-    pointTimes.push(now);
-    lastTime = now;
+      // Add clamped point to current stroke
+      currentStroke.points.push(clampedPoint);
 
-    // Redraw
-    renderCurrentStroke();
+      // Track time for velocity-based pressure
+      const now = Date.now();
+      pointTimes.push(now);
+      lastTime = now;
+
+      // Redraw
+      renderCurrentStroke();
+    }
   }
 
   function calculateVelocityPressure(): number {
@@ -505,7 +653,7 @@
 
   function finishDrawing(e: PointerEvent) {
     if (selectedTool === 'pan' && isPanning) {
-      endPanning();
+      endPanning(e);
       return;
     }
 
@@ -565,6 +713,7 @@
 
     // Change cursor
     canvas.style.cursor = 'grabbing';
+    document.body.style.cursor = 'grabbing'; // Set cursor on body for consistency
 
     // Try to capture pointer for events outside canvas
     try {
@@ -574,28 +723,108 @@
     }
   }
 
+  // Track animation frame for panning
+  let panAnimationFrame: number | null = null;
+  // For inertia effect
+  let lastPanDeltaX = 0;
+  let lastPanDeltaY = 0;
+  let panningStartTime = 0;
+  let lastPanEventTime = 0;
+
   function continuePanning(e: PointerEvent) {
     if (!isPanning || !lastPanPoint) return;
 
+    // Current timestamp for inertia calculations
+    const now = Date.now();
+    if (panningStartTime === 0) {
+      panningStartTime = now;
+    }
+    lastPanEventTime = now;
+
+    // Get current point with device pixel ratio consideration
     const currentPoint = getPointerPosition(e);
 
-    // Update offset
-    offsetX += (currentPoint.x - lastPanPoint.x);
-    offsetY += (currentPoint.y - lastPanPoint.y);
+    // Calculate move delta
+    const deltaX = currentPoint.x - lastPanPoint.x;
+    const deltaY = currentPoint.y - lastPanPoint.y;
+
+    // Store for inertia calculations
+    lastPanDeltaX = deltaX;
+    lastPanDeltaY = deltaY;
+
+    // Update offset - will be applied in renderStrokes
+    offsetX += deltaX;
+    offsetY += deltaY;
 
     // Update last point
     lastPanPoint = currentPoint;
 
-    // Re-render with new offsets
-    renderStrokes();
+    // Throttle rendering with requestAnimationFrame for better performance
+    if (panAnimationFrame) {
+      cancelAnimationFrame(panAnimationFrame);
+    }
+
+    panAnimationFrame = requestAnimationFrame(() => {
+      renderStrokes();
+      panAnimationFrame = null;
+    });
   }
 
-  function endPanning() {
+  function endPanning(e?: PointerEvent) {
+    if (!isPanning) return;
+
+    // Apply inertia effect if the pan was fast
+    const now = Date.now();
+    const panDuration = now - panningStartTime;
+    const timeSinceLastPan = now - lastPanEventTime;
+
+    // Only apply inertia if the pan was recent and not too slow
+    if (panDuration < 300 && timeSinceLastPan < 100 && (Math.abs(lastPanDeltaX) > 2 || Math.abs(lastPanDeltaY) > 2)) {
+      applyPanInertia(lastPanDeltaX * 0.7, lastPanDeltaY * 0.7, 10);
+    }
+
+    // Reset pan state
     isPanning = false;
     lastPanPoint = null;
+    panningStartTime = 0;
 
     // Reset cursor
-    canvas.style.cursor = 'default';
+    canvas.style.cursor = selectedTool === 'pan' ? 'grab' : 'default';
+    document.body.style.cursor = 'default';
+
+    // Release pointer if provided
+    if (e) {
+      try {
+        canvas.releasePointerCapture(e.pointerId);
+      } catch (error) {
+        console.error('Error releasing pointer capture:', error);
+      }
+    }
+  }
+
+  // Apply inertia effect for smoother experience
+  function applyPanInertia(initialDeltaX: number, initialDeltaY: number, steps: number) {
+    let step = 0;
+
+    function animateInertia() {
+      if (step >= steps) return;
+
+      // Calculate declining force
+      const factor = (steps - step) / steps;
+      const deltaX = initialDeltaX * factor;
+      const deltaY = initialDeltaY * factor;
+
+      // Apply movement
+      offsetX += deltaX;
+      offsetY += deltaY;
+      renderStrokes();
+
+      // Next step
+      step++;
+      requestAnimationFrame(animateInertia);
+    }
+
+    requestAnimationFrame(animateInertia);
   }
 
   function eraseStrokes() {
@@ -797,22 +1026,20 @@
   function updateToolMode() {
     if (!canvas) return;
 
-    console.log('Updating tool mode:', selectedTool); // Add for debugging
-
-    // First, reset any tool-specific state
-    canvas.classList.remove('selecting-mode', 'drawing-mode', 'erasing-mode', 'panning-mode');
+    clearSelection();
 
     if (selectedTool === 'pan') {
-      canvas.classList.add('panning-mode');
-      clearSelection();
-    } else if (selectedTool === 'eraser') {
-      canvas.classList.add('erasing-mode');
-      clearSelection();
+      canvas.classList.remove('drawing-mode');
+      canvas.classList.add('pan-mode');
+      canvas.style.cursor = 'grab';
     } else if (selectedTool === 'select') {
-      canvas.classList.add('selecting-mode');
-      // Keep any existing selection
+      canvas.classList.remove('drawing-mode');
+      canvas.classList.add('select-mode');
+      canvas.style.cursor = 'default';
     } else {
+      canvas.classList.remove('pan-mode', 'select-mode');
       canvas.classList.add('drawing-mode');
+      canvas.style.cursor = selectedTool === 'eraser' ? 'crosshair' : 'default';
       clearSelection();
     }
   }
@@ -842,6 +1069,11 @@
         onSaving(false);
       }
     }, 1000);
+  }
+
+  // Alias for autoSave to maintain backward compatibility
+  function saveContent() {
+    autoSave();
   }
 
   // History management functions
@@ -1133,6 +1365,12 @@
   function startSelecting(e: PointerEvent) {
     const point = getPointerPosition(e);
 
+    // Check if point is within canvas bounds
+    if (!isPointInCanvasBounds(point)) {
+      console.log('Ignoring selection start outside canvas bounds');
+      return; // Don't start selecting outside canvas bounds
+    }
+
     // Clear any existing selection if not holding shift key
     if (!e.shiftKey) {
       drawingSettings.update(settings => ({
@@ -1336,19 +1574,47 @@
     const dx = currentPoint.x - moveStartPoint.x;
     const dy = currentPoint.y - moveStartPoint.y;
 
-    // Move the selected strokes
+    // Get canvas bounds
+    const canvasWidth = content.bounds?.width || $drawingSettings.canvasWidth;
+    const canvasHeight = content.bounds?.height || $drawingSettings.canvasHeight;
+
+    // Ensure selected strokes stay within canvas boundaries
+    let adjustedDx = dx;
+    let adjustedDy = dy;
+
+    // Check for each selected stroke if moving would put any point outside the canvas
     $drawingSettings.selectedStrokes.forEach(index => {
       if (index >= 0 && index < content.strokes.length) {
         const stroke = content.strokes[index];
+
+        // Check each point in the stroke
         stroke.points.forEach(point => {
-          point.x += dx;
-          point.y += dy;
+          const newX = point.x + dx;
+          const newY = point.y + dy;
+
+          // If new position would be outside, adjust the deltas
+          if (newX < 0) adjustedDx = Math.max(adjustedDx, -point.x);
+          if (newY < 0) adjustedDy = Math.max(adjustedDy, -point.y);
+          if (newX > canvasWidth) adjustedDx = Math.min(adjustedDx, canvasWidth - point.x);
+          if (newY > canvasHeight) adjustedDy = Math.min(adjustedDy, canvasHeight - point.y);
         });
       }
     });
 
-    // Update the start point
-    moveStartPoint = currentPoint;
+    // Apply the adjusted movement to all selected strokes
+    $drawingSettings.selectedStrokes.forEach(index => {
+      if (index >= 0 && index < content.strokes.length) {
+        const stroke = content.strokes[index];
+        stroke.points.forEach(point => {
+          point.x += adjustedDx;
+          point.y += adjustedDy;
+        });
+      }
+    });
+
+    // Update the start point with the adjusted movement
+    moveStartPoint.x += adjustedDx;
+    moveStartPoint.y += adjustedDy;
 
     // Render the updated strokes
     renderStrokes();
@@ -1811,6 +2077,247 @@
     // Ensure any necessary updates happen when the tool changes
     updateToolMode();
   }
+
+  // Add the handleZoom function which was missing
+  function handleZoom(delta: number) {
+    zoom = Math.max(Math.min(zoom + delta, 5), 0.5);
+    renderStrokes();
+    dispatch('zoomChange', { zoom });
+  }
+
+  // Export zoom methods for external components
+  export function zoomIn() {
+    if (!canvas) return;
+
+    // Use variable increments based on current zoom level
+    let zoomIncrement;
+    if (zoom < 0.1) zoomIncrement = 0.01;
+    else if (zoom < 0.5) zoomIncrement = 0.05;
+    else if (zoom < 1) zoomIncrement = 0.1;
+    else if (zoom < 2) zoomIncrement = 0.2;
+    else if (zoom < 5) zoomIncrement = 0.5;
+    else zoomIncrement = 1;
+
+    // Apply the zoom
+    zoom = Math.min(zoom + zoomIncrement, 20);
+
+    // Render with the new zoom
+    renderStrokes();
+    dispatchViewportUpdate();
+
+    // Notify parent component
+    dispatch('zoomChange', { zoom });
+  }
+
+  export function zoomOut() {
+    if (!canvas) return;
+
+    // Use variable increments based on current zoom level
+    let zoomIncrement;
+    if (zoom <= 0.1) zoomIncrement = 0.01;
+    else if (zoom <= 0.5) zoomIncrement = 0.05;
+    else if (zoom <= 1) zoomIncrement = 0.1;
+    else if (zoom <= 2) zoomIncrement = 0.2;
+    else if (zoom <= 5) zoomIncrement = 0.5;
+    else zoomIncrement = 1;
+
+    // Apply the zoom with minimum limit
+    zoom = Math.max(zoom - zoomIncrement, 0.05);
+
+    // Render with the new zoom
+    renderStrokes();
+    dispatchViewportUpdate();
+
+    // Notify parent component
+    dispatch('zoomChange', { zoom });
+  }
+
+  export function resetZoom() {
+    // Center the canvas with animation and auto-fit
+    centerCanvas(true, true);
+  }
+
+  // Add methods for viewport manipulation from minimap
+  export function moveViewport(deltaX: number, deltaY: number) {
+    if (!canvas) return;
+
+    // Update offsets
+    offsetX += deltaX;
+    offsetY += deltaY;
+
+    // Render with new position
+    renderStrokes();
+
+    // Dispatch viewport update
+    dispatchViewportUpdate();
+  }
+
+  export function setViewport(x: number, y: number) {
+    if (!canvas) return;
+
+    // Set absolute position
+    offsetX = x;
+    offsetY = y;
+
+    // Render with new position
+    renderStrokes();
+
+    // Dispatch viewport update
+    dispatchViewportUpdate();
+  }
+
+  export function updateCanvasSize(width: number, height: number) {
+    if (!canvas || !content) return;
+
+    // Update content bounds
+    content = {
+      ...content,
+      bounds: {
+        width,
+        height
+      }
+    };
+
+    // Re-render with new size
+    renderStrokes();
+
+    // Save changes to database
+    autoSave();
+
+    // Dispatch viewport update for minimap
+    dispatchViewportUpdate();
+  }
+
+  // Helper to dispatch viewport info for minimap
+  function dispatchViewportUpdate() {
+    if (!canvas) return;
+
+    // Calculate viewport size based on canvas size and zoom
+    const viewportWidth = canvas.width / devicePixelRatio / zoom;
+    const viewportHeight = canvas.height / devicePixelRatio / zoom;
+
+    // Dispatch the current viewport information to the minimap
+    dispatch('viewportUpdate', {
+      offsetX,
+      offsetY,
+      viewportWidth,
+      viewportHeight,
+      zoom
+    });
+  }
+
+  // Center canvas in the viewport with smooth animation and auto-fit
+  function centerCanvas(animate = true, autoFit = true) {
+    if (!canvas) return;
+
+    // Get canvas dimensions
+    const canvasWidth = canvas.width / devicePixelRatio;
+    const canvasHeight = canvas.height / devicePixelRatio;
+
+    // Get content bounds
+    const contentBounds = content.bounds || {
+      width: canvasWidth,
+      height: canvasHeight
+    };
+
+    // Calculate target zoom to fit the entire canvas
+    let targetZoom = 1; // Default zoom
+
+    if (autoFit) {
+      // Add a small padding (5%) for better visual experience
+      const padding = 0.05;
+      const paddedContentWidth = contentBounds.width * (1 + padding * 2);
+      const paddedContentHeight = contentBounds.height * (1 + padding * 2);
+
+      // Calculate zoom to fit width and height
+      const zoomX = canvasWidth / paddedContentWidth;
+      const zoomY = canvasHeight / paddedContentHeight;
+
+      // Use the smaller zoom to ensure the entire canvas fits
+      targetZoom = Math.min(zoomX, zoomY, 1); // Cap zoom at 1 to avoid excessive enlargement
+    }
+
+    // Calculate offsets to center content at the target zoom
+    const targetOffsetX = (canvasWidth - contentBounds.width * targetZoom) / 2;
+    const targetOffsetY = (canvasHeight - contentBounds.height * targetZoom) / 2;
+
+    if (!animate) {
+      // Apply immediately without animation
+      zoom = targetZoom;
+      offsetX = targetOffsetX;
+      offsetY = targetOffsetY;
+      renderStrokes();
+      dispatchViewportUpdate();
+      dispatch('zoomChange', { zoom });
+      return;
+    }
+
+    // Store starting values for animation
+    const startZoom = zoom;
+    const startOffsetX = offsetX;
+    const startOffsetY = offsetY;
+
+    // Animation settings
+    const duration = 300; // milliseconds
+    const startTime = performance.now();
+
+    // Animation function
+    function animateToCenter(timestamp) {
+      // Calculate progress (0 to 1)
+      const elapsed = timestamp - startTime;
+      const progress = Math.min(elapsed / duration, 1);
+
+      // Apply easing for smooth deceleration
+      const easeProgress = 1 - Math.pow(1 - progress, 3); // Cubic ease-out
+
+      // Interpolate values
+      zoom = startZoom + (targetZoom - startZoom) * easeProgress;
+      offsetX = startOffsetX + (targetOffsetX - startOffsetX) * easeProgress;
+      offsetY = startOffsetY + (targetOffsetY - startOffsetY) * easeProgress;
+
+      // Update canvas
+      renderStrokes();
+
+      // Continue animation if not complete
+      if (progress < 1) {
+        requestAnimationFrame(animateToCenter);
+      } else {
+        // Final update on completion
+        dispatchViewportUpdate();
+        dispatch('zoomChange', { zoom });
+      }
+    }
+
+    // Start animation
+    requestAnimationFrame(animateToCenter);
+  }
+
+  // Add a function to check if a point is within the canvas bounds
+  function isPointInCanvasBounds(point: StrokePoint): boolean {
+    const width = content.bounds?.width || $drawingSettings.canvasWidth;
+    const height = content.bounds?.height || $drawingSettings.canvasHeight;
+    return point.x >= 0 && point.x <= width && point.y >= 0 && point.y <= height;
+  }
+
+  // Function to update cursor based on whether point is in canvas bounds
+  function updateCursorForCanvasBounds(point: StrokePoint) {
+    if (isPointInCanvasBounds(point)) {
+      // Inside canvas area - use appropriate cursor based on tool
+      if (selectedTool === 'pan') {
+        canvas.style.cursor = isPanning ? 'grabbing' : 'grab';
+      } else if (selectedTool === 'select') {
+        // Selection cursor handled by updateCursor function
+      } else if (selectedTool === 'eraser') {
+        canvas.style.cursor = 'crosshair';
+      } else {
+        // Drawing tools
+        canvas.style.cursor = 'crosshair';
+      }
+    } else {
+      // Outside canvas area - use not-allowed cursor
+      canvas.style.cursor = 'default';
+    }
+  }
 </script>
 
 <div class="drawing-container">
@@ -1822,10 +2329,59 @@
     on:pointerup={finishDrawing}
     on:pointercancel={finishDrawing}
     on:wheel={(e) => {
-      if (e.ctrlKey || e.metaKey) {
-        e.preventDefault();
-        const delta = e.deltaY > 0 ? -0.1 : 0.1;
-        handleZoom(delta);
+      e.preventDefault(); // Always prevent default scrolling behavior
+
+      // Get pointer position to check bounds
+      const offsetPoint = {
+        x: e.offsetX,
+        y: e.offsetY
+      };
+
+      // Convert offsetPoint to canvas coordinates
+      const canvasPoint = {
+        x: (offsetPoint.x - offsetX) / zoom,
+        y: (offsetPoint.y - offsetY) / zoom
+      };
+
+      // For zooming, we should be in the canvas bounds
+      if (!isPointInCanvasBounds(canvasPoint) && !e.shiftKey) {
+        return; // Don't zoom if outside canvas bounds and not panning
+      }
+
+      // Handle different wheel behaviors based on modifiers
+      if (e.shiftKey) {
+        // Shift + wheel = horizontal panning
+        const panAmount = e.deltaY * (1 / zoom) * 0.5;
+        offsetX -= panAmount;
+        renderStrokes();
+        dispatchViewportUpdate();
+      } else {
+        // Regular wheel = zoom
+        // Calculate zoom delta - smaller increments for smoother zooming
+        const zoomFactor = 0.05;
+        const delta = e.deltaY > 0 ? -zoomFactor : zoomFactor;
+
+        // Apply zoom centered on mouse position
+        const pointBeforeZoom = {
+          x: (offsetPoint.x - offsetX) / zoom,
+          y: (offsetPoint.y - offsetY) / zoom
+        };
+
+        // Update zoom
+        const newZoom = Math.max(Math.min(zoom + delta, 5), 0.5);
+        const zoomChanged = newZoom !== zoom;
+        zoom = newZoom;
+
+        if (zoomChanged) {
+          // Adjust offset to zoom toward mouse position
+          offsetX = offsetPoint.x - pointBeforeZoom.x * zoom;
+          offsetY = offsetPoint.y - pointBeforeZoom.y * zoom;
+
+          // Render with new zoom and offset
+          renderStrokes();
+          dispatchViewportUpdate();
+          dispatch('zoomChange', { zoom });
+        }
       }
     }}
   ></canvas>
@@ -1869,13 +2425,30 @@
     display: block;
     width: 100%;
     height: 100%;
+    border-radius: $border-radius-md;
     background-color: #ffffff; /* Always keep canvas white regardless of theme */
+  }
+
+  .drawing-canvas.pan-mode {
+    cursor: grab;
+  }
+
+  .drawing-canvas.pan-mode:active {
+    cursor: grabbing;
+  }
+
+  .drawing-canvas.select-mode {
+    cursor: default;
+  }
+
+  .drawing-canvas.drawing-mode {
+    cursor: crosshair;
   }
 
   .instructions,
   .select-mode-tooltip {
     position: absolute;
-    bottom: 20px;
+    top: 20px;
     left: 50%;
     transform: translateX(-50%);
     background-color: rgba(0, 0, 0, 0.7);

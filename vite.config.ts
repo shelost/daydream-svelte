@@ -19,5 +19,8 @@ export default defineConfig({
 				additionalData: `@import "${absoluteScssPath}";`
 			}
 		}
+	},
+	ssr: {
+		noExternal: ['prismjs']
 	}
 });

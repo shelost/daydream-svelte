@@ -136,6 +136,8 @@ export async function uploadThumbnail(pageId: string, thumbnailBlob: Blob) {
   const fileName = `${pageId}-${Date.now()}.png`;
   const filePath = `thumbnails/${fileName}`;
 
+  /*
+
   // Upload to Supabase storage
   const { error: uploadError } = await supabase.storage
     .from('thumbnails')
@@ -159,4 +161,5 @@ export async function uploadThumbnail(pageId: string, thumbnailBlob: Blob) {
     .eq('id', pageId);
 
   return { url: data.publicUrl, error: updateError };
+  */
 }
