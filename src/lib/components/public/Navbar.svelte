@@ -98,6 +98,13 @@
             </span>
         </div>
 
+        <div class = 'navbtn disabled' class:active={$page.url.pathname === '/agent'} on:click={() => {goto('/agent')}} >
+            <span class='material-symbols-outlined'>
+                mood
+            </span>
+        </div>
+
+
         <div class = 'navbtn' class:active={$page.url.pathname === '/chat'} on:click={() => {goto('/chat')}} >
             <span class='material-symbols-outlined'>
                 chat_bubble
@@ -222,7 +229,7 @@
                     border-radius: 12px;
                 }
                 &.disabled{
-                    display: none;
+                    //display: none;
                 }
                 &.active{
                     //background: rgba(#e0e0e0, .8);

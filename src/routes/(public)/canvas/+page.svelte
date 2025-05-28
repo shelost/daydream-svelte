@@ -3812,7 +3812,6 @@ Guidelines:
   #app {
     height: 100%;
     width: 100%;
-    flex-grow: 0;
     overflow: hidden;
   }
 
@@ -4112,11 +4111,10 @@ Guidelines:
       display: flex;
       justify-content: center;
       align-items: center;
+      box-sizing: border-box;
       flex: 1;
       gap: 0;
-      //margin: 12px 0;
       min-width: 400px;
-      width: 95vw;
       padding: 8px 16px;
       height: 100%;
       position: relative;

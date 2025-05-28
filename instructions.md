@@ -2157,3 +2157,68 @@ Added intelligent follow-up question functionality that displays 3 relevant ques
 - **Compatibility**: Works across all supported AI models and devices
 
 This feature significantly enhances the conversational experience by providing intelligent conversation pathways, making the AI assistant more discoverable and engaging for users.
+
+## Add Sliding Chat Toggle with Floating Button
+
+### Problem
+The chat panel (#chat) in the public layout is always visible with a fixed width of 300px. User wants to add a toggle functionality that allows the chat panel to slide in and out smoothly, controlled by a floating button positioned in the bottom left corner of the screen.
+
+### Solution Outline
+1. **Universal Store with Persistence:**
+   - Create a `chatVisible` store in `src/lib/stores/chatStore.js` with localStorage persistence
+   - Initialize from localStorage if available, default to `true` (chat visible by default)
+   - Automatically save state changes to localStorage using the key `'daydream_chat_visible'`
+   - Provide convenient methods: `set()`, `update()`, and `toggle()`
+
+2. **Floating Toggle Button:**
+   - Create a floating button positioned in the bottom left corner
+   - Button shows appropriate icons (chat/chat_bubble_outline) based on current state
+   - Position fixed to stay in place during scrolling
+   - Use Material Icons for consistency with existing design
+
+3. **Layout-Responsive Animation:**
+   - Chat panel affects the entire page layout flow when toggled
+   - When hidden: chat width becomes 0, allowing main content to expand to full width
+   - When visible: main content smoothly shrinks to make room for 300px chat panel
+   - Use CSS transitions for smooth animations with `transform` and `width` changes
+
+4. **Responsive Behavior:**
+   - Desktop: Chat slides horizontally (width-based collapse)
+   - Mobile (under 800px): Chat slides vertically (height-based collapse)
+   - Floating button repositioned on mobile to avoid navbar conflicts
+
+5. **State Management:**
+   - Uses SvelteKit's `browser` environment check for SSR compatibility
+   - Graceful fallback when localStorage is unavailable
+   - State persists across page refreshes, navigation, and browser sessions
+
+### Implementation Details
+- **Store File:** `src/lib/stores/chatStore.js` - Universal store with localStorage integration
+- **Layout File:** `src/routes/(public)/+layout.svelte` - Uses persistent store instead of local state
+- **Storage Key:** `'daydream_chat_visible'` - Unique identifier for localStorage
+- **Default State:** `true` (chat visible by default)
+- **Animation:** CSS transitions with hardware-accelerated transforms
+- **Button Position:** `position: fixed; bottom: 20px; left: 20px; z-index: 1000;`
+
+### Technical Approach
+1. Create custom store with localStorage persistence using `browser` environment check
+2. Import and use store in layout component with reactive `$chatVisible` syntax
+3. Apply conditional classes and layout changes based on store state
+4. Use CSS transitions for smooth layout-responsive animations
+5. Handle responsive behavior with media queries
+6. Ensure proper z-index layering for floating button
+
+### Benefits
+- **Persistent User Preference:** Chat state remembers user's last choice across sessions
+- **Layout-Responsive:** Main content truly expands/contracts with chat toggle
+- **Smooth Animations:** Hardware-accelerated transitions for polished UX
+- **Mobile-Optimized:** Different collapse behavior for mobile vs desktop
+- **SSR-Compatible:** Safe server-side rendering with browser environment checks
+- **Consistent State:** Universal store ensures state consistency across the app
+
+### Files Created/Modified
+- **Created:** `src/lib/stores/chatStore.js` - Persistent chat visibility store
+- **Modified:** `src/routes/(public)/+layout.svelte` - Updated to use universal store
+- **Updated:** `instructions.md` - Documentation of persistent state implementation
+
+This implementation provides a polished, persistent chat toggle experience that remembers user preferences and smoothly adapts the entire page layout.
