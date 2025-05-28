@@ -190,7 +190,7 @@
 
 </script>
 
-<div class="omnibar" in:fly={{ y: 50, duration: 400 }}>
+<div class="omnibar light" in:fly={{ y: 50, duration: 400 }}>
   {#if followUpQuestions && followUpQuestions.length > 0}
     <div
       class="follow-up-questions"
@@ -427,12 +427,12 @@
   }
 
   .omnibar {
-    width: 550px;
+    width: 640px;
     max-width: 90vw;
     padding: 0;
     position: absolute; /* This might need to be relative if Omnibar is placed by parent */
     bottom: 12px;   /* Or controlled by parent's layout */
-    left: calc(50% - 275px); /* Or controlled by parent's layout */
+    left: calc(50% - 320px); /* Or controlled by parent's layout */
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -453,7 +453,7 @@
       width: 100%;
       background: rgba(20, 20, 22, 0.7);
       border: 1px solid rgba(255, 255, 255, 0.1);
-      border-radius: 24px;
+      border-radius: 16px;
       padding: 8px;
       box-shadow: 0 16px 32px 8px rgba(black, 0.3);
       backdrop-filter: blur(20px);
@@ -470,7 +470,7 @@
       font-size: 20px;
       font-weight: 500;
       line-height: 130%;
-      letter-spacing: .4px;
+      letter-spacing: .5px;
       padding: 10px 12px;
       border-radius: 12px;
       resize: none;
@@ -478,7 +478,7 @@
       min-height: 20px; /* Should be dynamically set by autoResize for one line */
       max-height: 160px;
       transition: background-color 0.2s ease, box-shadow 0.2s ease;
-      text-shadow: -.25px 0px 0px rgba(white, 0.9);
+      text-shadow: -.5px 0px 0px #030025;
       scrollbar-width: thin;
       scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
 
@@ -516,10 +516,11 @@
         font-family: 'Inter', sans-serif;
         font-size: 12px;
         font-weight: 500;
+        letter-spacing: -.25px;
         padding: 8px 32px 8px 10px;
         border-radius: 24px;
-        color: #e0e0e0;
-        background: rgba(white, .03);
+        color: #030025;
+        background: rgba(#030025, .05);
         border: none;
         cursor: pointer;
         transition: background-color 0.2s ease, border-color 0.2s ease;
@@ -533,7 +534,7 @@
         }
 
         &:hover {
-          background: rgba(white, .05);
+          background: rgba(#030025, .08);
         }
 
         &:focus {
@@ -556,6 +557,7 @@
         color: rgba(white, 0.5);
         font-size: 18px;
         pointer-events: none;
+        display: none;
       }
     }
 
@@ -603,6 +605,16 @@
         }
       }
     }
+
+    &.light{
+      .input-form{
+        background: white;
+        box-shadow: 0 40px 32px rgba(#030025, 0.12);
+        textarea{
+          color: #030025;
+        }
+      }
+    }
   }
 
   @media screen and (max-width: 800px) {
@@ -612,8 +624,6 @@
       left: calc(4vw - 12px);
       bottom: 6px;
     }
-
-
   }
 
 

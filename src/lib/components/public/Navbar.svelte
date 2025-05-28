@@ -173,16 +173,13 @@
     }
 
     nav{
-        position: relative; // For pill positioning context
+        position: relative;
         display: flex;
         flex-direction: column;
         align-items: center;
         box-sizing: border-box;
         gap: 8px;
         background: none;
-
-       // border: 1px solid rgba(white, .2);
-        box-shadow: 0 24px 48px rgba(black, .3);
         padding: 6px;
         border-radius: 0 16px 16px 0;
 

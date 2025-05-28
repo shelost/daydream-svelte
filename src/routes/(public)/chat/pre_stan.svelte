@@ -10,32 +10,20 @@
   let Prism: any = null; // Keep at top-level, initialize to null
   let PrismLoaded: boolean = false; // Keep at top-level
 
-  interface AnimatedWord {
-    id: string;
-    text: string;
-    addedTime: number;
-    currentOpacity: number;
-  }
-
   interface Message {
     id: string;
     role: 'user' | 'assistant' | 'system';
     content: string; // Content is now always a string
     isLoading?: boolean; // For assistant message, indicates waiting for response
-    isStreaming?: boolean; // For assistant message, indicates text streaming
+    isStreaming?: boolean; // For assistant message, indicates text is streaming
     modelUsed?: string; // For assistant message, which model generated the response
     error?: string; // For assistant message, if an error occurred
-    animatedWords?: AnimatedWord[];
-    _lastProcessedContentLength?: number;
-    _previousContent?: string; // Track previous content for DOM diffing
   }
 
   let messages: Message[] = [];
   let omnibarPrompt: string = ''; // Bound to Omnibar's additionalContext
   let isOverallLoading: boolean = false; // Tracks if a response is being generated
-  let currentSelectedTextModel: string = 'claude-3-7-sonnet-20250219'; // Updated default text model
-  let currentAbortController: AbortController | null = null; // For stopping generation
-  let currentFollowUpQuestions: string[] = []; // For follow-up prompts to show above Omnibar
+  let currentSelectedTextModel: string = 'gpt-4o-mini'; // Updated default text model
 
   // Map of model IDs to human-friendly labels for display
   const modelLabels: Record<string, string> = {
@@ -60,10 +48,6 @@
   let pendingAnalysis = false;
 
   let markdownContainers = new Map();
-
-  const ANIMATION_DURATION = 3000; // 3 seconds for opacity transition
-  const INITIAL_OPACITY = 0.5;
-  const FINAL_OPACITY = 1.0;
 
   // Function to apply syntax highlighting to code blocks
   async function highlightCodeBlocks(element) {
@@ -111,7 +95,11 @@
       copyBtn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>';
       copyBtn.title = 'Copy code';
       copyBtn.addEventListener('click', () => {
-        copyWithFeedback(copyBtn, codeBlock.textContent || '');
+        navigator.clipboard.writeText(codeBlock.textContent || '');
+        copyBtn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"></path></svg>';
+        setTimeout(() => {
+          copyBtn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>';
+        }, 2000);
       });
       header.appendChild(copyBtn);
 
@@ -125,48 +113,6 @@
     if (PrismLoaded && Prism && typeof Prism.highlightElement === 'function') {
       Prism.highlightElement(codeBlock);
     }
-  }
-
-  // Universal copy function with checkmark feedback
-  function copyWithFeedback(button, content) {
-    navigator.clipboard.writeText(content);
-
-    // Store original innerHTML
-    const originalHTML = button.innerHTML;
-
-    // Show checkmark
-    button.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"></path></svg>';
-
-    // Restore original after 2 seconds
-    setTimeout(() => {
-      button.innerHTML = originalHTML;
-    }, 2000);
-  }
-
-  // Function to apply smooth opacity animation to streaming content
-  function animateNewContent(container, previousContent, currentContent) {
-    if (!container || !currentContent || currentContent === previousContent) return;
-
-    // Simple approach: add a CSS class that triggers smooth fade-in for new content
-    // This avoids DOM manipulation and uses optimized CSS animations
-    const previousLength = previousContent ? previousContent.length : 0;
-    const newContentLength = currentContent.length - previousLength;
-
-    if (newContentLength <= 0) return;
-
-    // Add a temporary animation class to the entire container
-    container.classList.add('content-updating');
-
-    // Use requestAnimationFrame for smooth timing
-    requestAnimationFrame(() => {
-      container.classList.remove('content-updating');
-      container.classList.add('content-updated');
-
-      // Clean up the animation class after animation completes
-      setTimeout(() => {
-        container.classList.remove('content-updated');
-      }, 150); // Short, smooth animation
-    });
   }
 
   // Create a mutation observer to detect new code blocks during streaming
@@ -209,8 +155,8 @@
   }
 
   // Function to copy message content
-  function copyMessage(content, button) {
-    copyWithFeedback(button, content || '');
+  function copyMessage(content) {
+    navigator.clipboard.writeText(content || '');
   }
 
   async function scrollToBottom() {
@@ -233,7 +179,6 @@
     isStartState = true;
     omnibarPrompt = '';
     isOverallLoading = false;
-    currentFollowUpQuestions = []; // Clear follow-up prompts
   }
 
   function clearChatAndStorage() {
@@ -246,80 +191,9 @@
     }
   }
 
-  function handleStop() {
-    if (currentAbortController) {
-      currentAbortController.abort();
-      currentAbortController = null;
-    }
-    isOverallLoading = false;
-
-    // Update the last message to show it was stopped
-    messages = messages.map(msg => {
-      if (msg.isStreaming || msg.isLoading) {
-        return {
-          ...msg,
-          isLoading: false,
-          isStreaming: false,
-          content: msg.content || "Generation stopped by user.",
-          error: undefined
-        };
-      }
-      return msg;
-    });
-  }
-
-  function parseFollowUpQuestions(content: string): { mainContent: string, followUpQuestions: string[] } {
-    console.log('🔍 Parsing follow-up prompts from content length:', content.length);
-    console.log('🔍 Content sample:', content.slice(-500)); // Show more content to see the follow-up section
-
-    const followUpMatch = content.match(/⟪---FOLLOWUP---(.*?)---ENDFOLLOWUP---/s);
-
-    if (followUpMatch) {
-      console.log('✅ Found follow-up section:', followUpMatch[1]);
-      const mainContent = content.replace(/⟪---FOLLOWUP---(.*?)---ENDFOLLOWUP---/s, '').trim();
-      const followUpSection = followUpMatch[1].trim();
-
-      // Extract questions from numbered list - make more flexible
-      const questions = followUpSection
-        .split('\n')
-        .map(line => line.trim())
-        .filter(line => line.length > 0) // Any non-empty line
-        .map(line => {
-          // Try different patterns for numbered questions
-          if (line.match(/^\d+\.\s*\[(.*)\]$/)) {
-            return line.replace(/^\d+\.\s*\[(.*)\]$/, '$1');
-          } else if (line.match(/^\d+\.\s*(.+)$/)) {
-            return line.replace(/^\d+\.\s*(.+)$/, '$1');
-          } else if (line.match(/^[-*]\s*(.+)$/)) {
-            return line.replace(/^[-*]\s*(.+)$/, '$1');
-          } else if (line.length > 5) { // Any substantial line
-            return line;
-          }
-          return null;
-        })
-        .filter(q => q && q.length > 0);
-
-      console.log('🎯 Extracted questions:', questions);
-
-      return {
-        mainContent,
-        followUpQuestions: questions.slice(0, 3) // Ensure max 3 questions
-      };
-    }
-
-    console.log('❌ No follow-up section found in content');
-    return {
-      mainContent: content,
-      followUpQuestions: []
-    };
-  }
-
   async function handleOmnibarSubmit() {
     const currentPrompt = omnibarPrompt.trim();
     if (!currentPrompt || isOverallLoading) return;
-
-    // Create new AbortController for this request
-    currentAbortController = new AbortController();
 
     if (isStartState) {
       isStartState = false;
@@ -374,17 +248,7 @@
         }
 
         // Add a reminder of the model's identity
-        const modelIdentityGuide = `You are ${getModelLabel(currentSelectedTextModel)}, a helpful AI assistant created by Anthropic.
-
-IMPORTANT: After your response, provide exactly 3 SHORT, relevant follow-up prompts that the USER might want to ask YOU to continue the conversation. Keep each question under 6 words when possible.
-
-Use this EXACT format at the very end, with the special delimiter ⟪ to signal the start:
-
-⟪---FOLLOWUP---
-1. [Short question]
-2. [Short question]
-3. [Short question]
----ENDFOLLOWUP---`;
+        const modelIdentityGuide = `You are ${getModelLabel(currentSelectedTextModel)}, a helpful AI assistant created by Anthropic.`;
 
         requestBody = {
           prompt: `${modelIdentityGuide}\n\n${formattedPrompt}`,
@@ -414,17 +278,7 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
         }
 
         // Add a reminder of the model's identity at the beginning
-        const modelIdentityGuide = `You are ${getModelLabel(currentSelectedTextModel)}, a helpful AI assistant created by Google.
-
-IMPORTANT: After your response, provide exactly 3 SHORT, relevant follow-up prompts or questions that the USER might want to prompt YOU to continue the conversation. Keep each question under 6 words when possible.
-
-Use this EXACT format at the very end, with the special delimiter ⟪ to signal the start:
-
-⟪---FOLLOWUP---
-1. [Short prompt]
-2. [Short prompt]
-3. [Short prompt]
----ENDFOLLOWUP---`;
+        const modelIdentityGuide = `You are ${getModelLabel(currentSelectedTextModel)}, a helpful AI assistant created by Google.`;
         requestBody = {
           prompt: `${modelIdentityGuide}\n\n${formattedPrompt}`,
           model: currentSelectedTextModel,
@@ -452,17 +306,7 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
         if (!systemMessageAdded && processedMessages.length > 0) {
           processedMessages.unshift({
             role: 'system',
-            content: `You are ${getModelLabel(currentSelectedTextModel)}, a helpful AI assistant created by OpenAI.
-
-IMPORTANT: After your response, provide exactly 3 SHORT, relevant follow-up prompts that the USER might want to prompt or ask YOU to continue the conversation. Keep each prompt under 6 words when possible.
-
-Use this EXACT format at the very end, with the special delimiter ⟪ to signal the start:
-
-⟪---FOLLOWUP---
-1. [Short prompt]
-2. [Short prompt]
-3. [Short prompt]
----ENDFOLLOWUP---`
+            content: `You are ${getModelLabel(currentSelectedTextModel)}, a helpful AI assistant created by OpenAI.`
           });
         }
 
@@ -476,8 +320,7 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
       const response = await fetchAndLog(endpoint, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(requestBody),
-          signal: currentAbortController?.signal
+          body: JSON.stringify(requestBody)
       }, {
         page: 'Chat',
         model: currentSelectedTextModel,
@@ -494,11 +337,9 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
       const decoder = new TextDecoder();
       let done = false;
       let assistantContent = '';
-      let followUpContent = ''; // Track follow-up content separately
-      let inFollowUpSection = false; // Track if we're in the follow-up section
 
       messages = messages.map(msg =>
-        msg.id === assistantMessageId ? { ...msg, isLoading: false, isStreaming: true, _previousContent: '' } : msg
+        msg.id === assistantMessageId ? { ...msg, isLoading: false, isStreaming: true } : msg
       );
 
       // Set up a mutation observer for the streaming content
@@ -517,6 +358,8 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
         done = readerDone;
         if (value) {
           const chunk = decoder.decode(value, { stream: !done });
+
+          // Handle different API response formats
           let processedChunk = chunk;
 
           // Check if this is an API log entry chunk (will be at the end)
@@ -576,110 +419,15 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
             }
           }
 
-          // Check for the special delimiter to stop main content streaming
-          if (!inFollowUpSection && processedChunk.includes('⟪')) {
-            console.log('🛑 Detected follow-up delimiter, stopping main content stream');
-
-            // Split the chunk at the delimiter
-            const delimiterIndex = processedChunk.indexOf('⟪');
-            const beforeDelimiter = processedChunk.substring(0, delimiterIndex);
-            const afterDelimiter = processedChunk.substring(delimiterIndex);
-
-            // Add the content before delimiter to main content
-            if (beforeDelimiter) {
-              assistantContent += beforeDelimiter;
-              messages = messages.map(msg => {
-                if (msg.id === assistantMessageId && msg.isStreaming) {
-                  const previousContent = msg._previousContent || '';
-                  let currentContent = msg.content || '';
-                  currentContent += beforeDelimiter;
-
-                  return {
-                    ...msg,
-                    content: currentContent,
-                    _previousContent: previousContent
-                  };
-                }
-                return msg;
-              });
-            }
-
-            // Switch to follow-up mode
-            inFollowUpSection = true;
-            followUpContent = afterDelimiter;
-
-            // Immediately try to parse and set follow-up prompts
-            const tempFollowUpResult = parseFollowUpQuestions('⟪' + followUpContent);
-            if (tempFollowUpResult.followUpQuestions.length > 0) {
-              currentFollowUpQuestions = tempFollowUpResult.followUpQuestions;
-              console.log('🎯 Immediately set follow-up prompts:', currentFollowUpQuestions);
-            }
-
-            continue; // Skip the normal processing for this chunk
-          }
-
-          if (inFollowUpSection) {
-            // We're in follow-up section, collect content but don't display in main response
-            followUpContent += processedChunk;
-
-            // Try to parse follow-up prompts as we get more content
-            const tempFollowUpResult = parseFollowUpQuestions('⟪' + followUpContent);
-            if (tempFollowUpResult.followUpQuestions.length > 0) {
-              currentFollowUpQuestions = tempFollowUpResult.followUpQuestions;
-              console.log('🔄 Updated follow-up prompts:', currentFollowUpQuestions);
-            }
-
-            continue; // Don't add follow-up content to main response
-          }
-
           assistantContent += processedChunk;
-          messages = messages.map(msg => {
-            if (msg.id === assistantMessageId && msg.isStreaming) {
-              const previousContent = msg._previousContent || '';
-              let currentContent = msg.content || '';
-              currentContent += processedChunk;
-
-              return {
-                ...msg,
-                content: currentContent,
-                _previousContent: previousContent
-              };
-            }
-            return msg;
-          });
-
-          // Smooth visual feedback for new content - now more visible
-          const container = markdownContainers[assistantMessageId];
-          if (container) {
-            // Add updating state
-            container.classList.add('content-updating');
-
-            // After a brief moment, transition to updated state
-            setTimeout(() => {
-              container.classList.remove('content-updating');
-              container.classList.add('content-updated');
-
-              // Clean up the updated class after animation completes
-              setTimeout(() => {
-                container.classList.remove('content-updated');
-              }, 300); // Match animation duration
-            }, 150); // Visible updating state duration
-          }
+          messages = messages.map(msg =>
+            msg.id === assistantMessageId ? { ...msg, content: assistantContent } : msg
+          );
         }
       }
-      messages = messages.map(msg => {
-        if (msg.id === assistantMessageId) {
-          // Clean up animation properties and ensure final content is trimmed
-          const finalContent = (msg.content || "Sorry, I couldn't generate a response.").trim();
-          return {
-            ...msg,
-            isStreaming: false,
-            content: finalContent,
-            _previousContent: ''
-          };
-        }
-        return msg;
-      });
+      messages = messages.map(msg =>
+        msg.id === assistantMessageId ? { ...msg, isStreaming: false, content: assistantContent.trim() || "Sorry, I couldn't generate a response." } : msg
+      );
 
       // Final cleanup pass - check if the content might still be JSON
       messages = messages.map(msg => {
@@ -697,109 +445,37 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
                 return { ...msg, content: jsonObj.content };
               } else if (jsonObj.text && typeof jsonObj.text === 'string') {
                 return { ...msg, content: jsonObj.text };
-              }
-            } catch (e) {
-              // If parsing or extraction fails, try to remove metadata if it looks like a structured object
-              // This part of the catch block is a bit of a heuristic
-              try {
-                const jsonObjForFiltering = JSON.parse(content); // Re-parse for filtering attempt
-                 // Remove metadata fields
-                const filtered = { ...jsonObjForFiltering };
+      } else {
+                // Remove metadata fields
+                const filtered = { ...jsonObj };
                 ['usage', 'input_chars', 'output_chars', 'cost', 'durationMs', 'total_tokens'].forEach(key => {
                   delete filtered[key];
                 });
 
-                // Only use the filtered JSON if it's different and not empty
-                if (Object.keys(filtered).length < Object.keys(jsonObjForFiltering).length && Object.keys(filtered).length > 0) {
+                // Only use the filtered JSON if it's different
+                if (Object.keys(filtered).length < Object.keys(jsonObj).length) {
                   return { ...msg, content: JSON.stringify(filtered, null, 2) };
-                } else if (Object.keys(filtered).length === 0 && Object.keys(jsonObjForFiltering).length > 0) {
-                  // If filtering results in an empty object but original was not, perhaps it was all metadata
-                  return { ...msg, content: "Received a structured response, but it contained only metadata after filtering." };
                 }
-              } catch (filterError) {
-                // Not valid JSON even for filtering, leave as is
               }
+            } catch (e) {
+              // Not valid JSON, leave as is
             }
           }
         }
         return msg;
       });
 
-      // Parse follow-up prompts from the final content
-      const finalMessage = messages.find(msg => msg.id === assistantMessageId);
-      if (finalMessage && finalMessage.content) {
-        console.log('🔄 Processing final message for follow-ups...');
-
-        // Only parse if we haven't already set follow-up prompts during streaming
-        if (currentFollowUpQuestions.length === 0) {
-          const parsedResult = parseFollowUpQuestions(finalMessage.content);
-
-          console.log('📝 Parsed main content length:', parsedResult.mainContent.length);
-          console.log('❓ Parsed follow-up prompts:', parsedResult.followUpQuestions);
-
-          // Update the message content to exclude follow-up prompts
-          messages = messages.map(msg =>
-            msg.id === assistantMessageId
-              ? { ...msg, content: parsedResult.mainContent }
-              : msg
-          );
-
-          // Set follow-up prompts for the Omnibar
-          currentFollowUpQuestions = parsedResult.followUpQuestions;
-          console.log('✨ Set currentFollowUpQuestions to:', currentFollowUpQuestions);
-        } else {
-          console.log('✅ Follow-up questions already set during streaming:', currentFollowUpQuestions);
-
-          // Clean the main content of any follow-up remnants just in case
-          const cleanedContent = finalMessage.content.replace(/⟪---FOLLOWUP---(.*?)---ENDFOLLOWUP---/s, '').trim();
-          if (cleanedContent !== finalMessage.content) {
-            messages = messages.map(msg =>
-              msg.id === assistantMessageId
-                ? { ...msg, content: cleanedContent }
-                : msg
-            );
-          }
-        }
-      } else {
-        console.log('❌ No final message found or content is empty');
-      }
-
     } catch (error: any) {
       console.error(`Error with ${currentSelectedTextModel}:`, error);
-
-      // Don't update messages if the request was aborted
-      if (error.name === 'AbortError') {
-        console.log('Request was aborted by user');
-        return;
-      }
-
       messages = messages.map(msg =>
         msg.id === assistantMessageId
-          ? {
-              ...msg,
-              isLoading: false,
-              isStreaming: false,
-              error: error.message || 'Unknown error',
-              content: `Error: ${error.message || 'Failed to get response.'}`,
-              _previousContent: ''
-            }
+          ? { ...msg, isLoading: false, isStreaming: false, error: error.message || 'Unknown error', content: `Error: ${error.message || 'Failed to get response.'}` }
           : msg
       );
     } finally {
         isOverallLoading = false;
-        currentAbortController = null;
       // scrollToBottom(); // Will be handled by reactive messages update
     }
-  }
-
-  function handleFollowUpClick(question: string) {
-    if (isOverallLoading) return;
-
-    omnibarPrompt = question;
-    currentFollowUpQuestions = []; // Clear follow-up prompts
-
-    // Auto-submit the follow-up question
-    handleOmnibarSubmit();
   }
 
   onMount(() => {
@@ -856,7 +532,6 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
                         // Reset transient states for loaded messages
                         isLoading: false,
                         isStreaming: false,
-                        _previousContent: ''
                     }));
                     isStartState = !parsedMessages.some(msg => msg.role === 'user');
                     loadedSuccessfully = true;
@@ -876,8 +551,7 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
                 {
                     id: generateUniqueId(),
                     role: 'assistant',
-                    content: "Hi there! I'm your friendly chat assistant. How can I help you today?",
-                    _previousContent: ''
+                    content: "Hi there! I'm your friendly chat assistant. How can I help you today?"
                 }
             ];
             isStartState = true;
@@ -932,37 +606,9 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
       }
     }
   }
-
-  // --- Animated cursor SVG ---
-  // We'll use a pulsing purple dot for the AI streaming cursor
-  const AnimatedCursor = () => `
-    <span class="animated-cursor">
-      <svg width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
-        <circle cx="9" cy="9" r="6" fill="#6355FF">
-          <animate attributeName="r" values="6;8;6" dur="1s" repeatCount="indefinite" />
-          <animate attributeName="opacity" values="1;0.7;1" dur="1s" repeatCount="indefinite" />
-        </circle>
-      </svg>
-    </span>
-  `;
-
-  // Handle example prompt clicks
-  function handleExamplePrompt(promptText: string) {
-    if (isOverallLoading) return;
-
-    omnibarPrompt = promptText;
-    // Auto-submit the prompt
-    handleOmnibarSubmit();
-  }
 </script>
 
-<svelte:head>
-  <title>Stanley</title>
-  <link href = 'stan-avatar.png' rel = 'icon'>
-</svelte:head>
-
-
-<div id = 'main' class = 'stan' in:scale={{ duration: 300, start: 0.95, opacity: 0, easing: cubicOut }}>
+<div id = 'main' in:scale={{ duration: 300, start: 0.95, opacity: 0, easing: cubicOut }}>
   <button
     class="global-refresh-button"
     title="Clear Chat and History"
@@ -979,127 +625,8 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
 {#if isStartState}
   <div id="start-state-container" >
     <div class="welcome-header" in:fade={{ delay: 300, duration: 500 }}>
-      <img src="/stan-avatar.png" alt="Stanley" class="stan-avatar">
-      <h2> Stanley </h2>
-    </div>
-
-    <!-- Example Prompts Section -->
-    <div class="example-prompts" in:fade={{ delay: 500, duration: 500 }}>
-      <!-- First carousel row - scrolls left to right -->
-      <div class="carousel-container">
-        <div class="carousel-track carousel-left-to-right">
-          <button
-            class="prompt-card"
-            on:click={() => handleExamplePrompt("What is a Stan Store?")}
-            disabled={isOverallLoading}
-          >
-            <span class="prompt-text">What is a Stan Store?</span>
-          </button>
-
-          <button
-            class="prompt-card"
-            on:click={() => handleExamplePrompt("Give me a list of content ideas")}
-            disabled={isOverallLoading}
-          >
-            <span class="prompt-text">Give me a list of content ideas</span>
-          </button>
-
-          <button
-            class="prompt-card"
-            on:click={() => handleExamplePrompt("How do I create a successful TikTok strategy?")}
-            disabled={isOverallLoading}
-          >
-            <span class="prompt-text">How do I create a successful TikTok strategy?</span>
-          </button>
-
-          <!-- Duplicate for seamless loop -->
-          <button
-            class="prompt-card"
-            on:click={() => handleExamplePrompt("What is a Stan Store?")}
-            disabled={isOverallLoading}
-          >
-            <span class="prompt-text">What is a Stan Store?</span>
-          </button>
-
-          <button
-            class="prompt-card"
-            on:click={() => handleExamplePrompt("Give me a list of content ideas")}
-            disabled={isOverallLoading}
-          >
-            <span class="prompt-text">Give me a list of content ideas</span>
-          </button>
-
-          <button
-            class="prompt-card"
-            on:click={() => handleExamplePrompt("How do I create a successful TikTok strategy?")}
-            disabled={isOverallLoading}
-          >
-            <span class="prompt-text">How do I create a successful TikTok strategy?</span>
-          </button>
-        </div>
-
-        <!-- Gradient overlays -->
-        <div class="carousel-gradient carousel-gradient-left"></div>
-        <div class="carousel-gradient carousel-gradient-right"></div>
-      </div>
-
-      <!-- Second carousel row - scrolls right to left -->
-      <div class="carousel-container second">
-        <div class="carousel-track carousel-right-to-left">
-          <button
-            class="prompt-card"
-            on:click={() => handleExamplePrompt("Create an outline for a 4-module course on UGC")}
-            disabled={isOverallLoading}
-          >
-            <span class="prompt-text">Create an outline for a 4-module course on UGC</span>
-          </button>
-
-          <button
-            class="prompt-card"
-            on:click={() => handleExamplePrompt("How do I get started making money online?")}
-            disabled={isOverallLoading}
-          >
-            <span class="prompt-text">How do I get started making money online?</span>
-          </button>
-
-          <button
-            class="prompt-card"
-            on:click={() => handleExamplePrompt("What are the best practices for email marketing?")}
-            disabled={isOverallLoading}
-          >
-            <span class="prompt-text">What are the best practices for email marketing?</span>
-          </button>
-
-          <!-- Duplicate for seamless loop -->
-          <button
-            class="prompt-card"
-            on:click={() => handleExamplePrompt("Create an outline for a 4-module course on UGC")}
-            disabled={isOverallLoading}
-          >
-            <span class="prompt-text">Create an outline for a 4-module course on UGC</span>
-          </button>
-
-          <button
-            class="prompt-card"
-            on:click={() => handleExamplePrompt("How do I get started making money online?")}
-            disabled={isOverallLoading}
-          >
-            <span class="prompt-text">How do I get started making money online?</span>
-          </button>
-
-          <button
-            class="prompt-card"
-            on:click={() => handleExamplePrompt("What are the best practices for email marketing?")}
-            disabled={isOverallLoading}
-          >
-            <span class="prompt-text">What are the best practices for email marketing?</span>
-          </button>
-        </div>
-
-        <!-- Gradient overlays -->
-        <div class="carousel-gradient carousel-gradient-left"></div>
-        <div class="carousel-gradient carousel-gradient-right"></div>
-      </div>
+      <h2>Daydream Chat</h2>
+      <p>Select a model and start a conversation</p>
     </div>
 
      <Omnibar
@@ -1109,11 +636,10 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
         imageModels={[]}
         isGenerating={isOverallLoading}
         onSubmit={handleOmnibarSubmit}
-        onStop={handleStop}
-        followUpQuestions={currentFollowUpQuestions}
-        onFollowUpClick={handleFollowUpClick}
         parentDisabled={false}
       />
+
+
   </div>
 {:else}
   <div id="image-chat-page"  in:fade={{ duration: 300 }}> <!-- Re-evaluate if this ID should be more generic -->
@@ -1124,89 +650,72 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
         <div class="message-wrapper {message.role}" in:fly={{ y: message.role === 'user' ? 10 : -10, duration: 300, delay:150 }}>
           {#if message.role === 'user'}
             <div class="message-content-area">
-
-              <div class="message-bubble user-bubble">
-                <p>{message.content}</p>
+            <div class="message-bubble user-bubble">
+              <p>{message.content}</p>
               </div>
 
               <button
                 class="message-copy-btn"
                 title="Copy message"
-                on:click={(event) => copyMessage(message.content, event.currentTarget)}
+                on:click={() => copyMessage(message.content)}
               >
                 <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
                   <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
                 </svg>
               </button>
-
             </div>
           {:else if message.role === 'assistant'}
             <div class="message-content-area">
-              <div class="message-bubble assistant-bubble" style={message.isStreaming ? `min-height: 32px; transition: min-height 0.3s;` : ''}>
-                <div class="markdown-container animated-text-container" bind:this={markdownContainers[message.id]}>
+            <div class="message-bubble assistant-bubble">
+                <div class="markdown-container" bind:this={markdownContainers[message.id]}>
                   <Markdown content={message.content} on:rendered={() => {
                     highlightCodeBlocks(markdownContainers[message.id]);
                     if (message.isStreaming) {
                       setupStreamingCodeHighlighter(markdownContainers[message.id], message.id);
                     }
                   }} />
-                  <!-- Cursor and thinking text container -->
-                  <span class="cursor-and-thinking-container">
-                    <!-- Always render a cursor placeholder to prevent layout shift -->
-                    <span class="cursor-placeholder">
-                      {#if message.isStreaming}
-                        <span class="animated-cursor cursor-fade" style="opacity:1;">
-                          <svg width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
-                            <circle cx="9" cy="9" r="6" fill="#6355FF">
-                              <animate attributeName="r" values="7;9;7" dur="1s" repeatCount="indefinite" />
-                              <animate attributeName="opacity" values="1;1;1" dur="1s" repeatCount="indefinite" />
-                            </circle>
-                          </svg>
-                        </span>
-                      {:else}
-                        <span class="animated-cursor cursor-fade" style="opacity:0; pointer-events:none;">
-                          <svg width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
-                            <circle cx="9" cy="9" r="6" fill="#6355FF" opacity="0" />
-                          </svg>
-                        </span>
-                      {/if}
-                    </span>
-                    <!-- Thinking text next to cursor -->
-                    {#if message.isLoading}
-                      <span class="thinking-text">
-                        <span>Thinking...</span>
-                      </span>
-                    {/if}
-                  </span>
-                </div>
+                  {#if message.isStreaming && message.content}
+                    <span class="streaming-cursor">▍</span>
+                  {:else if message.isStreaming && !message.content}
+                    &nbsp;
+              {/if}
+                                </div>
+
                 <div class="assistant-message-footer">
                   {#if message.modelUsed && !message.isStreaming && !message.isLoading}
                     <div class="assistant-model-info">
                       Sent by {getModelLabel(message.modelUsed)}
-                    </div>
-                  {/if}
-                  {#if message.error}
+                              </div>
+                            {/if}
+
+                  {#if message.isLoading}
+                    <div class="main-loading-spinner" style="justify-content: flex-start; padding: 5px 0;">
+                      <div class="spinner small"></div>
+                      <span>Thinking...</span>
+                        </div>
+                  {:else if message.error}
                     <div class="error-placeholder" style="min-height: auto; padding: 5px 0; text-align: left;">
                       <span style="font-size: 0.9em; color: #ff8a8a;">Error: {message.error}</span>
-                    </div>
-                  {/if}
                 </div>
-              </div>
-              <!-- Always show copy button, but control opacity -->
-              <button
-                class="message-copy-btn"
-                title="Copy response"
-                style="opacity: {message.isLoading || message.isStreaming || message.error ? '0' : '1'}; transition: opacity 0.3s ease;"
-                on:click={(event) => copyMessage(message.content, event.currentTarget)}
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-                </svg>
-              </button>
-            </div>
-          {/if}
+              {/if}
+                  </div>
+    </div>
+
+              {#if !message.isLoading && message.content && !message.error}
+          <button
+                  class="message-copy-btn"
+                  title="Copy response"
+                  on:click={() => copyMessage(message.content)}
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                  </svg>
+          </button>
+              {/if}
+          </div>
+            {/if}
         </div>
       {/each}
     </div>
@@ -1218,9 +727,6 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
       imageModels={[]}
       isGenerating={isOverallLoading}
       onSubmit={handleOmnibarSubmit}
-      onStop={handleStop}
-      followUpQuestions={currentFollowUpQuestions}
-      onFollowUpClick={handleFollowUpClick}
       parentDisabled={false}
     />
 
@@ -1237,10 +743,8 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
   #main{
     height: 100%;
     max-height: 100vh;
-    overflow: auto;
-    position: relative;
-    touch-action: pan-y pan-x;
-    -webkit-overflow-scrolling: touch;
+    overflow: hidden;
+    position: relative; // Added for positioning the refresh button
   }
 
   .global-refresh-button {
@@ -1249,29 +753,27 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
     right: 16px;
     z-index: 1000; // Ensure it's above other content
     padding: 8px;
-    width: 36px;
-    height: 36px;
+    width: 40px;
+    height: 40px;
     border-radius: 50%; // Make it circular
     border: none;
-    background-color: rgba(#6355FF, 1); // Darker, semi-transparent
+    background-color: rgba(30, 30, 30, 0.8); // Darker, semi-transparent
     color: white;
     cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
-    transition: .2s ease;
-    box-shadow: 0 4px 10px rgba(0,0,0,0.15);
-    // Ensure button doesn't interfere with touch scrolling
-    touch-action: manipulation;
+    transition: background-color 0.2s, transform 0.2s;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.3);
 
     svg {
-      height: 16px; // Slightly larger icon
-      width: 16px;
+      height: 20px; // Slightly larger icon
+      width: 20px;
     }
 
     &:hover {
-      background-color: #4938fb;
-      transform: scale(1.03);
+      background-color: rgba(50, 50, 50, 0.9); // Lighter on hover
+      transform: scale(1.1);
     }
     &:disabled {
       background-color: rgba(50, 50, 50, 0.5);
@@ -1291,207 +793,23 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
     width: 100%;
     height: 90vh; // Adjusted to give more space if Omnibar is taller
     max-width: 100vw;
-    // Enable touch scrolling for start state on mobile
-    overflow-y: auto;
-    -webkit-overflow-scrolling: touch;
-    touch-action: pan-y;
   }
 
   .welcome-header {
     text-align: center;
     margin-bottom: 20px; // Reduced margin
-    img{
-      height: 160px;
-    }
     h2 {
       font-family: "ivypresto-headline", 'Newsreader', serif;
       font-size: 64px; // Slightly smaller
       font-weight: 500;
       letter-spacing: -.4px;
-      margin: -8px 0 8px 0;
+      margin: 0 0 8px 0;
       color: #fff;
     }
     p {
       font-size: 15px;
       color: rgba(white, .4);
       margin: 0;
-    }
-  }
-
-  .example-prompts {
-    margin-bottom: 32px;
-    margin-top: 16px;
-    width: 100%;
-    max-width: 720px;
-    display: flex;
-    flex-direction: column;
-    gap: 0px;
-
-    @media screen and (max-width: 800px) {
-      gap: 8px;
-    }
-
-    .prompts-label {
-      text-align: center;
-      font-size: 16px;
-      color: rgba(#00106D, .6);
-      margin-bottom: 16px;
-      font-weight: 500;
-    }
-
-    .carousel-container {
-      position: relative;
-      width: 100%;
-      overflow: hidden;
-      height: 60px; // Fixed height for consistent layout
-      // Ensure carousel doesn't interfere with page scrolling
-      touch-action: pan-y;
-
-
-    }
-
-
-
-
-    .carousel-track {
-      display: flex;
-      gap: 16px;
-      padding: 4px 0;
-      width: fit-content;
-      animation-duration: 40s;
-      animation-timing-function: linear;
-      animation-iteration-count: infinite;
-      will-change: transform;
-      // Allow vertical scrolling on carousel
-      touch-action: pan-y;
-
-      &.carousel-left-to-right {
-        animation-name: scrollLeftToRight;
-      }
-
-      &.carousel-right-to-left {
-        animation-name: scrollRightToLeft;
-      }
-
-      // Pause animation on hover for better UX
-      &:hover {
-        animation-play-state: paused;
-      }
-    }
-
-    @keyframes scrollLeftToRight {
-      0% {
-        transform: translateX(-50%);
-      }
-      100% {
-        transform: translateX(0%);
-      }
-    }
-
-    @keyframes scrollRightToLeft {
-      0% {
-        transform: translateX(0%);
-      }
-      100% {
-        transform: translateX(-50%);
-      }
-    }
-
-    .carousel-gradient {
-      position: absolute;
-      top: 0;
-      bottom: 0;
-      width: 80px;
-      pointer-events: none;
-      z-index: 2;
-
-      &.carousel-gradient-left {
-        left: 0;
-        background: linear-gradient(to right, rgba(white, 1) 0%, rgba(white, 0.8) 50%, rgba(white, 0) 100%);
-      }
-
-      &.carousel-gradient-right {
-        right: 0;
-        background: linear-gradient(to left, rgba(white, 1) 0%, rgba(white, 0.8) 50%, rgba(white, 0) 100%);
-      }
-    }
-
-    .prompt-card {
-      background: #f1f5ff;
-      border-radius: 12px;
-      padding: 10px 18px;
-      cursor: pointer;
-      width: fit-content;
-      min-width: 100px; // Ensure consistent card sizes
-      transition: all 0.2s cubic-bezier(0.4,0,0.2,1);
-      flex-shrink: 0; // Prevent cards from shrinking
-      border: 1.5px solid transparent;
-
-      &:hover{
-        background: rgba(#4a6bfd, .15);
-        //border-color: rgba(#6355FF, .2);
-        transform: translateY(-1px);
-      }
-
-      &:active {
-        transform: translateY(0);
-      }
-
-      &:disabled {
-        opacity: 0.6;
-        cursor: not-allowed;
-        transform: none;
-      }
-
-      .prompt-text {
-        font-family: "ivypresto-headline", sans-serif;
-        font-size: 15px;
-        font-weight: 500;
-        letter-spacing: .5px;
-        color: #3f4d9c;
-        text-shadow: -.5px 0 0 #00106D;
-        line-height: 140%;
-        display: block;
-        text-align: left;
-      }
-
-    }
-
-    @media (max-width: 800px) {
-      .carousel-track {
-        animation-duration: 25s;
-        height: 100%;
-      }
-
-      .carousel-container{
-        height: 90px;
-      }
-
-      .carousel-gradient {
-        width: 60px; // Smaller gradients on mobile
-      }
-
-      .prompt-card {
-        width: 160px;
-        padding: 12px 16px;
-        margin: 0;
-
-        .prompt-text {
-          width: 100%;
-          text-wrap: wrap;
-          line-height: 120%;
-        }
-      }
-    }
-
-    // Hide second row of prompts when screen height is less than 500px
-    @media (max-height: 720px) {
-      .carousel-container{
-        margin-bottom: 24px;
-      }
-      .second {
-        display: none;
-      }
     }
   }
 
@@ -1559,15 +877,7 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
     height: 100%;
     max-height: 100vh;
     // Adjusted padding: top, sides, bottom (to clear fixed Omnibar)
-    padding: 16px 24px 180px 24px; // 80px omnibar + 24px bottom offset + 20px buffer
-
-    // Critical mobile scrolling properties
-    touch-action: pan-y;
-    -webkit-overflow-scrolling: touch;
-    // Prevent scrolling issues on some devices
-    transform: translateZ(0);
-    // Enable hardware acceleration
-    will-change: scroll-position;
+    padding: 16px 24px calc(80px + 24px + 20px) 24px; // 80px omnibar + 24px bottom offset + 20px buffer
 
     box-sizing: border-box;
     display: flex;
@@ -1592,22 +902,10 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
 
     &.user {
       margin: 12px auto;
-      .message-content-area{
-        justify-content: flex-start;
-        align-items: center;
-        gap: 12px;
-      }
     }
 
     &.assistant {
       margin-right: auto;
-      .message-content-area{
-        flex-direction: column;
-      }
-      .message-copy-btn{
-        margin-top: -48px !important;
-        margin-left: 12px;
-      }
     }
   }
 
@@ -1637,16 +935,18 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
     }
 
     &.user-bubble {
-      background-color: rgba(black, .05);
-     // box-shadow: inset 1px 1px 2px rgba(white, .02), -4px 8px 16px rgba(black,0.2);
+      background-color: rgba(black, .5);
+      box-shadow: inset 1px 1px 2px rgba(white, .02), -4px 8px 16px rgba(black,0.2);
+      color: rgba(white, .9);
       font-family: "ivypresto-headline", 'Newsreader', serif;
-      text-shadow: -.4px 0 0 #030025;
       font-size: 16px; // User prompt slightly larger
       font-weight: 500;
-      letter-spacing: .5px;
+      letter-spacing: .4px;
       position: relative; // For absolute positioning of copy button
       padding: 12px 18px 14px 18px;
-      color: #030025;
+
+      color: #ddd;
+      text-shadow: -.25px 0px 0px #ddd;
     }
 
     &.assistant-bubble {
@@ -1657,12 +957,12 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
       width: fit-content; // Bubble fits content
       max-width: 100%;
       margin: 10px 0 0 0; // Adjusted margin
+      filter: drop-shadow(-1px 4px 8px rgba(black, .6));
       flex: 1;
 
       // Adjust for markdown container
       .markdown-container {
         margin-bottom: 0; // No margin needed within bubble
-        padding: 0;
 
         // Remove top margin from first element and bottom margin from last element
         :global(*:first-child) {
@@ -1673,8 +973,6 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
           margin-bottom: 0;
         }
       }
-
-
     }
   }
 
@@ -1789,6 +1087,9 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
     justify-content: center;
     border-radius: 4px;
     transition: color 0.2s, background-color 0.2s;
+    margin-left: 8px;
+    align-self: flex-start;
+    margin-top: 10px;
 
       &:hover {
       color: white;
@@ -1807,21 +1108,14 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
     width: 100%;
     margin-bottom: 8px; /* Space below text if multiple items */
 
-    // Add this to ensure the container has a block layout even when only spans are inside
-    &.animated-text-container {
-      display: block;
-    }
-
     :global(p), :global(ul), :global(ol), :global(h5), :global(h6) {
-      font-size: 15px;
-      font-weight: 500;
+      font-size: 14px;
+      font-weight: 450;
       line-height: 1.5;
-      letter-spacing: -.25px;
-      color: rgba(#030025, 1);
+      letter-spacing: -.2px;
+      color: rgba(white, .75);
       margin: 12px 0;
-      font-family: "Hedvig Letters Serif", serif;
     }
-
     :global(h1){
       font-family: "ivypresto-headline", serif;
       font-size: 24px;
@@ -1874,16 +1168,13 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
       font-size: 13px;
     }
     :global(pre) {
-      background-color: rgba(#030025, 1); /* Darker pre block */
+      background-color: rgba(black, .25); /* Darker pre block */
       padding: 38px 24px 20px 24px; /* Added top padding for header */
       border-radius: 12px;
-      margin: 32px 0 40px 0;
-      box-shadow: -8px 16px 32px rgba(#030025, .3);
+      margin: 24px 0;
+      box-shadow: -8px 16px 32px rgba(black, .1);
       overflow-x: auto;
       position: relative; /* Ensure position relative for absolute positioning of header */
-    }
-    :global(li){
-      margin: 24px 0;
     }
     :global(pre code) {
       padding: 0;
@@ -1998,45 +1289,6 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
       width: 16px;
       height: 16px;
     }
-
-    // Smooth content streaming animations - more visible but still smooth
-    .animated-text-container {
-      will-change: opacity, transform, filter;
-      transition: all 200ms ease-out;
-    }
-
-    .animated-text-container.content-updating {
-      opacity: 0.85;
-      transform: translateY(1px);
-      filter: brightness(1.1);
-      text-shadow: 0 0 8px rgba(99, 85, 255, 0.15);
-    }
-
-    .animated-text-container.content-updated {
-      opacity: 1;
-      transform: translateY(0);
-      filter: brightness(1);
-      text-shadow: 0 0 4px rgba(99, 85, 255, 0.1);
-      animation: contentPulse 300ms ease-out;
-    }
-
-    @keyframes contentPulse {
-      0% {
-        opacity: 0.8;
-        transform: translateY(1px) scale(0.999);
-        text-shadow: 0 0 12px rgba(99, 85, 255, 0.2);
-      }
-      50% {
-        opacity: 0.9;
-        transform: translateY(0.5px) scale(1.001);
-        text-shadow: 0 0 6px rgba(99, 85, 255, 0.15);
-      }
-      100% {
-        opacity: 1;
-        transform: translateY(0) scale(1);
-        text-shadow: none;
-      }
-    }
   }
 
   .streaming-cursor {
@@ -2050,111 +1302,68 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
     top: 0;
   }
 
-  .cursor-placeholder {
-    display: inline-block;
-    width: 18px;
-    height: 18px;
-    vertical-align: middle;
-    margin-left: 2px;
-    margin-bottom: 2px;
-    transition: opacity 0.25s cubic-bezier(0.4,0,0.2,1);
-  }
-  .animated-cursor.cursor-fade {
-    display: inline-block;
-    width: 18px;
-    height: 18px;
+  .stan{
+    background: rgba(white, .9);
+    color: #00106D;
+    border-radius: 8px;
 
-    transition: opacity 0.25s cubic-bezier(0.4,0,0.2,1);
-  }
-
-  .cursor-and-thinking-container {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    vertical-align: middle;
-  }
-
-  .thinking-text {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 0.9em;
-    color: #030025;
-
-    span {
-       color: #030025;
-    }
-  }
-
-
-  @media screen and (max-width: 800px) {
-    #main{
-      border-radius: 0;
-      // Ensure touch scrolling works properly on mobile
-      overflow-y: auto !important;
-      -webkit-overflow-scrolling: touch !important;
-      touch-action: pan-y !important;
-      // Force hardware acceleration for smooth scrolling
-      transform: translateZ(0);
-      // Prevent scrolling issues
-      -webkit-transform: translateZ(0);
-    }
-
-    .chat-messages-container{
-      padding: 16px 12px 180px 12px !important; // Reduced side padding for mobile
-      margin: 0 auto !important; // Remove top margin
-      height: calc(100vh - 32px) !important; // Ensure proper height calculation
-      max-height: calc(100vh - 32px) !important;
-      // Force scrolling to work on mobile
-      overflow-y: auto !important;
-      -webkit-overflow-scrolling: touch !important;
-      touch-action: pan-y !important;
-      // Additional mobile fixes
-      transform: translateZ(0);
-      -webkit-transform: translateZ(0);
-      // Prevent any potential scrolling blocks
-      position: relative;
+    :global(p), :global(h1), :global(h2), :global(h3), :global(h4), :global(h5), :global(h6), :global(li), :global(ol), :global(ul){
+      color: #00106D;
     }
 
     .message-wrapper{
-      margin: 12px auto !important; // Restore some margin between messages
-      padding: 0;
-      max-width: 100%;
-      width: 95% !important; // Slightly wider for better mobile experience
-      // Ensure messages don't block scrolling
-      touch-action: pan-y;
+      margin: 0 auto;
     }
 
-    // Ensure carousels work properly on mobile
-    .carousel-container{
-      height: 90px;
-      // Keep vertical scrolling enabled
-      touch-action: pan-y !important;
-    }
+    .message-bubble{
+      filter: none;
+      box-shadow: none;
+      &.user-bubble{
+        box-shadow: none;
+        background: #6355FF;
+        p{
+          color: white;
+        }
 
-    .carousel-track {
-      animation-duration: 25s;
-      height: 100%;
-      // Keep vertical scrolling enabled
-      touch-action: pan-y !important;
-    }
-
-    // Ensure prompt cards don't interfere with scrolling
-    .prompt-card {
-      width: 200px;
-      padding: 12px 16px;
-      margin: 0;
-
-      // Allow parent scrolling to work
-      touch-action: pan-y;
-
-      .prompt-text {
-        width: 100%;
-        text-wrap: wrap;
-        vertical-align: top;
-        line-height: 120%;
+      }
+      &.assistant-bubble{
+        filter: none;
       }
     }
+
+    .assistant-model-info{
+      color: rgba(black, .4);
+      padding: 4px 10px;
+      border-radius: 24px;
+      margin-top: 12px;
+      background: rgba(white, .5);
+      display: none;
+    }
+
+    :global(.input-form){
+      background: rgba(white, .5);
+      box-shadow: -12px 24px 48px rgba(black, .15);
+
+    }
+    :global(textarea){
+      color: #00106D !important;
+      text-shadow: -.5px 0 0 #00106D !important;
+    }
+    :global(.submit-button-omnibar){
+      background: #6355FF;
+      color: white;
+      border-radius: 24px;
+      padding: 8px 12px;
+    }
+    :global(.submit-button-omnibar:hover){
+      background: #4035bf !important;
+    }
+    :global(select){
+      background: rgba(#6355FF, .1) !important;
+      color: black !important;
+    }
+
+
   }
 
 
