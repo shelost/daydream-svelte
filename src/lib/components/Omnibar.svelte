@@ -123,9 +123,9 @@
 
   // Debug follow-up questions
   $: {
-    console.log('🎭 Omnibar received followUpQuestions:', followUpQuestions);
-    console.log('🎭 followUpQuestions length:', followUpQuestions?.length);
-    console.log('🎭 followUpQuestions type:', typeof followUpQuestions);
+    //console.log('🎭 Omnibar received followUpQuestions:', followUpQuestions);
+    //console.log('🎭 followUpQuestions length:', followUpQuestions?.length);
+    //console.log('🎭 followUpQuestions type:', typeof followUpQuestions);
   }
 
   let followUpContainer;
@@ -149,10 +149,10 @@
 
       if (hasOverflow) {
         followUpContainer.classList.add('has-overflow');
-        console.log('✅ Added has-overflow class');
+        //console.log('✅ Added has-overflow class');
       } else {
         followUpContainer.classList.remove('has-overflow');
-        console.log('❌ Removed has-overflow class');
+        //console.log('❌ Removed has-overflow class');
       }
     }
   }
