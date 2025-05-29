@@ -1,31 +1,58 @@
 // src/routes/api/browserbase/+server.ts
 import { json } from '@sveltejs/kit';
-import { chromium } from 'playwright';
-import { env } from '$env/dynamic/private';
+import { readFileSync } from 'fs';
+import { join } from 'path';
 
-const BROWSERBASE_PROJECT_ID = env.BROWSERBASE_PROJECT_ID;
-const BROWSERBASE_KEY = env.BROWSERBASE_KEY;
+// Manual environment variable loading for SvelteKit API routes
+function loadEnvVariables(): Record<string, string> {
+  try {
+    const envPath = join(process.cwd(), '.env');
+    const envContent = readFileSync(envPath, 'utf-8');
+    const envVars: Record<string, string> = {};
 
-if (!BROWSERBASE_PROJECT_ID || !BROWSERBASE_KEY) {
+    envContent.split('\n').forEach(line => {
+      const [key, ...valueParts] = line.split('=');
+      if (key && valueParts.length > 0) {
+        const value = valueParts.join('=').trim();
+        envVars[key.trim()] = value;
+      }
+    });
+
+    return envVars;
+  } catch (error) {
+    console.log('📁 Could not read .env file:', error.message);
+    return {};
+  }
+}
+
+// Load environment variables
+const envVars = loadEnvVariables();
+const BROWSERBASE_PROJECT_ID = envVars.BROWSERBASE_PROJECT_ID || process.env.BROWSERBASE_PROJECT_ID;
+const BROWSERBASE_API_KEY = envVars.BROWSERBASE_API_KEY || process.env.BROWSERBASE_API_KEY;
+
+// Validate environment variables
+if (!BROWSERBASE_PROJECT_ID || !BROWSERBASE_API_KEY) {
   console.error('❌ Missing Browserbase credentials:', {
     hasProjectId: !!BROWSERBASE_PROJECT_ID,
-    hasKey: !!BROWSERBASE_KEY
+    hasApiKey: !!BROWSERBASE_API_KEY
   });
 }
 
-interface BrowserbaseSession {
-  id: string;
-  status: string;
-  connectUrl: string;
-  page?: any; // Playwright page instance
-}
+const BROWSERBASE_API_BASE = 'https://api.browserbase.com/v1';
 
-interface BrowserAction {
-  type: 'navigate' | 'click' | 'type' | 'screenshot' | 'read' | 'wait' | 'scroll' | 'init';
-  selector?: string;
-  text?: string;
-  url?: string;
-  timeout?: number;
+interface BrowserSession {
+  id: string;
+  projectId: string;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+  expiresAt: string;
+  contextId?: string;
+  region?: string;
+  keepAlive?: boolean;
+  connectUrl?: string;
+  seleniumRemoteUrl?: string;
+  signingKey?: string;
 }
 
 interface BrowserActionResult {
@@ -35,359 +62,480 @@ interface BrowserActionResult {
   error?: string;
   timestamp: number;
   url?: string;
+  actionDescription?: string;
 }
 
-class BrowserbaseService {
-  private baseUrl = 'https://www.browserbase.com/v1';
-  private headers: HeadersInit;
-  private sessions = new Map<string, any>(); // Store Playwright page instances
+interface BrowserSessionInfo {
+  sessionId: string;
+  liveViewUrl?: string;
+  currentUrl?: string;
+  connectUrl?: string;
+  isActive: boolean;
+  lastActivity: number;
+  status?: string;
+}
+
+class DirectBrowserbaseService {
+  private sessionInfo: BrowserSessionInfo | null = null;
+  private isInitializing = false;
 
   constructor() {
-    this.headers = {
-      'Content-Type': 'application/json',
-      'X-BB-API-Key': BROWSERBASE_KEY,
-      'X-BB-Project-Id': BROWSERBASE_PROJECT_ID
-    };
+    console.log('🌐 DirectBrowserbaseService created - using REST API');
   }
 
-  async createSession(): Promise<BrowserbaseSession> {
+  private async makeRequest(endpoint: string, options: RequestInit = {}) {
+    const url = `${BROWSERBASE_API_BASE}${endpoint}`;
+    const headers = {
+      'x-bb-api-key': BROWSERBASE_API_KEY,
+      'Content-Type': 'application/json',
+      ...options.headers
+    };
+
+    console.log(`🌐 Making request to: ${url}`);
+
+    const response = await fetch(url, {
+      ...options,
+      headers
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`❌ Browserbase API error: ${response.status} - ${errorText}`);
+      throw new Error(`Browserbase API error: ${response.status} - ${errorText}`);
+    }
+
+    return response.json();
+  }
+
+  async initializeSession(): Promise<BrowserSessionInfo> {
+    if (this.isInitializing) {
+      // Wait for existing initialization
+      while (this.isInitializing) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+      if (!this.sessionInfo) {
+        throw new Error('Session initialization failed');
+      }
+      return this.sessionInfo;
+    }
+
+    if (this.sessionInfo?.isActive) {
+      console.log('✅ Returning existing active session');
+      return this.sessionInfo;
+    }
+
+    this.isInitializing = true;
+
     try {
-      // Create Browserbase session
-      const response = await fetch(`${this.baseUrl}/sessions`, {
+      console.log('🚀 Initializing persistent browser session...');
+
+      // Environment variables validation
+      if (!BROWSERBASE_API_KEY) {
+        throw new Error('BROWSERBASE_API_KEY is required');
+      }
+      if (!BROWSERBASE_PROJECT_ID) {
+        throw new Error('BROWSERBASE_PROJECT_ID is required');
+      }
+
+      console.log('🔑 Environment variables validated successfully');
+
+      // Create new session - makeRequest returns parsed JSON, not Response object
+      console.log('🎭 Creating new Browserbase session...');
+      const session: BrowserSession = await this.makeRequest('/sessions', {
         method: 'POST',
-        headers: this.headers,
         body: JSON.stringify({
-          projectId: BROWSERBASE_PROJECT_ID
+          projectId: BROWSERBASE_PROJECT_ID,
+          keepAlive: true,
+          browserSettings: {
+            viewport: { width: 1280, height: 720 }
+          }
         })
       });
 
-      if (!response.ok) {
-        throw new Error(`Failed to create session: ${response.statusText}`);
+      console.log('✅ Session created:', session.id);
+
+      // Get live view URLs using debug endpoint
+      console.log('🔍 Getting live view URLs...');
+      let liveViewUrl = null;
+      try {
+        const debugData = await this.makeRequest(`/sessions/${session.id}/debug`, {
+          method: 'GET'
+        });
+
+        console.log('🔗 Debug data received:', debugData);
+
+        // Extract the fullscreen live view URL
+        if (debugData.debuggerFullscreenUrl) {
+          liveViewUrl = debugData.debuggerFullscreenUrl;
+          console.log('✅ Live view URL obtained:', liveViewUrl);
+        } else if (debugData.debuggerUrl) {
+          // Fallback to regular debugger URL
+          liveViewUrl = debugData.debuggerUrl;
+          console.log('✅ Live view URL (fallback) obtained:', liveViewUrl);
+        }
+      } catch (debugError) {
+        console.warn('⚠️ Could not get live view URLs:', debugError.message);
       }
 
-      const session = await response.json();
-
-      // Connect with Playwright
-      const browser = await chromium.connectOverCDP(session.connectUrl);
-      const context = browser.contexts()[0];
-      const page = await context.newPage();
-
-      // Store the page instance
-      this.sessions.set(session.id, page);
-
-      return {
-        ...session,
-        page
+      this.sessionInfo = {
+        sessionId: session.id,
+        liveViewUrl: liveViewUrl,
+        currentUrl: 'about:blank',
+        connectUrl: session.connectUrl,
+        isActive: true,
+        lastActivity: Date.now(),
+        status: session.status
       };
+
+      console.log('🎉 Session initialized successfully with live view:', {
+        sessionId: session.id,
+        hasLiveView: !!liveViewUrl,
+        liveViewUrl: liveViewUrl
+      });
+
+      return this.sessionInfo;
+
     } catch (error) {
-      console.error('Error creating Browserbase session:', error);
+      console.error('❌ Session initialization failed:', error);
+      throw error;
+    } finally {
+      this.isInitializing = false;
+    }
+  }
+
+  async ensureSessionActive(): Promise<void> {
+    if (!this.sessionInfo || !this.sessionInfo.isActive) {
+      await this.initializeSession();
+    }
+  }
+
+  async takeScreenshot(): Promise<string> {
+    try {
+      await this.ensureSessionActive();
+
+      const response = await this.makeRequest(`/sessions/${this.sessionInfo.sessionId}/screenshot`, {
+        method: 'GET'
+      });
+
+      return response.screenshot || response.data;
+    } catch (error) {
+      console.error('❌ Screenshot failed:', error);
       throw error;
     }
   }
 
-  async destroySession(sessionId: string): Promise<void> {
+  async connectAndNavigate(targetUrl: string): Promise<void> {
+    await this.ensureSessionActive();
+
+    if (!this.sessionInfo?.connectUrl) {
+      throw new Error('Missing connectUrl for session – cannot navigate');
+    }
+
+    // Dynamically import Playwright core to avoid unnecessary bundle size in edge runtimes
+    const { chromium } = await import('playwright');
+
+    // Reuse existing connection if already present in globalThis to minimise reconnect overhead
+    let browser: any;
     try {
-      // Close Playwright connection
-      const page = this.sessions.get(sessionId);
-      if (page) {
-        await page.context().browser().close();
-        this.sessions.delete(sessionId);
+      browser = await chromium.connectOverCDP(this.sessionInfo.connectUrl);
+      const defaultContext = browser.contexts()[0] || (await browser.newContext());
+      const page = defaultContext.pages()[0] || (await defaultContext.newPage());
+
+      await page.goto(targetUrl, { waitUntil: 'load', timeout: 30000 });
+      this.sessionInfo.currentUrl = targetUrl;
+      this.sessionInfo.lastActivity = Date.now();
+    } catch (err) {
+      console.error('❌ Navigation failed:', err);
+      throw err;
+    }
+    // IMPORTANT: do NOT close the browser here – that would terminate the cloud session.
+    // Playwright currently doesn't expose a lightweight "disconnect" – calling browser.close() would
+    // close the underlying remote browser. We therefore rely on process exit to release the CDP socket.
+  }
+
+  async parseNaturalLanguageCommand(command: string): Promise<BrowserActionResult[]> {
+    const normalizedCommand = command.toLowerCase().trim();
+    const results: BrowserActionResult[] = [];
+
+    // Ensure session is active before any command
+    await this.ensureSessionActive();
+
+    if (normalizedCommand.includes('screenshot') || normalizedCommand.includes('capture')) {
+      try {
+        const screenshot = await this.takeScreenshot();
+        results.push({
+          success: true,
+          data: { screenshot },
+          screenshot,
+          timestamp: Date.now(),
+          actionDescription: 'Took screenshot of current page'
+        });
+      } catch (error) {
+        results.push({
+          success: false,
+          error: error.message,
+          timestamp: Date.now(),
+          actionDescription: 'Failed to take screenshot'
+        });
+      }
+    } else if (normalizedCommand.includes('go to') || normalizedCommand.includes('open') || normalizedCommand.includes('navigate')) {
+      // Extract a URL from the command. If none present, try to construct one.
+      const urlMatch = command.match(/(?:go to|open|navigate to?)\s+([^\s]+)/i);
+      let rawUrl = urlMatch ? urlMatch[1] : '';
+      if (!rawUrl.startsWith('http')) {
+        rawUrl = `https://${rawUrl.replace(/^[^a-z0-9]+/i, '')}`; // rudimentary sanitisation
       }
 
-      // Destroy Browserbase session
-      const response = await fetch(`${this.baseUrl}/sessions/${sessionId}`, {
+      try {
+        await this.connectAndNavigate(rawUrl);
+        results.push({
+          success: true,
+          data: { navigatedTo: rawUrl },
+          timestamp: Date.now(),
+          url: rawUrl,
+          actionDescription: `Navigated browser to ${rawUrl}`
+        });
+      } catch (err) {
+        results.push({
+          success: false,
+          error: err.message,
+          timestamp: Date.now(),
+          url: rawUrl,
+          actionDescription: `Failed navigation to ${rawUrl}`
+        });
+      }
+    } else {
+      // For other commands, provide general guidance
+      results.push({
+        success: true,
+        data: {
+          message: `Browser session is active and ready. Use the live view for interactive control, or try commands like "take a screenshot".`,
+          sessionId: this.sessionInfo?.sessionId,
+          liveViewUrl: this.sessionInfo?.liveViewUrl,
+          availableCommands: ['take a screenshot', 'go to [website]', 'open [website]']
+        },
+        timestamp: Date.now(),
+        actionDescription: `Processed command: ${command}`
+      });
+    }
+
+    // Update live view URL if needed
+    if (this.sessionInfo) {
+      try {
+        console.log('🔄 Refreshing live view URL...');
+        const debugData = await this.makeRequest(`/sessions/${this.sessionInfo.sessionId}/debug`, {
+          method: 'GET'
+        });
+
+        if (debugData.debuggerFullscreenUrl && debugData.debuggerFullscreenUrl !== this.sessionInfo.liveViewUrl) {
+          this.sessionInfo.liveViewUrl = debugData.debuggerFullscreenUrl;
+          console.log('🔗 Live view URL updated:', this.sessionInfo.liveViewUrl);
+        }
+      } catch (error) {
+        console.warn('⚠️ Could not refresh live view URL:', error.message);
+      }
+    }
+
+    return results;
+  }
+
+  getSessionInfo(): BrowserSessionInfo | null {
+    return this.sessionInfo;
+  }
+
+  async closeSession(): Promise<void> {
+    if (!this.sessionInfo?.sessionId) {
+      console.log('🔍 No active session to close');
+      return;
+    }
+
+    const sessionId = this.sessionInfo.sessionId;
+    console.log('🔴 Closing browser session:', sessionId);
+
+    try {
+      // Attempt to close the session via Browserbase API
+      // DELETE requests don't need a body or content-type header
+      const url = `${BROWSERBASE_API_BASE}/sessions/${sessionId}`;
+      const headers = {
+        'x-bb-api-key': BROWSERBASE_API_KEY
+        // No Content-Type header needed for DELETE without body
+      };
+
+      console.log(`🌐 Making DELETE request to: ${url}`);
+
+      const response = await fetch(url, {
         method: 'DELETE',
-        headers: this.headers
+        headers
       });
 
       if (!response.ok) {
-        console.warn(`Failed to destroy session: ${response.statusText}`);
+        const errorText = await response.text();
+        throw new Error(`Browserbase API error: ${response.status} - ${errorText}`);
       }
+
+      console.log('✅ Session closed via API:', sessionId);
     } catch (error) {
-      console.error('Error destroying session:', error);
-    }
-  }
-
-  async executeAction(sessionId: string, action: BrowserAction): Promise<BrowserActionResult> {
-    const timestamp = Date.now();
-
-    try {
-      const page = this.sessions.get(sessionId);
-      if (!page && action.type !== 'init') {
-        throw new Error('No active page found for session');
-      }
-
-      let result: any;
-
-      switch (action.type) {
-        case 'init':
-          const session = await this.createSession();
-          result = { sessionId: session.id, connectUrl: session.connectUrl };
-          break;
-        case 'navigate':
-          await page.goto(action.url!, { waitUntil: 'networkidle' });
-          result = { url: action.url, navigated: true };
-          break;
-        case 'click':
-          await page.click(action.selector!);
-          result = { clicked: action.selector };
-          break;
-        case 'type':
-          if (action.selector) {
-            await page.fill(action.selector, action.text!);
-          } else {
-            await page.keyboard.type(action.text!);
-          }
-          result = { typed: action.text, selector: action.selector };
-          break;
-        case 'screenshot':
-          const screenshot = await page.screenshot({ fullPage: false, type: 'png' });
-          const base64Screenshot = screenshot.toString('base64');
-          result = {
-            screenshot: base64Screenshot,
-            url: page.url()
-          };
-          break;
-        case 'read':
-          const content = await page.textContent(action.selector || 'body');
-          result = { content, selector: action.selector };
-          break;
-        case 'wait':
-          await page.waitForTimeout(action.timeout || 1000);
-          result = { waited: action.timeout };
-          break;
-        case 'scroll':
-          if (action.selector) {
-            await page.locator(action.selector).scrollIntoViewIfNeeded();
-          } else {
-            await page.evaluate(() => window.scrollBy(0, window.innerHeight));
-          }
-          result = { scrolled: true };
-          break;
-        default:
-          throw new Error(`Unknown action type: ${action.type}`);
-      }
-
-      // Get current URL for all successful actions
-      if (page && action.type !== 'init') {
-        result.currentUrl = page.url();
-      }
-
-      return {
-        success: true,
-        data: result,
-        url: result.currentUrl,
-        timestamp
-      };
-    } catch (error) {
-      console.error(`Browser action ${action.type} failed:`, error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error',
-        timestamp
-      };
+      console.warn('⚠️ Failed to close session via API:', error.message);
+      // Continue with cleanup even if API call fails
+    } finally {
+      // Reset service state regardless of API success
+      this.sessionInfo = null;
+      this.isInitializing = false;
+      console.log('🧹 Service state reset');
     }
   }
 }
 
-// Intent detection patterns
-const BROWSER_INTENT_PATTERNS = [
-  /open\s+(\w+(?:\.\w+)+|linkedin|facebook|twitter|instagram|youtube)/i,
-  /go\s+to\s+(\w+(?:\.\w+)+)/i,
-  /visit\s+(\w+(?:\.\w+)+)/i,
-  /navigate\s+to\s+(\w+(?:\.\w+)+)/i,
-  /log\s*in\s+to\s+(\w+)/i,
-  /sign\s+in\s+to\s+(\w+)/i,
-  /take\s+a?\s*screenshot/i,
-  /click\s+(.*)/i,
-  /type\s+(.*)/i,
-  /read\s+(.*)/i,
-  /scroll\s+(down|up)/i,
-  /wait\s+(\d+)/i
-];
+// Global service instance
+let globalBrowserService: DirectBrowserbaseService | null = null;
 
-function detectBrowserIntent(message: string): { isBrowserCommand: boolean; intent?: string; params?: any } {
-  const lowerMessage = message.toLowerCase().trim();
-
-  for (const pattern of BROWSER_INTENT_PATTERNS) {
-    const match = lowerMessage.match(pattern);
-    if (match) {
-      return {
-        isBrowserCommand: true,
-        intent: match[0],
-        params: match.slice(1)
-      };
-    }
+function getBrowserService(): DirectBrowserbaseService {
+  if (!globalBrowserService) {
+    globalBrowserService = new DirectBrowserbaseService();
   }
-
-  return { isBrowserCommand: false };
+  return globalBrowserService;
 }
 
-function parseActionFromMessage(message: string): BrowserAction[] {
-  const lowerMessage = message.toLowerCase().trim();
-  const actions: BrowserAction[] = [];
+function detectBrowserIntent(message: string): { isBrowserCommand: boolean; confidence: number } {
+  const browserKeywords = [
+    'go to', 'open', 'navigate', 'visit', 'browse', 'website', 'url', 'page',
+    'click', 'press', 'tap', 'select', 'choose',
+    'type', 'enter', 'input', 'fill', 'write',
+    'screenshot', 'capture', 'image', 'picture',
+    'scroll', 'search', 'find', 'look for',
+    'login', 'sign in', 'register', 'submit',
+    'google', 'linkedin', 'facebook', 'twitter', 'github'
+  ];
 
-  // Navigation patterns
-  if (lowerMessage.match(/open\s+(\w+(?:\.\w+)+|linkedin|facebook|twitter|instagram|youtube)/i)) {
-    const match = lowerMessage.match(/open\s+(\w+(?:\.\w+)+|linkedin|facebook|twitter|instagram|youtube)/i);
-    if (match) {
-      let url = match[1];
+  const normalizedMessage = message.toLowerCase();
+  const matches = browserKeywords.filter(keyword => normalizedMessage.includes(keyword));
 
-      // Handle common sites without full URLs
-      const siteMap: Record<string, string> = {
-        'linkedin': 'https://www.linkedin.com',
-        'facebook': 'https://www.facebook.com',
-        'twitter': 'https://www.twitter.com',
-        'instagram': 'https://www.instagram.com',
-        'youtube': 'https://www.youtube.com'
-      };
+  const confidence = Math.min(matches.length * 0.3, 1.0);
+  const isBrowserCommand = confidence > 0.2;
 
-      if (siteMap[url]) {
-        url = siteMap[url];
-      } else if (!url.startsWith('http')) {
-        url = `https://${url}`;
-      }
-
-      actions.push({ type: 'navigate', url });
-    }
-  }
-
-  // Screenshot
-  if (lowerMessage.match(/take\s+a?\s*screenshot/i)) {
-    actions.push({ type: 'screenshot' });
-  }
-
-  // Click actions
-  const clickMatch = lowerMessage.match(/click\s+(.*)/i);
-  if (clickMatch) {
-    actions.push({ type: 'click', selector: clickMatch[1] });
-  }
-
-  // Type actions
-  const typeMatch = lowerMessage.match(/type\s+"([^"]+)"(?:\s+in\s+(.*))?/i);
-  if (typeMatch) {
-    actions.push({
-      type: 'type',
-      text: typeMatch[1],
-      selector: typeMatch[2] || 'input, textarea'
-    });
-  }
-
-  // Wait actions
-  const waitMatch = lowerMessage.match(/wait\s+(\d+)/i);
-  if (waitMatch) {
-    actions.push({ type: 'wait', timeout: parseInt(waitMatch[1]) * 1000 });
-  }
-
-  // If no specific actions found but it's a browser command, take a screenshot
-  if (actions.length === 0 && detectBrowserIntent(message).isBrowserCommand) {
-    actions.push({ type: 'screenshot' });
-  }
-
-  return actions;
+  return { isBrowserCommand, confidence };
 }
-
-// Session storage for active browser sessions
-const activeSessions = new Map<string, string>(); // chatId -> sessionId
 
 export async function POST({ request }) {
   try {
-    const { message, chatId, action } = await request.json();
+    const { message, chatId } = await request.json();
 
-    if (!message && !action) {
-      return json({ error: 'Message or action required' }, { status: 400 });
+    if (!message || typeof message !== 'string') {
+      return json({ error: 'Message is required' }, { status: 400 });
     }
 
-    console.log('🌐 Browserbase API called with:', { message, chatId, action });
-    console.log('🔑 Environment check:', {
-      hasProjectId: !!BROWSERBASE_PROJECT_ID,
-      hasKey: !!BROWSERBASE_KEY,
-      projectId: BROWSERBASE_PROJECT_ID?.substring(0, 8) + '...',
-      keyLength: BROWSERBASE_KEY?.length
-    });
+    console.log('🔍 Processing message:', message);
 
-    const browserService = new BrowserbaseService();
+    // Detect if this is a browser command
+    const intent = detectBrowserIntent(message);
+    console.log('🎯 Intent detection:', intent);
 
-    // Handle explicit actions vs message parsing
-    let actions: BrowserAction[];
-    if (action) {
-      actions = [action];
+    if (!intent.isBrowserCommand) {
+      return json({
+        isBrowserCommand: false,
+        message: 'This doesn\'t appear to be a browser automation command. Try commands like "go to google.com" or "take a screenshot".',
+        confidence: intent.confidence
+      });
+    }
+
+    // Get browser service and execute command
+    const browserService = getBrowserService();
+
+    console.log('🤖 Executing browser command...');
+    const results = await browserService.parseNaturalLanguageCommand(message);
+
+    const sessionInfo = browserService.getSessionInfo();
+
+    // Create response
+    const actions = results.map(r => r.actionDescription || 'Unknown action');
+    const hasSuccess = results.some(r => r.success);
+    const hasFailure = results.some(r => !r.success);
+
+    let responseMessage = '';
+    if (hasSuccess && !hasFailure) {
+      responseMessage = '✅ Browser command executed successfully!';
+    } else if (hasSuccess && hasFailure) {
+      responseMessage = '⚠️ Browser command partially completed with some errors.';
     } else {
-      const detection = detectBrowserIntent(message);
-      if (!detection.isBrowserCommand) {
-        return json({
-          isBrowserCommand: false,
-          message: 'This doesn\'t appear to be a browser automation command.'
-        });
-      }
-      actions = parseActionFromMessage(message);
-    }
-
-    // Get or create session
-    let sessionId = activeSessions.get(chatId);
-    if (!sessionId) {
-      const session = await browserService.createSession();
-      sessionId = session.id;
-      activeSessions.set(chatId, sessionId);
-    }
-
-    // Execute actions
-    const results: BrowserActionResult[] = [];
-    for (const browserAction of actions) {
-      const result = await browserService.executeAction(sessionId, browserAction);
-      results.push(result);
-
-      // If action failed, break the chain
-      if (!result.success) {
-        break;
-      }
-    }
-
-    // Always take a screenshot at the end for visual feedback
-    if (results.length > 0 && results[results.length - 1].success) {
-      const screenshotResult = await browserService.executeAction(sessionId, { type: 'screenshot' });
-      if (screenshotResult.success) {
-        results.push(screenshotResult);
-      }
+      responseMessage = '❌ Browser command failed to execute.';
     }
 
     return json({
-      isBrowserCommand: true,
-      sessionId,
-      actions: actions.map(a => a.type),
+      success: true,
+      isBrowserCommand: intent.isBrowserCommand,
+      message: `Browser automation ${intent.isBrowserCommand ? 'executed' : 'attempted'}`,
+      sessionId: browserService.getSessionInfo()?.sessionId,
+      liveViewUrl: browserService.getSessionInfo()?.liveViewUrl,
       results,
-      message: `Executed ${actions.length} browser action(s) successfully.`
+      actions: [message],
+      confidence: intent.confidence,
+      timestamp: Date.now()
     });
 
   } catch (error) {
-    console.error('Browserbase API error:', error);
-    return json(
-      {
-        error: 'Browser automation failed',
-        details: error instanceof Error ? error.message : 'Unknown error'
-      },
-      { status: 500 }
-    );
+    console.error('❌ Error in browser automation:', error);
+    return json({
+      isBrowserCommand: true,
+      message: 'Browser automation error occurred.',
+      error: error.message,
+      results: [{
+        success: false,
+        error: error.message,
+        timestamp: Date.now(),
+        actionDescription: 'Failed to process browser command'
+      }]
+    }, { status: 500 });
   }
 }
 
 export async function DELETE({ request }) {
-  try {
-    const { chatId } = await request.json();
+  console.log('🗑️ DELETE request received for session cleanup');
 
-    const sessionId = activeSessions.get(chatId);
-    if (sessionId) {
-      const browserService = new BrowserbaseService();
-      await browserService.destroySession(sessionId);
-      activeSessions.delete(chatId);
+  try {
+    let sessionId;
+
+    // Handle both regular DELETE requests and sendBeacon requests
+    const contentType = request.headers.get('content-type');
+    if (contentType && contentType.includes('application/json')) {
+      const body = await request.json();
+      sessionId = body.sessionId;
+    } else {
+      // Handle sendBeacon or other non-JSON requests
+      const body = await request.text();
+      try {
+        const parsed = JSON.parse(body);
+        sessionId = parsed.sessionId;
+      } catch {
+        console.warn('⚠️ Could not parse DELETE request body');
+        return json({ success: false, error: 'Invalid request body' }, { status: 400 });
+      }
     }
 
-    return json({ message: 'Browser session ended' });
+    if (!sessionId) {
+      console.warn('⚠️ No sessionId provided in DELETE request');
+      return json({ success: false, error: 'sessionId is required' }, { status: 400 });
+    }
+
+    console.log('🔄 Attempting to close session:', sessionId);
+
+    const browserService = getBrowserService();
+    await browserService.closeSession();
+
+    console.log('✅ Session cleanup completed successfully');
+
+    return json({
+      success: true,
+      message: 'Session closed successfully',
+      sessionId
+    });
+
   } catch (error) {
-    console.error('Error ending browser session:', error);
-    return json(
-      { error: 'Failed to end browser session' },
-      { status: 500 }
-    );
+    console.error('❌ Error in session cleanup:', error);
+
+    return json({
+      success: false,
+      error: error.message || 'Failed to close session',
+      timestamp: Date.now()
+    }, { status: 500 });
   }
 }

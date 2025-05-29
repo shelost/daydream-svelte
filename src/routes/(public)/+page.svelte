@@ -81,13 +81,12 @@
 
   <div class="hero-container">
 
-    <img src="wing-square.png" id = 'wing' alt="Arachne Logo" class="logo" />
+    <img src="opal.png" id = 'wing' alt="Arachne Logo" class="logo" />
 
     <div class = 'mast'>
       <h1>
-        Daydream
+        Opal
       </h1>
-      <h2> by Opal </h2>
       <p>
         Copyright &copy; 2025 ahw. All rights reserved.
       </p>
@@ -198,10 +197,9 @@
     align-items: center;
 
     #wing{
-      height: 120px;
+      height: 160px;
       border-radius: 18px;
-      border: 2px solid white;
-      box-shadow: -4px 16px 32px rgba(black, 0.5);
+      filter: drop-shadow(-12px 36px 16px rgba(#030025, 0.05));
     }
 
     #ahw{
@@ -218,7 +216,7 @@
         font-size: 84px;
         font-weight: 500;
         letter-spacing: -.5px;
-        color: white;
+        color: #030025;
       }
       h2{
         font-size: 18px;
