@@ -5,6 +5,7 @@
   import Omnibar from '$lib/components/Omnibar.svelte';
   import { Markdown } from 'svelte-rune-markdown';
   import { fetchAndLog } from '$lib/utils/fetchAndLog';
+  import Browserbase from '$lib/components/Browserbase.svelte';
 
   // Import Prism.js for syntax highlighting - make it conditional for production builds
   let Prism: any = null;
@@ -17,8 +18,16 @@
     currentOpacity: number;
   }
 
+  // Unified event log entry
+  interface EventLogEntry {
+    id: string; // Unique ID for Svelte #each key
+    type: 'reasoning' | 'action';
+    description: string;
+    fullDetails: any; // Store the original action/reasoning object
+  }
+
   interface Message {
-    id: string;
+    id:string;
     role: 'user' | 'assistant' | 'system';
     content: string;
     rawContent?: string;
@@ -29,6 +38,7 @@
     animatedWords?: AnimatedWord[];
     _lastProcessedContentLength?: number;
     _previousContent?: string;
+    eventLog?: EventLogEntry[]; // Unified log for reasoning and actions
   }
 
   let messages: Message[] = [];
@@ -213,7 +223,8 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           sessionId: browserSessionId
-        })
+        }),
+        keepalive: true // ensure request is attempted even during unload
       });
 
       if (response.ok) {
@@ -229,6 +240,18 @@
       browserLiveViewUrl = null;
       browserScreenshot = null;
       showBrowserViewport = false;
+      // Clean from storage so next load doesn't try to close again
+      if (typeof window !== 'undefined') {
+        sessionStorage.removeItem('browserSessionId');
+      }
+    }
+  }
+
+  // Helper to persist sessionId to sessionStorage when set
+  $: if (browserSessionId) {
+    const browser = typeof window !== 'undefined';
+    if (browser) {
+      sessionStorage.setItem('browserSessionId', browserSessionId);
     }
   }
 
@@ -239,25 +262,56 @@
       {
         id: generateUniqueId(),
         role: 'assistant',
-        content: "Hi there! I'm your friendly chat assistant with browser automation capabilities. The live browser window is loading LinkedIn automatically. You can interact directly with the browser or try commands like 'take a screenshot', 'go to google.com', or ask me anything!"
+        content: "Hi there! I'm your AI-powered browser automation assistant. I can understand natural language commands and translate them into precise browser actions.\\n\\n**Try natural commands like:**\\n• 'find Vitalii Dodonov\'s LinkedIn profile' - I'll navigate to LinkedIn and search for the person\\n• 'go to OpenAI\'s website' - I'll understand you want openai.com\\n• 'search for AI news' - I\'ll search on the current page or find a search engine\\n• 'read the latest posts' - I\'ll extract content from the page\\n• 'take a screenshot' - I\'ll capture the current page\\n\\nI use advanced AI to understand your intent, then execute precise browser actions. The live browser window shows real-time results!"
       }
     ];
     isStartState = true;
     omnibarPrompt = '';
     isOverallLoading = false;
     currentFollowUpQuestions = [];
+
+    // Reset browser session state
+    browserSessionId = null;
+    browserLiveViewUrl = null;
+    browserScreenshot = null;
+    showBrowserViewport = false;
+    isBrowserLoading = false;
+
+    // Remove stored session id reference as chat is cleared
+    if (typeof window !== 'undefined') {
+      sessionStorage.removeItem('browserSessionId');
+    }
   }
 
   async function clearChatAndStorage() {
     if (isOverallLoading) return;
 
-    // Close browser session first
-    await closeBrowserSession();
+    // Close Stagehand session first
+    if (browserSessionId) {
+      try {
+        console.log('🔄 Cleaning up Stagehand session before clearing chat...');
+        const response = await fetch('/api/stagehand', {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sessionId: browserSessionId }),
+          keepalive: true
+        });
+
+        if (response.ok) {
+          console.log('✅ Stagehand session cleaned up successfully');
+        } else {
+          console.warn('⚠️ Failed to clean up Stagehand session:', await response.text());
+        }
+      } catch (error) {
+        console.warn('⚠️ Error cleaning up Stagehand session:', error);
+      }
+    }
 
     handleClearChat();
     const browser = typeof window !== 'undefined';
     if (browser) {
       sessionStorage.removeItem(SESSION_STORAGE_KEY);
+      sessionStorage.removeItem('browserSessionId');
       console.log('Chat history cleared from sessionStorage.');
     }
   }
@@ -283,6 +337,27 @@
     });
   }
 
+  // Utility to stream event log entries to the UI one-by-one for a simulated real-time effect
+  function streamEvents(
+    messageId: string,
+    eventEntries: EventLogEntry[]
+  ) {
+    const DELAY = 700; // ms between pills
+    (async () => {
+      for (const event of eventEntries) {
+        await new Promise((res) => setTimeout(res, DELAY));
+        messages = messages.map((m) =>
+          m.id === messageId
+            ? { ...m, eventLog: [...(m.eventLog || []), event] }
+            : m
+        );
+        await tick(); // Ensure Svelte updates the DOM
+        scrollToBottom(); // Keep chat scrolled to the bottom
+      }
+    })();
+  }
+
+
   // Main omnibar submit function with browser automation
   async function handleOmnibarSubmit() {
     const currentPrompt = omnibarPrompt.trim();
@@ -295,6 +370,15 @@
     }
 
     isOverallLoading = true;
+    if (!browserSessionId || !browserLiveViewUrl) {
+      showBrowserViewport = true;
+      isBrowserLoading = true;
+    } else {
+      showBrowserViewport = true;
+      isBrowserLoading = false;
+      console.log('🎯 Keeping browser viewport visible for real-time actions');
+    }
+
     const userMessageId = generateUniqueId();
     messages = [...messages, { id: userMessageId, role: 'user', content: currentPrompt }];
     omnibarPrompt = '';
@@ -306,118 +390,147 @@
         id: assistantMessageId,
         role: 'assistant',
         content: '',
-      isLoading: true,
+        eventLog: [],
+        isLoading: true,
         isStreaming: true,
-        modelUsed: currentSelectedTextModel
+        modelUsed: 'Stagehand AI Browser'
       }
     ];
 
     try {
-      // First, check if this is a browser automation command
-      console.log('🔍 Checking browser command for:', currentPrompt);
-      const browserResponse = await fetch('/api/browserbase', {
+      console.log('🚀 Sending command to Stagehand API:', currentPrompt);
+      const stagehandResponse = await fetch('/api/stagehand', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          message: currentPrompt,
+          command: currentPrompt,
           chatId: userMessageId
         }),
           signal: currentAbortController?.signal
       });
 
-      console.log('🌐 Browser response status:', browserResponse.status);
-      if (browserResponse.ok) {
-        const browserResult = await browserResponse.json();
-        console.log('🤖 Browser result:', browserResult);
+      console.log('📡 Stagehand API response status:', stagehandResponse.status);
 
-        if (browserResult.isBrowserCommand) {
-          let responseContent = `${browserResult.message}\n\n`;
+      if (stagehandResponse.ok) {
+        const stagehandResult = await stagehandResponse.json();
+        console.log('🤖 Stagehand API result:', stagehandResult);
 
-          if (browserResult.results && browserResult.results.length > 0) {
-            responseContent += `**Actions performed:**\n`;
-            browserResult.results.forEach((result, index) => {
-              if (result.success) {
-                responseContent += `✅ ${browserResult.actions[index]}\n`;
-        } else {
-                responseContent += `❌ ${browserResult.actions[index]}: ${result.error}\n`;
-              }
+        let responseContent = stagehandResult.message || "Stagehand processed the command.";
+        const interleavedEvents: EventLogEntry[] = [];
+
+        if (stagehandResult.actionsPerformed && Array.isArray(stagehandResult.actionsPerformed)) {
+          stagehandResult.actionsPerformed.forEach((performedAction: any, index: number) => {
+            // 1. Add reasoning step if it exists and is a string
+            if (performedAction && typeof performedAction.reasoning === 'string' && performedAction.reasoning.trim() !== '') {
+              interleavedEvents.push({
+                id: generateUniqueId() + `-reason-${index}`,
+                type: 'reasoning',
+                description: performedAction.reasoning,
+                fullDetails: performedAction
+              });
+            }
+
+            // 2. Add the main action step
+            let actionDescription = "Unknown action";
+            if (typeof performedAction === 'string') { // Should not happen if reasoning is a property
+              actionDescription = performedAction;
+            } else if (performedAction && performedAction.description) {
+              actionDescription = performedAction.description;
+            } else if (performedAction && performedAction.type) { // Construct description if not present
+              actionDescription = `Performed: ${performedAction.type}`;
+              if (performedAction.target) actionDescription += ` on "${performedAction.target}"`;
+              if (performedAction.query) actionDescription += ` for "${performedAction.query}"`;
+              if (performedAction.url) actionDescription += ` to ${performedAction.url}`;
+              if (performedAction.text) actionDescription += ` with text "${performedAction.text}"`;
+            } else {
+              try {
+                actionDescription = `Executed: ${JSON.stringify(performedAction)}`;
+              } catch { /* ignore */ }
+            }
+            interleavedEvents.push({
+              id: generateUniqueId() + `-action-${index}`,
+              type: 'action',
+              description: actionDescription,
+              fullDetails: performedAction
             });
-
-            // Update floating browser viewport with latest screenshot/live view
-            const screenshotResult = browserResult.results.find(r => r.data && r.data.screenshot);
-            if (screenshotResult) {
-              browserScreenshot = screenshotResult.data.screenshot;
-              responseContent += `\n**Current page:**\n![Screenshot](data:image/png;base64,${screenshotResult.data.screenshot})`;
-            }
-
-            // Extract live view URL if available
-            if (browserResult.liveViewUrl) {
-              browserLiveViewUrl = browserResult.liveViewUrl;
-              console.log('🔗 Browser live view URL updated:', browserLiveViewUrl);
-            }
-          }
-
-          messages = messages.map(msg =>
-            msg.id === assistantMessageId
-              ? {
-                ...msg,
-                  content: responseContent,
-                  isLoading: false,
-            isStreaming: false,
-                  modelUsed: 'Browser Automation'
-                }
-              : msg
-          );
-
-          isOverallLoading = false;
-          currentAbortController = null;
-          return;
+          });
         }
-      }
 
-      // Not a browser command, proceed with normal AI chat (simplified for brevity)
-      let responseContent = `I can help with both chat and browser automation. Try commands like:
-- "open linkedin"
-- "go to google.com"
-- "take a screenshot"
-- "click on login button"
+        if (stagehandResult.data) {
+          responseContent += `\\n\\n**Extracted Data:**\\n\`\`\`json\\n${JSON.stringify(stagehandResult.data, null, 2)}\\n\`\`\``;
+        }
 
-The live browser window will show real-time updates!`;
+        if (stagehandResult.screenshot) {
+          browserScreenshot = stagehandResult.screenshot;
+        }
+        if (stagehandResult.liveViewUrl) {
+          browserLiveViewUrl = stagehandResult.liveViewUrl;
+        }
+        if (stagehandResult.sessionId) {
+          browserSessionId = stagehandResult.sessionId;
+        }
 
-          messages = messages.map(msg =>
-            msg.id === assistantMessageId
-          ? {
-              ...msg,
-              content: responseContent,
-              isLoading: false,
-              isStreaming: false,
-              modelUsed: 'Assistant'
-            }
+        showBrowserViewport = true;
+
+        messages = messages.map(msg =>
+          msg.id === assistantMessageId
+            ? {
+                ...msg,
+                content: responseContent,
+                isLoading: false,
+                isStreaming: false,
+                modelUsed: stagehandResult.modelUsed || 'Stagehand AI Browser'
+              }
               : msg
-          );
+        );
 
+        if (interleavedEvents.length > 0) {
+          streamEvents(assistantMessageId, interleavedEvents);
+        }
+
+        } else {
+        const errorResult = await stagehandResponse.json().catch(() => ({ error: 'Failed to parse error response from Stagehand API' }));
+        console.error('❌ Stagehand API error:', errorResult);
+            messages = messages.map(msg =>
+              msg.id === assistantMessageId
+            ? {
+                ...msg,
+                content: `Error with Stagehand: ${errorResult.error || stagehandResponse.statusText}`,
+                isLoading: false,
+                isStreaming: false,
+                error: errorResult.error || stagehandResponse.statusText
+              }
+                : msg
+            );
+          }
     } catch (error: any) {
-      console.error('Error:', error);
-
+      console.error('Error during Stagehand interaction:', error);
       if (error.name === 'AbortError') {
         console.log('Request was aborted by user');
+        messages = messages.map(msg =>
+            msg.id === assistantMessageId && msg.isLoading
+            ? { ...msg, content: "Operation aborted.", isLoading: false, isStreaming: false }
+            : msg
+        );
         return;
       }
-
       messages = messages.map(msg =>
         msg.id === assistantMessageId
           ? {
               ...msg,
               isLoading: false,
               isStreaming: false,
-              error: error.message || 'Unknown error',
-              content: `Error: ${error.message || 'Failed to get response.'}`,
+              error: error.message || 'Unknown error with Stagehand',
+              content: `Error: ${error.message || 'Failed to get response from Stagehand.'}`,
             }
           : msg
       );
     } finally {
         isOverallLoading = false;
+      isBrowserLoading = false;
+      if (currentAbortController && !currentAbortController.signal.aborted) {
         currentAbortController = null;
+      }
     }
   }
 
@@ -437,69 +550,150 @@ The live browser window will show real-time updates!`;
   onMount(() => {
     const browser = typeof window !== 'undefined';
     if (browser) {
-      // Auto-initialize browser session
-      initializeBrowser();
+      const handleBrowserbaseMessage = (event) => {
+        console.log('🔌 Received message from iframe:', event.data, 'Origin:', event.origin);
 
-      // Initialize with default message
+        if (event.data === "browserbase-disconnected") {
+          console.log('🔌 Browserbase connection lost:', event.data);
+          browserLiveViewUrl = null;
+          showBrowserViewport = false;
+        } else if (typeof event.data === 'string' && event.data.includes('error')) {
+          console.warn('⚠️ Browserbase iframe error:', event.data);
+        }
+      };
+
+      (async () => {
+        const staleSessionId = sessionStorage.getItem('browserSessionId');
+        if (staleSessionId) {
+          console.log('🧹 Found stale session ID in storage: ', staleSessionId, "Attempting to close via /api/browserbase DELETE.");
+          try {
+            const resp = await fetch('/api/browserbase', {
+              method: 'DELETE',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ sessionId: staleSessionId }),
+              keepalive: true
+            });
+
+            if (resp.ok) {
+              console.log('✅ Stale session closed successfully via /api/browserbase');
+              } else {
+              console.warn('⚠️ Failed to close stale session via /api/browserbase:', await resp.text());
+            }
+          } catch (err) {
+            console.warn('⚠️ Error while closing stale session via /api/browserbase:', err);
+          } finally {
+            sessionStorage.removeItem('browserSessionId');
+          }
+        }
+
+        showBrowserViewport = true;
+        console.log("🛠️ Stagehand integration: Browser viewport ready. Waiting for first user command to initialize session via Stagehand API.");
+
+        try {
+          console.log('🚀 Sending initial command to Stagehand to establish session...');
+          isBrowserLoading = true;
+          const response = await fetch('/api/stagehand', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              command: 'navigate to linkedin.com',
+              chatId: 'init-' + generateUniqueId()
+            })
+          });
+
+          if (response.ok) {
+            const result = await response.json();
+            console.log('✅ Initial Stagehand session established:', result);
+
+            if (result.sessionId) {
+              browserSessionId = result.sessionId;
+              console.log('🆔 Browser session ID set to:', browserSessionId);
+            }
+
+            if (result.liveViewUrl) {
+              browserLiveViewUrl = result.liveViewUrl;
+              console.log('🔗 Initial live view URL obtained:', browserLiveViewUrl);
+              showBrowserViewport = true;
+              console.log('👁️ Browser viewport made visible with live URL');
+            }
+
+            if (result.screenshot) {
+              browserScreenshot = result.screenshot;
+              console.log('📸 Initial screenshot obtained');
+            }
+
+            if (browserLiveViewUrl) {
+              console.log('🎯 Final browser state:', {
+                sessionId: browserSessionId,
+                liveViewUrl: browserLiveViewUrl,
+                showViewport: showBrowserViewport,
+                hasScreenshot: !!browserScreenshot
+              });
+            }
+          } else {
+            console.warn('⚠️ Failed to establish initial Stagehand session:', response.status, await response.text());
+          }
+        } catch (error) {
+          console.warn('⚠️ Error establishing initial Stagehand session:', error);
+        } finally {
+          isBrowserLoading = false;
+        }
+
+        window.addEventListener("message", handleBrowserbaseMessage);
+      })();
+
             messages = [
                 {
                     id: generateUniqueId(),
                     role: 'assistant',
-          content: "Hi there! I'm your friendly chat assistant with browser automation capabilities. The live browser window is loading LinkedIn automatically. You can interact directly with the browser or try commands like 'take a screenshot', 'go to google.com', or ask me anything!"
+                    content: "Hi there! I'm now powered by Stagehand for advanced browser automation. I can understand complex natural language commands.\\n\\n**Try commands like:**\\n• 'Navigate to LinkedIn and find Vitalii Dodonov\\'s profile.'\\n• 'Search Google for recent AI news and open the first two articles.'\\n• 'Go to OpenAI\\'s website and summarize the GPT-4o page.'\\n• 'Take a screenshot.'\\n\\nThe live browser window will show real-time results driven by Stagehand!"
                 }
             ];
             isStartState = true;
         isInitialized = true;
         scrollToBottom();
 
-      // Add event listeners for session cleanup
       const handleBeforeUnload = (event) => {
-        // Attempt to close the session - this might be blocked by browser
+        console.log('🔄 Page unloading - cleaning up Stagehand session...');
         if (browserSessionId) {
-          console.log('🔄 Page unloading - attempting to close browser session');
-          closeBrowserSession();
+          fetch('/api/stagehand', {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sessionId: browserSessionId }),
+            keepalive: true
+          }).catch(error => {
+            console.warn('⚠️ Error cleaning up Stagehand session on unload:', error);
+          });
+        }
+        if (typeof window !== 'undefined') {
+          sessionStorage.removeItem('browserSessionId');
         }
       };
 
       const handleUnload = () => {
-        // Final attempt to close session using sendBeacon with DELETE method
+        console.log('🔄 Page unloaded - final Stagehand cleanup');
         if (browserSessionId) {
-          console.log('🔄 Page unloaded - final cleanup attempt');
-          // Use fetch with keepalive for more reliable cleanup on page unload
-          try {
-            fetch('/api/browserbase', {
-              method: 'DELETE',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ sessionId: browserSessionId }),
-              keepalive: true
-            }).catch(() => {
-              // Ignore errors in unload handler
-              console.log('🔄 Cleanup request sent (best effort)');
-            });
-          } catch (error) {
-            console.log('🔄 Cleanup attempt failed, session may timeout naturally');
-          }
+          navigator.sendBeacon('/api/stagehand', JSON.stringify({
+            method: 'DELETE',
+            sessionId: browserSessionId
+          }));
+        }
+        if (typeof window !== 'undefined') {
+          sessionStorage.removeItem('browserSessionId');
         }
       };
 
-      // Add event listeners (visibilitychange removed to prevent premature cleanup)
       window.addEventListener('beforeunload', handleBeforeUnload);
       window.addEventListener('unload', handleUnload);
 
-      // Cleanup function
       return () => {
         window.removeEventListener('beforeunload', handleBeforeUnload);
         window.removeEventListener('unload', handleUnload);
-
-        // Final cleanup
-        if (browserSessionId) {
-          closeBrowserSession();
-        }
+        window.removeEventListener('message', handleBrowserbaseMessage);
       };
     }
   });
 
-  // Reactive statement for saving messages
   $: {
     const browser = typeof window !== 'undefined';
     if (browser && isInitialized && messages) {
@@ -548,18 +742,26 @@ The live browser window will show real-time updates!`;
         <div class="carousel-track carousel-left-to-right">
           <button
             class="prompt-card"
-              on:click={() => handleExamplePrompt("open linkedin")}
+              on:click={() => handleExamplePrompt("find Vitalii Dodonov's LinkedIn profile")}
             disabled={isOverallLoading}
           >
-              <span class="prompt-text">open linkedin</span>
+              <span class="prompt-text">find Vitalii Dodonov's LinkedIn profile</span>
           </button>
 
           <button
             class="prompt-card"
-              on:click={() => handleExamplePrompt("go to google.com")}
+              on:click={() => handleExamplePrompt("search for AI news")}
             disabled={isOverallLoading}
           >
-              <span class="prompt-text">go to google.com</span>
+              <span class="prompt-text">search for AI news</span>
+          </button>
+
+          <button
+            class="prompt-card"
+              on:click={() => handleExamplePrompt("go to OpenAI's website")}
+            disabled={isOverallLoading}
+          >
+              <span class="prompt-text">go to OpenAI's website</span>
           </button>
 
           <button
@@ -568,23 +770,39 @@ The live browser window will show real-time updates!`;
             disabled={isOverallLoading}
           >
               <span class="prompt-text">take a screenshot</span>
+          </button>
+
+          <button
+            class="prompt-card"
+              on:click={() => handleExamplePrompt("read the latest posts")}
+            disabled={isOverallLoading}
+          >
+              <span class="prompt-text">read the latest posts</span>
           </button>
 
             <!-- Duplicates for seamless loop -->
           <button
             class="prompt-card"
-              on:click={() => handleExamplePrompt("open linkedin")}
+              on:click={() => handleExamplePrompt("find Vitalii Dodonov's LinkedIn profile")}
             disabled={isOverallLoading}
           >
-              <span class="prompt-text">open linkedin</span>
+              <span class="prompt-text">find Vitalii Dodonov's LinkedIn profile</span>
           </button>
 
           <button
             class="prompt-card"
-              on:click={() => handleExamplePrompt("go to google.com")}
+              on:click={() => handleExamplePrompt("search for AI news")}
             disabled={isOverallLoading}
           >
-              <span class="prompt-text">go to google.com</span>
+              <span class="prompt-text">search for AI news</span>
+          </button>
+
+          <button
+            class="prompt-card"
+              on:click={() => handleExamplePrompt("go to OpenAI's website")}
+            disabled={isOverallLoading}
+          >
+              <span class="prompt-text">go to OpenAI's website</span>
           </button>
 
           <button
@@ -593,6 +811,14 @@ The live browser window will show real-time updates!`;
             disabled={isOverallLoading}
           >
               <span class="prompt-text">take a screenshot</span>
+          </button>
+
+          <button
+            class="prompt-card"
+              on:click={() => handleExamplePrompt("read the latest posts")}
+            disabled={isOverallLoading}
+          >
+              <span class="prompt-text">read the latest posts</span>
           </button>
         </div>
 
@@ -643,10 +869,28 @@ The live browser window will show real-time updates!`;
                     {#if message.isLoading}
                       <span class="thinking-text">
                         <div class="loader"></div>
-                        <span>Thinking...</span>
                       </span>
                     {/if}
                 </div>
+
+                {#if message.eventLog && message.eventLog.length > 0}
+                  <div class="event-log-container">
+                    {#each message.eventLog as event, i (event.id)}
+                      {#if event.type === 'reasoning'}
+                        <div class="reasoning-pill" in:fly={{ y: 10, duration: 300, delay: 50, easing: cubicOut }}>
+                           <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#00AEEF" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="reasoning-pill-icon"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
+                          <span class="reasoning-pill-text">{event.description}</span>
+                        </div>
+                      {:else if event.type === 'action'}
+                        <div class="action-pill" in:fly={{ y: 10, duration: 300, delay: 50, easing: cubicOut }}>
+                          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="action-pill-icon"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                          <span class="action-pill-text">{event.description}</span>
+                        </div>
+                      {/if}
+                    {/each}
+                  </div>
+                {/if}
+
                 <div class="assistant-message-footer">
                   {#if message.modelUsed && !message.isStreaming && !message.isLoading}
                     <div class="assistant-model-info">
@@ -689,80 +933,22 @@ The live browser window will show real-time updates!`;
       onFollowUpClick={handleFollowUpClick}
       parentDisabled={false}
     />
-    </div>
-  {/if}
-
-  <!-- Live Browser Viewport -->
-  {#if showBrowserViewport && (browserLiveViewUrl || browserScreenshot || isBrowserLoading)}
-    <div class="browser-viewport" in:fade={{ duration: 300 }}>
-      <div class="browser-header">
-        <div class="browser-controls">
-          <div class="browser-dot red"></div>
-          <div class="browser-dot yellow"></div>
-          <div class="browser-dot green"></div>
-        </div>
-        <div class="browser-title">
-          {#if browserLiveViewUrl}
-            Live Browser Session
-          {:else if browserScreenshot}
-            Browser Screenshot
-          {:else}
-            Browser Loading...
-          {/if}
-        </div>
-        <button
-          class="browser-close"
-          on:click={async () => {
-            await closeBrowserSession();
-            showBrowserViewport = false;
-          }}
-          title="Close browser viewport"
-        >
-          ×
-        </button>
-      </div>
-      <div class="browser-content">
-        {#if isBrowserLoading}
-          <div class="browser-loading">
-            <div class="loader"></div>
-            <p>Initializing browser session...</p>
-          </div>
-        {:else if browserLiveViewUrl}
-          <!-- Live browser view using iframe with proper Browserbase configuration -->
-          <iframe
-            src={browserLiveViewUrl}
-            class="browser-iframe"
-            title="Live Browser Session"
-            sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-top-navigation"
-            allow="clipboard-read; clipboard-write; camera; microphone"
-            loading="lazy"
-          ></iframe>
-          <div class="live-indicator">
-            <div class="live-dot"></div>
-            <span>LIVE</span>
-          </div>
-        {:else if browserScreenshot}
-          <!-- Fallback to screenshot if live view not available -->
-          <div class="screenshot-container">
-            <img
-              src="data:image/png;base64,{browserScreenshot}"
-              alt="Browser screenshot"
-              class="browser-screenshot"
-            />
-            <div class="screenshot-overlay">
-              <p>Screenshot View</p>
-              <small>Live view not available</small>
-            </div>
-          </div>
-        {:else}
-          <div class="browser-placeholder">
-            <p>No browser session active</p>
-            <small>Send a browser command to start</small>
-          </div>
-        {/if}
-      </div>
   </div>
 {/if}
+
+  <!-- Live Browser Viewport (refactored) -->
+  <Browserbase
+    show={showBrowserViewport && (Boolean(browserLiveViewUrl) || Boolean(browserScreenshot) || isBrowserLoading || Boolean(browserSessionId))}
+    liveViewUrl={browserLiveViewUrl}
+    screenshot={browserScreenshot}
+    sessionId={browserSessionId}
+    loading={isBrowserLoading}
+    on:close={async () => {
+      await closeBrowserSession();
+      showBrowserViewport = false;
+    }}
+  />
+
 </div>
 
 <style lang="scss">
@@ -891,6 +1077,7 @@ The live browser window will show real-time updates!`;
 
     .carousel-track {
       display: flex;
+      flex-wrap: wrap;
       gap: 16px;
       padding: 4px 0;
       width: fit-content;
@@ -901,7 +1088,7 @@ The live browser window will show real-time updates!`;
       touch-action: pan-y;
 
       &.carousel-left-to-right {
-        animation-name: scrollLeftToRight;
+        //animation-name: scrollLeftToRight;
       }
 
       &:hover {
@@ -928,18 +1115,18 @@ The live browser window will show real-time updates!`;
 
       &.carousel-gradient-left {
         left: 0;
-        background: linear-gradient(to right, rgba(white, 1) 0%, rgba(white, 0.8) 50%, rgba(white, 0) 100%);
+       // background: linear-gradient(to right, rgba(white, 1) 0%, rgba(white, 0.8) 50%, rgba(white, 0) 100%);
       }
 
       &.carousel-gradient-right {
         right: 0;
-        background: linear-gradient(to left, rgba(white, 1) 0%, rgba(white, 0.8) 50%, rgba(white, 0) 100%);
+       // background: linear-gradient(to left, rgba(white, 1) 0%, rgba(white, 0.8) 50%, rgba(white, 0) 100%);
       }
     }
 
 
     .prompt-card {
-      background: #f1f5ff;
+      background: rgba(#030025, .05);
       border-radius: 12px;
       padding: 10px 18px;
       cursor: pointer;
@@ -947,7 +1134,7 @@ The live browser window will show real-time updates!`;
       min-width: 100px; // Ensure consistent card sizes
       transition: all 0.2s cubic-bezier(0.4,0,0.2,1);
       flex-shrink: 0; // Prevent cards from shrinking
-      border: 1.5px solid transparent;
+      border: 1px solid rgba(#00106D, .1);
 
 
       &:hover{
@@ -973,8 +1160,8 @@ The live browser window will show real-time updates!`;
         font-family: "ivypresto-headline", sans-serif;
         font-size: 15px;
         font-weight: 500;
-        letter-spacing: .5px;
-        color: #3f4d9c;
+        letter-spacing: .4px;
+        color: #003025;
         text-shadow: -.5px 0 0 #00106D;
         line-height: 140%;
         display: block;
@@ -1099,16 +1286,12 @@ The live browser window will show real-time updates!`;
     overflow-y: auto;
     height: 100%;
     max-height: 100vh;
-    // Adjusted padding: top, sides, bottom (to clear fixed Omnibar)
-    padding: 16px 24px 180px 24px; // 80px omnibar + 24px bottom offset + 20px buffer
+    padding: 16px 24px 180px 24px;
 
 
-    // Critical mobile scrolling properties
     touch-action: pan-y;
     -webkit-overflow-scrolling: touch;
-    // Prevent scrolling issues on some devices
     transform: translateZ(0);
-    // Enable hardware acceleration
     will-change: scroll-position;
 
 
@@ -1130,10 +1313,10 @@ The live browser window will show real-time updates!`;
   .message-wrapper {
     display: flex;
     max-width: 85%;
-    width: 1000px; // Max width of message content area
+    width: 1000px;
     box-sizing: border-box;
     flex-grow: 0;
-    margin: 0 auto; // Centers the content column
+    margin: 0 auto;
 
 
     &.user {
@@ -1169,18 +1352,17 @@ The live browser window will show real-time updates!`;
 
   .message-bubble {
     padding: 10px 15px;
-    border-radius: 18px; // Slightly more rounded
-    line-height: 1.6; // Improved readability
-    font-size: 15px; // Standardized font size
+    border-radius: 18px;
+    line-height: 1.6;
+    font-size: 15px;
 
 
     p {
         margin: 0;
-        white-space: pre-wrap; // Preserve newlines and spaces from AI
-        word-wrap: break-word; // Break long words
+        white-space: pre-wrap;
+        word-wrap: break-word;
 
 
-        // Blinking cursor for streaming
         span {
           display: inline-block;
           animation: blink 1s step-end infinite;
@@ -1190,13 +1372,12 @@ The live browser window will show real-time updates!`;
 
     &.user-bubble {
       background-color: rgba(black, .05);
-     // box-shadow: inset 1px 1px 2px rgba(white, .02), -4px 8px 16px rgba(black,0.2);
       font-family: "ivypresto-headline", 'Newsreader', serif;
       text-shadow: -.4px 0 0 #030025;
-      font-size: 16px; // User prompt slightly larger
+      font-size: 16px;
       font-weight: 500;
       letter-spacing: .5px;
-      position: relative; // For absolute positioning of copy button
+      position: relative;
       padding: 12px 18px 14px 18px;
       color: #030025;
     }
@@ -1208,17 +1389,15 @@ The live browser window will show real-time updates!`;
       font-weight: 450;
       color: #e0e0e0;
       width: 100%;
-      margin: 10px 0 0 0; // Adjusted margin
+      margin: 10px 0 0 0;
       flex: 1;
 
 
-      // Adjust for markdown container
       .markdown-container {
-        margin-bottom: 0; // No margin needed within bubble
+        margin-bottom: 0;
         padding: 0;
 
 
-        // Remove top margin from first element and bottom margin from last element
         :global(*:first-child) {
           margin-top: 0;
         }
@@ -1258,18 +1437,10 @@ The live browser window will show real-time updates!`;
   }
 
 
-  // Removed .images-grid, .image-display-item, .image-card, etc.
-  // Removed .progress-bar-overlay, .progress-bar-fill, .progress-bar-wave-effect
-  // Removed .generated-image, .revised-prompt
-  // Kept .loading-placeholder, .error-placeholder for assistant messages
-  // Spinner styles are general and can be reused
-
-
-  .main-loading-spinner { // Used for initial "Thinking..."
+  .main-loading-spinner {
     display: flex;
     align-items: center;
-      // justify-content: center; // Adjusted by inline style
-      padding: 5px 0; // Adjusted by inline style
+      padding: 5px 0;
       gap: 8px;
       color: #aaa;
       font-size: 0.9em;
@@ -1284,7 +1455,7 @@ The live browser window will show real-time updates!`;
     border-radius: 50%;
     animation: spin 0.8s linear infinite;
     &.small {
-      width: 14px; // Adjusted size
+      width: 14px;
       height: 14px;
       border-width: 2px;
     }
@@ -1296,29 +1467,17 @@ The live browser window will show real-time updates!`;
   }
 
 
-  // Chat input area now houses Omnibar
   .chat-input-area {
     display: flex;
     align-items: center;
-    flex-direction: column; // Omnibar is a block
-    gap: 0; // No gap as Omnibar is the only child usually
-    // Width, position, etc. set by inline styles to match Omnibar's typical placement
+    flex-direction: column;
+    gap: 0;
     position: fixed;
-    bottom: 24px; // Consistent with Omnibar's original idea
-    // backdrop-filter and box-shadow are now handled by Omnibar itself
-    z-index: 3; // Ensure it's above chat messages
+    bottom: 24px;
+    z-index: 3;
   }
 
-
-  // Removed .aspect-ratio-selector
-  // Removed .input-form (Omnibar has its own form)
-  // Removed .text-input-area (Omnibar has its own textarea)
-  // Removed .input-controls-row (Omnibar has its own controls)
-  // Removed .submit-button, .refresh-button (Omnibar submit; separate refresh if needed)
-
-
-  // The refresh button styles can be applied to a standalone button if re-added outside Omnibar
-  .refresh-button-standalone { // Example class if you add a clear chat button outside omnibar
+  .refresh-button-standalone {
     padding: 0;
     width: 32px;
     height: 32px;
@@ -1381,14 +1540,12 @@ The live browser window will show real-time updates!`;
 
 
 
-  // Add markdown container styling from ResultNode.svelte
   .markdown-container {
     width: 100%;
-    margin-bottom: 8px; /* Space below text if multiple items */
+    margin-bottom: 8px;
     color: rgba(#030025,1);
 
 
-    // Add this to ensure the container has a block layout even when only spans are inside
     &.animated-text-container {
       display: block;
     }
@@ -1455,18 +1612,18 @@ The live browser window will show real-time updates!`;
 
     :global(pre) {
       width: 100%;
-      background-color: rgba(#030025, 1); /* Darker pre block */
-      padding: 38px 24px 20px 24px; /* Added top padding for header */
+      background-color: rgba(#030025, 1);
+      padding: 38px 24px 20px 24px;
       border-radius: 12px;
       margin: 32px 0 40px 0;
       box-shadow: -8px 16px 32px rgba(#030025, .3);
       overflow-x: auto;
-      position: relative; /* Ensure position relative for absolute positioning of header */
+      position: relative;
     }
 
 
     :global(code) {
-      background-color: rgba(black, .5); /* Darker code block */
+      background-color: rgba(black, .5);
       padding: 24px;
       border-radius: 3px;
       font-family: monospace;
@@ -1688,48 +1845,39 @@ The live browser window will show real-time updates!`;
   @media screen and (max-width: 800px) {
     #main{
       border-radius: 0;
-      // Ensure touch scrolling works properly on mobile
       overflow-y: auto !important;
       -webkit-overflow-scrolling: touch !important;
       touch-action: pan-y !important;
-      // Force hardware acceleration for smooth scrolling
       transform: translateZ(0);
-      // Prevent scrolling issues
       -webkit-transform: translateZ(0);
     }
 
 
     .chat-messages-container{
-      padding: 16px 12px 180px 12px !important; // Reduced side padding for mobile
-      margin: 0 auto !important; // Remove top margin
-      height: calc(100vh - 32px) !important; // Ensure proper height calculation
+      padding: 16px 12px 180px 12px !important;
+      margin: 0 auto !important;
+      height: calc(100vh - 32px) !important;
       max-height: calc(100vh - 32px) !important;
-      // Force scrolling to work on mobile
       overflow-y: auto !important;
       -webkit-overflow-scrolling: touch !important;
       touch-action: pan-y !important;
-      // Additional mobile fixes
       transform: translateZ(0);
       -webkit-transform: translateZ(0);
-      // Prevent any potential scrolling blocks
       position: relative;
     }
 
 
     .message-wrapper{
-      margin: 12px auto !important; // Restore some margin between messages
+      margin: 12px auto !important;
       padding: 0;
       max-width: 100%;
-      width: 95% !important; // Slightly wider for better mobile experience
-      // Ensure messages don't block scrolling
+      width: 95% !important;
       touch-action: pan-y;
     }
 
 
-    // Ensure carousels work properly on mobile
     .carousel-container{
       height: 90px;
-      // Keep vertical scrolling enabled
       touch-action: pan-y !important;
     }
 
@@ -1737,19 +1885,16 @@ The live browser window will show real-time updates!`;
     .carousel-track {
       animation-duration: 25s;
       height: 100%;
-      // Keep vertical scrolling enabled
       touch-action: pan-y !important;
     }
 
 
-    // Ensure prompt cards don't interfere with scrolling
     .prompt-card {
       width: 200px;
       padding: 12px 16px;
       margin: 0;
 
 
-      // Allow parent scrolling to work
       touch-action: pan-y;
 
 
@@ -1799,6 +1944,7 @@ The live browser window will show real-time updates!`;
    background: #f5f5f5;
    border-bottom: 1px solid #e0e0e0;
    height: 32px;
+   flex-shrink: 0;
  }
 
  .browser-controls {
@@ -1847,9 +1993,9 @@ The live browser window will show real-time updates!`;
 
  .browser-content {
    position: relative;
-   height: calc(100% - 48px);
+   height: calc(100% - 49px);
    overflow: hidden;
-   background: #f9f9f9;
+   background: transparent;
  }
 
  .browser-iframe {
@@ -1857,6 +2003,32 @@ The live browser window will show real-time updates!`;
    height: 100%;
    border: none;
    background: white;
+   display: block;
+   margin: 0;
+   padding: 0;
+   position: absolute;
+   top: 0;
+   left: 0;
+   right: 0;
+   bottom: 0;
+ }
+
+ :global(.screencast-viewport) {
+   padding: 0 !important;
+   margin: 0 !important;
+   border: none !important;
+   border-radius: 0 !important;
+   width: 100% !important;
+   height: 100% !important;
+   background: transparent !important;
+ }
+
+ :global(.screencast-navigation) {
+   display: none !important;
+ }
+
+ :global(.screencast-toolbar) {
+   display: none !important;
  }
 
  .live-indicator {
@@ -1907,12 +2079,21 @@ The live browser window will show real-time updates!`;
    position: relative;
    height: 100%;
    overflow: hidden;
+   width: 100%;
  }
 
  .browser-screenshot {
    width: 100%;
    height: 100%;
    object-fit: cover;
+   display: block;
+   margin: 0;
+   padding: 0;
+ }
+
+ :global(.screencast-viewport){
+  padding: 0 !important;
+  border-radius: 0 !important;
  }
 
  .screenshot-overlay {
@@ -1960,48 +2141,39 @@ The live browser window will show real-time updates!`;
  @media screen and (max-width: 800px) {
    #main{
      border-radius: 0;
-     // Ensure touch scrolling works properly on mobile
      overflow-y: auto !important;
      -webkit-overflow-scrolling: touch !important;
      touch-action: pan-y !important;
-     // Force hardware acceleration for smooth scrolling
      transform: translateZ(0);
-     // Prevent scrolling issues
      -webkit-transform: translateZ(0);
    }
 
 
    .chat-messages-container{
-     padding: 16px 12px 180px 12px !important; // Reduced side padding for mobile
-     margin: 0 auto !important; // Remove top margin
-     height: calc(100vh - 32px) !important; // Ensure proper height calculation
+     padding: 16px 12px 180px 12px !important;
+     margin: 0 auto !important;
+     height: calc(100vh - 32px) !important;
      max-height: calc(100vh - 32px) !important;
-     // Force scrolling to work on mobile
      overflow-y: auto !important;
      -webkit-overflow-scrolling: touch !important;
      touch-action: pan-y !important;
-     // Additional mobile fixes
      transform: translateZ(0);
      -webkit-transform: translateZ(0);
-     // Prevent any potential scrolling blocks
      position: relative;
    }
 
 
    .message-wrapper{
-     margin: 12px auto !important; // Restore some margin between messages
+     margin: 12px auto !important;
      padding: 0;
      max-width: 100%;
-     width: 95% !important; // Slightly wider for better mobile experience
-     // Ensure messages don't block scrolling
+     width: 95% !important;
      touch-action: pan-y;
    }
 
 
-   // Ensure carousels work properly on mobile
    .carousel-container{
      height: 90px;
-     // Keep vertical scrolling enabled
      touch-action: pan-y !important;
    }
 
@@ -2009,19 +2181,16 @@ The live browser window will show real-time updates!`;
    .carousel-track {
      animation-duration: 25s;
      height: 100%;
-     // Keep vertical scrolling enabled
      touch-action: pan-y !important;
    }
 
 
-   // Ensure prompt cards don't interfere with scrolling
    .prompt-card {
      width: 200px;
      padding: 12px 16px;
      margin: 0;
 
 
-     // Allow parent scrolling to work
      touch-action: pan-y;
 
 
@@ -2034,8 +2203,53 @@ The live browser window will show real-time updates!`;
    }
  }
 
+  .event-log-container {
+    margin-top: 16px;
+    padding-top: 12px;
+    border-top: 1px solid rgba(#030025, 0.1);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
 
+  .action-pill, .reasoning-pill {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-size: 13px;
+    color: #030025;
+    font-family: "Inter", sans-serif;
+    line-height: 1.4;
+    box-shadow: 0 2px 4px rgba(#030025, 0.05);
 
+    svg {
+      flex-shrink: 0;
+      width: 14px;
+      height: 14px;
+    }
+    span {
+      flex-grow: 1;
+      word-break: break-word;
+    }
+  }
+
+  .action-pill {
+    background-color: rgba(#6355FF, 0.08);
+    .action-pill-icon {
+      color: #6355FF;
+      stroke-width: 2.5;
+    }
+  }
+
+  .reasoning-pill {
+    background-color: rgba(#00AEEF, 0.08);
+    .reasoning-pill-icon {
+      color: #00AEEF;
+      stroke-width: 2.5;
+    }
+  }
 
 </style>
 

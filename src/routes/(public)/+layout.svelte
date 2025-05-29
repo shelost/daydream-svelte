@@ -94,7 +94,7 @@
         flex-grow: 0;
         background: rgb(29, 29, 32);
         background: var(--background-color);
-        gap: 12px;
+        gap: 8px;
         padding: 12px 4px 12px 12px;
         transition: all 0.4s cubic-bezier(0.25, 0.46, 0.45, 0.94);
     }

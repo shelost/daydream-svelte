@@ -38,6 +38,7 @@
 	"dependencies": {
 		"@anthropic-ai/sdk": "^0.51.0",
 		"@browserbasehq/sdk": "^2.6.0",
+		"@browserbasehq/stagehand": "^2.2.1",
 		"@google/genai": "^1.0.0",
 		"@google/generative-ai": "^0.24.1",
 		"@langchain/community": "^0.3.44",
@@ -78,6 +79,7 @@
 		"svgo": "^3.3.2",
 		"tiktoken": "^1.0.21",
 		"undici": "^6.21.2",
-		"uuid": "^11.1.0"
+		"uuid": "^11.1.0",
+		"zod": "^3.25.36"
 	}
 }

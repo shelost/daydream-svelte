@@ -2734,3 +2734,92 @@ This implementation provides a seamless, professional browser automation experie
 - [x] Update `BrowserSessionInfo` interface.
 
 All items are now complete and committed.
+
+## Fix Search Input Detection Issues (2025-05-29)
+
+### Problem Analysis
+* **Search Command Failure**: The chat command `> search for "stan"` was failing with "No search input found on the current page" even though Google's search input was clearly visible in the live browser viewport.
+* **Playwright Import Issue**: Code was using `playwright-core` instead of `playwright`, which can cause connection issues with remote browser sessions via CDP.
+* **Flawed Selector Logic**: The search input detection logic had a bug where `searchInput` variable could reference a failed locator from previous iterations.
+* **Poor Error Reporting**: The error handling masked the actual issues, making it impossible to debug why specific selectors were failing.
+* **No Page State Verification**: The code didn't verify the current page URL or wait for the page to be ready before attempting to find search inputs.
+
+### Root Causes
+1. **Import Mismatch**: Using `playwright-core` instead of `playwright` for CDP connections to Browserbase sessions
+2. **Insufficient Debugging**: No logging to understand which selectors were being tried and why they failed
+3. **Logic Bug**: The selector detection loop didn't properly reset variables between attempts
+4. **Missing Wait States**: Not waiting for page to be fully loaded before attempting DOM operations
+5. **Limited Selector Coverage**: Missing common search input patterns like `[role="searchbox"]` and alternative naming conventions
+
+### Solution Implementation
+* **Fixed Playwright Import**: Changed from `playwright-core` to `playwright` for better CDP connection support with remote browsers
+* **Enhanced Selector Detection**: Added comprehensive logging and fixed the detection logic to properly validate each selector
+* **Expanded Selector List**: Added more search input patterns including ARIA roles, alternative names, and textarea elements
+* **Added Page State Verification**: Now verifies current URL and waits for page to be ready before attempting search
+* **Comprehensive Error Debugging**: Added detailed logging of all page inputs when search fails to aid future debugging
+* **Improved Error Handling**: Better timeouts and fallback logic for page load states
+
+### Technical Changes
+* `performSearch()` method completely rewritten with robust selector detection and debugging
+* `connectAndNavigate()` method updated to use consistent playwright import
+* Added 13 different search input selector patterns vs. previous 8
+* Added comprehensive logging throughout the search process
+* Added page readiness verification and timeout handling
+
+This fix ensures that search commands will work reliably on Google and other search sites, with detailed error reporting when issues occur.
+
+## Implement Intelligent Browser Command Parsing (2025-05-29)
+
+### Problem
+Users want to use natural language browser commands like:
+- "go to Vitalii Dodonov's LinkedIn page"
+- "read all the posts on this page"
+- "search for artificial intelligence news"
+
+But the current system tries to parse these literally, resulting in invalid URLs like "https://vitalii dodonov..." instead of understanding the intent.
+
+### Solution: AI-Powered Command Intelligence
+1. **Intent Recognition Layer**: Use Claude to parse natural language commands and understand user intent
+2. **Command Structuring**: Convert natural language to structured browser action sequences
+3. **Execution**: Pass structured commands to Browserbase for execution
+
+### Implementation Plan
+1. Add intelligent command parser using Claude API
+2. Create structured browser action types (navigate, search, extract, click, etc.)
+3. Update the Browserbase service to handle structured commands
+4. Add command validation and error handling
+
+### Example Flow
+```
+User: "go to Vitalii Dodonov's LinkedIn page"
+↓
+Claude Parser: {
+  "intent": "find_person_profile",
+  "platform": "linkedin",
+  "person": "Vitalii Dodonov",
+  "actions": [
+    {"type": "navigate", "url": "https://linkedin.com"},
+    {"type": "search", "query": "Vitalii Dodonov"},
+    {"type": "click", "target": "first profile result"}
+  ]
+}
+↓
+Browserbase: Execute structured actions
+```
+
+This approach enables natural, intuitive browser automation while maintaining precision and reliability.
+
+### Addressing Persistent Browserbase Session Stacking (Attempt 3)
+
+**Problem:** Browserbase sessions continue to stack up despite previous client-side and server-side DELETE handler improvements. Reloading the page multiple times results in multiple "Running" sessions.
+
+**Root Cause Analysis:** The `DirectBrowserbaseService` instance on the server is a singleton. If `initializeSession` is called (e.g., by a new page load) while `this.sessionInfo` in the service still refers to a session that a *previous* page load is attempting to close, the service might inadvertently return this "stale" session or encounter issues creating a truly new one.
+
+**Solution:**
+
+1.  **Aggressive Server-Side State Clearing:**
+    *   Modify the `initializeSession` method in `src/routes/api/browserbase/+server.ts` (`DirectBrowserbaseService` class).
+    *   At the very beginning of `initializeSession` (after the `this.isInitializing` check), if `this.sessionInfo` (the service's currently tracked session) is not `null`), explicitly call `await this.closeSession()`.
+    *   This will ensure that the service instance clears its own knowledge of any existing session and attempts to terminate it with Browserbase *before* proceeding to request and configure a brand new session. This makes the initialization process more stateless from the service's perspective for each call.
+
+**Expected Outcome:** Each call to the `/api/browserbase` POST endpoint (triggered by `initializeBrowser` on the client) should now force the server-side service to start from a cleaner slate, preventing the re-issuance or carry-over of old session details and ensuring only one truly active session per client page.

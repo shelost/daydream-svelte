@@ -65,7 +65,7 @@
 <header>
     <div id = 'mast' class = 'corner'>
         <a href = '/'>
-            <img src = 'wing-square.png' alt = 'Daydream Logo' />
+            <img src = 'opal.png' alt = 'Daydream Logo' />
         </a>
     </div>
 
@@ -150,7 +150,7 @@
         top: 0;
         left: 0;
         height: 100vh;
-        width: 52px;
+        width: 48px;
         z-index: 2;
        // border-left: 1px solid rgba(white, .2);
     }
@@ -162,8 +162,6 @@
 
         img{
             height: 28px;
-            border: 1px solid white;
-            border-radius: 6px;
         }
 
         h1{
