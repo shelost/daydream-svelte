@@ -2222,3 +2222,126 @@ The chat panel (#chat) in the public layout is always visible with a fixed width
 - **Updated:** `instructions.md` - Documentation of persistent state implementation
 
 This implementation provides a polished, persistent chat toggle experience that remembers user preferences and smoothly adapts the entire page layout.
+
+## Plan: Implement Staggered Word Fade-In Animation for Streaming Chat
+
+### Problem
+The current streaming text in the Stan chat interface displays new words/tokens instantly without any visual transition. This creates a jarring experience where text suddenly "pops" into view rather than gracefully appearing.
+
+### Solution Outline
+1. **Animation State Management:**
+   - Add `WORD_FADE_DURATION` variable to control animation speed (default: 800ms)
+   - Track `_lastProcessedContentLength` in each message to identify new content
+   - Implement `animateNewWords()` function to wrap new words in animated spans
+
+2. **DOM-Based Word Animation:**
+   - After each streaming update, identify newly added text content
+   - Split new content into words and wrap each in `<span class="animated-word">`
+   - Apply staggered delays: each word starts animating 100ms after the previous
+   - Use CSS transitions for smooth opacity change from 0 to 1
+
+3. **Markdown Compatibility:**
+   - Continue using Markdown component for live formatting during streaming
+   - Apply animations to text nodes within rendered markdown elements
+   - Handle partial markdown gracefully (incomplete code blocks, lists, etc.)
+
+4. **Performance Optimization:**
+   - Only animate newly added words, not re-animate existing content
+   - Use `requestAnimationFrame` for smooth DOM manipulation
+   - Clean up animation classes after completion to prevent DOM bloat
+
+### Implementation Details
+- **Animation Logic:** Compare current content length with previous length to identify new words
+- **CSS Transitions:** `.animated-word` class with opacity transition and staggered delays
+- **Timing Control:** `WORD_FADE_DURATION` variable allows easy speed adjustment
+- **Error Handling:** Graceful fallback if animation fails, content still displays normally
+
+### Checklist
+- [ ] Add configurable `WORD_FADE_DURATION` variable
+- [ ] Implement `animateNewWords()` function with word splitting and span wrapping
+- [ ] Add CSS for `.animated-word` with smooth opacity transitions
+- [ ] Integrate animation calls into streaming message updates
+- [ ] Test with various message types (plain text, markdown, code blocks)
+- [ ] Ensure no performance impact on long conversations
+
+## Plan: Add Browserbase Web Automation to Chat Interface
+
+### Problem
+The current chat interface only supports text-based conversations with AI models. Users need the ability to interact with real websites through natural language commands like "open linkedin", "log in with these credentials", "read my top 3 linkedin posts", etc. This requires integrating browser automation capabilities that can interpret user intentions and execute web actions.
+
+### Solution Outline
+1. **Backend Browser Control Service:**
+   - Create `/api/browserbase/+server.ts` endpoint to handle browser automation requests
+   - Integrate with Browserbase API using existing credentials (BROWSERBASE_PROJECT_ID, BROWSERBASE_KEY)
+   - Implement browser session management and action execution
+   - Support common actions: navigate, click, type, read content, take screenshots
+
+2. **AI Intent Recognition:**
+   - Detect browser-related prompts in chat messages using pattern matching
+   - Extract intentions (open website, login, read content, interact with elements)
+   - Parse credentials and target information from user messages
+   - Route browser commands through AI models for complex instructions
+
+3. **Chat Interface Integration:**
+   - Modify chat message handling to detect browser automation requests
+   - Add browser session state management to chat store
+   - Display browser screenshots and results within chat messages
+   - Handle browser errors and timeouts gracefully
+
+4. **Security & Safety:**
+   - Implement credential sanitization for sensitive information
+   - Add confirmation prompts for destructive actions
+   - Sandbox browser sessions to prevent unauthorized access
+   - Log all browser actions for audit purposes
+
+### Implementation Details
+
+#### Backend API Structure (`src/routes/api/browserbase/+server.ts`)
+- **Session Management:** Create, maintain, and destroy browser sessions
+- **Action Execution:** Navigate, click, type, screenshot, read content
+- **Error Handling:** Timeout management, element not found, page load failures
+- **Response Format:** Standardized JSON with action results, screenshots, errors
+
+#### Frontend Integration (`src/routes/(public)/chat/+page.svelte`)
+- **Intent Detection:** Regex patterns to identify browser commands
+- **Message Enhancement:** Display browser screenshots inline with chat messages
+- **Session State:** Track active browser sessions per conversation
+- **User Feedback:** Loading states, progress indicators, error messages
+
+#### AI Model Integration
+- **Command Parsing:** Let AI models interpret complex browser instructions
+- **Action Planning:** Break down multi-step browser workflows
+- **Content Extraction:** Use AI to read and summarize web content
+- **Smart Navigation:** AI-guided element selection and interaction
+
+### Browser Actions Supported
+1. **Navigation:** "open [website]", "go to [url]", "visit [page]"
+2. **Authentication:** "log in with [credentials]", "sign in to [service]"
+3. **Content Reading:** "read my [posts/messages]", "get the latest [content]"
+4. **Element Interaction:** "click [button]", "fill out [form]", "scroll to [section]"
+5. **Data Extraction:** "get text from [selector]", "extract [information]"
+6. **Screenshots:** "take a screenshot", "show me the page"
+
+### Security Considerations
+- **Credential Handling:** Prompt user for sensitive information, never store permanently
+- **Action Confirmation:** Require explicit confirmation for sensitive operations
+- **Session Isolation:** Each chat session gets isolated browser context
+- **Audit Logging:** Log all browser actions with timestamps and user context
+
+### Error Handling
+- **Network Issues:** Retry mechanisms, fallback options
+- **Element Not Found:** AI-assisted element discovery, user guidance
+- **Authentication Failures:** Clear error messages, retry options
+- **Page Load Timeouts:** Configurable timeouts, progress feedback
+
+### Checklist
+- [ ] Create Browserbase API integration service (`/api/browserbase/+server.ts`)
+- [ ] Implement browser session management and action execution
+- [ ] Add intent detection for browser commands in chat interface
+- [ ] Integrate browser screenshots and results display in chat messages
+- [ ] Add AI model routing for complex browser instructions
+- [ ] Implement security measures for credential handling
+- [ ] Add error handling and user feedback for browser operations
+- [ ] Test common use cases: navigation, login, content reading
+- [ ] Add audit logging for browser actions
+- [ ] Update chat interface to handle browser automation responses
