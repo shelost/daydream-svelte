@@ -116,6 +116,64 @@ The current Stan chat interface displays new words/tokens instantly as they stre
 4. Apply staggered animation delays for waterfall effect
 5. Let CSS handle the actual animations for smooth performance
 
+## Real-time Staggered Word Fade-in Animation for Streaming Text (`stan/+page.svelte`)
+
+**1. Problem Identified**
+
+The current text animation in `src/routes/(public)/stan/+page.svelte` applies a fade-in effect using `animation-delay` after the entire assistant response is loaded. This doesn't provide a real-time "waterfall" effect where each word animates as it streams in. The goal is to have each new word fade from opacity 0 to 1 individually and sequentially as the text streams, while maintaining live Markdown and Prism.js syntax highlighting.
+
+**2. Solution Outline**
+
+We will modify the streaming logic and the existing `MutationObserver` in `src/routes/(public)/stan/+page.svelte` to achieve a real-time word-by-word fade-in.
+
+*   **Post-Markdown/Prism Processing:** Animations will be applied *after* the Svelte Markdown component (`svelte-rune-markdown`) and Prism.js have processed the content. This means we'll be working with the HTML structure they generate.
+*   **Targeted DOM Updates & Word Wrapping:** A new function, `applyRealtimeWordAnimation`, will be triggered by the `MutationObserver`. This function will scan the message's rendered HTML content, identify text nodes, and determine which words are new based on a counter stored in `animatedWordsMap`. Only new words will be wrapped in `<span>` elements.
+*   **CSS Animation:** These spans will have a CSS class (e.g., `.streaming-word-fade-in`) that triggers an immediate opacity fade-in animation. The staggered "waterfall" effect will arise naturally from the sequential arrival and processing of words.
+*   **Animation Speed Control:** A JavaScript constant (`WORD_ANIMATION_DURATION_MS`) will control the `animation-duration` of the fade-in for each word.
+*   **State Management:** The `animatedWordsMap` will store the count of words already processed and animated for each message ID.
+
+**3. Implementation Details (`src/routes/(public)/stan/+page.svelte`)**
+
+*   **Constants:**
+    *   Define `WORD_ANIMATION_DURATION_MS` (e.g., `300` or `500`) for animation speed.
+*   **`animatedWordsMap`:**
+    *   This existing map will be used to store `Map<messageId, { processedWords: number }>` to track how many words have been wrapped for animation for each message.
+    *   Initialize `processedWords` to `0` for a message when its streaming begins in `handleOmnibarSubmit`.
+*   **New Function: `applyRealtimeWordAnimation(container: HTMLElement, messageId: string)`:**
+    *   Retrieves `processedWords` for the `messageId` from `animatedWordsMap`.
+    *   `let currentWordOrderInContainer = 0;` (This counter helps map words in the current DOM state to their overall order).
+    *   Uses a `TreeWalker` to iterate over all text nodes within the `container`.
+    *   For each text node:
+        *   Skips if the parent is already an animated span (e.g., `.streaming-word-fade-in`).
+        *   Splits `node.textContent` into an array of words and whitespace segments.
+        *   Iterates through these segments. If a segment is a word:
+            *   Increments `currentWordOrderInContainer`.
+            *   If `currentWordOrderInContainer > processedWords`:
+                *   This is a new word. It needs to be wrapped.
+                *   A `DocumentFragment` is used to replace the original text node with a mix of plain text (for already processed words in this node) and new `<span>` wrapped words.
+                *   The new `<span>` gets the class `.streaming-word-fade-in` and its `animation-duration` is set via inline style using `WORD_ANIMATION_DURATION_MS`.
+        *   After processing all segments of a text node, if any new words were wrapped, the original text node is replaced with the `DocumentFragment`.
+    *   Updates `animatedWordsMap.set(messageId, { processedWords: currentWordOrderInContainer })`.
+*   **Modify `setupStreamingContentObserver` function:**
+    *   The `MutationObserver` callback will now execute the following in order:
+        1.  `highlightCodeBlocks(container)` (for Prism.js syntax highlighting).
+        2.  `applyRealtimeWordAnimation(container, messageId)` (for the new word animations).
+*   **CSS:**
+    *   Define the `.streaming-word-fade-in` class and its `@keyframes fadeInWord` (opacity 0 to 1). The `animation-duration` will be applied inline via JavaScript.
+*   **Cleanup Old Animation:**
+    *   Remove the Svelte-defined `animateNewWords` function (lines approx. 181-219 in the provided file) which used `animation-delay`.
+    *   Remove the old CSS classes `.word-fade-in` and `.word-animated` if they are no longer used.
+
+**4. Checklist**
+    - [ ] Define `WORD_ANIMATION_DURATION_MS` in `stan/+page.svelte`.
+    - [ ] Initialize/Reset `processedWords` in `animatedWordsMap` when a new message stream starts.
+    - [ ] Implement the `applyRealtimeWordAnimation(containerElement, messageId)` function as described.
+    - [ ] Modify the `MutationObserver` callback in `setupStreamingContentObserver` to call `highlightCodeBlocks` then `applyRealtimeWordAnimation`.
+    - [ ] Add CSS for `.streaming-word-fade-in` and `@keyframes fadeInWord`.
+    - [ ] Remove the old `animateNewWords` function and its associated CSS.
+    - [ ] Test with various Markdown structures (plain text, bold, italic, lists, code blocks).
+    - [ ] Verify animation speed control and overall visual effect.
+
 ## Implement correct GPT-Image-1 edit endpoint
 
 ### Problem

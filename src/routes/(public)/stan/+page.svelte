@@ -11,8 +11,7 @@
   let PrismLoaded: boolean = false; // Keep at top-level
 
   // Word animation configuration
-  const WORD_FADE_DURATION = 2500; // milliseconds for each word to fade in (increased for visibility)
-  const WORD_STAGGER_DELAY = 200; // milliseconds between each word animation start
+  const WORD_ANIMATION_DURATION_MS = 500; // Duration for each word to fade in (milliseconds)
 
   interface Message {
     id: string;
@@ -139,33 +138,34 @@
     }, 2000);
   }
 
-  // Track animated words for each message to prevent re-animation
+  // Track animated words for each message
   let animatedWordsMap = new Map();
 
-  // Apply word animation to new content in the markdown container
-  function applyWordAnimation(container, messageId) {
-    if (!container) return;
+  // Apply fade animation to new words in real-time
+  function applyRealtimeWordAnimation(container: HTMLElement, messageId: string) {
+    if (!container || !PrismLoaded) return; // Also ensure Prism has loaded to avoid conflicts with its DOM changes
 
-    // Get or create word count for this message
-    if (!animatedWordsMap.has(messageId)) {
-      animatedWordsMap.set(messageId, 0); // Track total word count instead of Set
+    let messageState = animatedWordsMap.get(messageId);
+    if (!messageState) {
+      messageState = { processedWords: 0 };
+      animatedWordsMap.set(messageId, messageState);
     }
 
-    let currentWordCount = animatedWordsMap.get(messageId);
-    let globalWordIndex = 0;
+    let wordsInCurrentContainer = 0;
+    const newNodesToReplace = new Map(); // Store {originalNode: fragmentWithNewSpans}
 
-    // Walk through all text nodes
     const walker = document.createTreeWalker(
       container,
       NodeFilter.SHOW_TEXT,
       {
         acceptNode: (node) => {
-          // Skip empty text nodes
-          if (!node.textContent || node.textContent.trim() === '') {
+          // Skip if parent is already an animated span or part of a code block
+          const parent = node.parentElement;
+          if (parent && (parent.classList.contains('streaming-word-fade-in') || parent.closest('pre code'))) {
             return NodeFilter.FILTER_REJECT;
           }
-          // Skip if parent is already an animated word
-          if (node.parentElement?.classList.contains('animated-word')) {
+          // Skip empty text nodes
+          if (!node.textContent || !node.textContent.trim()) {
             return NodeFilter.FILTER_REJECT;
           }
           return NodeFilter.FILTER_ACCEPT;
@@ -173,54 +173,46 @@
       }
     );
 
-    const textNodesToProcess = [];
     let node;
     while (node = walker.nextNode()) {
-      textNodesToProcess.push(node);
+      const textContent = node.textContent || '';
+      // Split by word boundaries, keeping spaces and punctuation attached to words or as separate segments
+      const segments = textContent.split(/(\s+)/);
+      const fragment = document.createDocumentFragment();
+      let hasNewWordsInNode = false;
+
+      for (const segment of segments) {
+        if (segment.trim().length > 0) { // It's a word
+          wordsInCurrentContainer++;
+          if (wordsInCurrentContainer > messageState.processedWords) {
+            const span = document.createElement('span');
+            span.textContent = segment;
+            span.className = 'streaming-word-fade-in';
+            span.style.animationDuration = `${WORD_ANIMATION_DURATION_MS}ms`;
+            fragment.appendChild(span);
+            hasNewWordsInNode = true;
+          } else {
+            fragment.appendChild(document.createTextNode(segment));
+          }
+        } else { // It's whitespace
+          fragment.appendChild(document.createTextNode(segment));
+        }
+      }
+
+      if (hasNewWordsInNode) {
+        newNodesToReplace.set(node, fragment);
+      }
     }
 
-    // Process each text node
-    textNodesToProcess.forEach((textNode) => {
-      const text = textNode.textContent;
-      const parent = textNode.parentNode;
-
-      // Split text into words
-      const words = text.split(/(\s+)/);
-      const fragment = document.createDocumentFragment();
-
-      words.forEach((word) => {
-        if (word.trim()) {
-          if (globalWordIndex >= currentWordCount) {
-            // New word - animate it
-            const span = document.createElement('span');
-            span.className = 'animated-word';
-            span.textContent = word;
-            span.style.opacity = '0'; // Start at opacity 0
-            // Calculate delay based on how many new words we've seen
-            const newWordIndex = globalWordIndex - currentWordCount;
-            span.style.animationDelay = `${newWordIndex * WORD_STAGGER_DELAY}ms`;
-            span.style.animationDuration = `${WORD_FADE_DURATION}ms`;
-            fragment.appendChild(span);
-          } else {
-            // Already animated word
-            const span = document.createElement('span');
-            span.className = 'animated-word animation-complete';
-            span.textContent = word;
-            fragment.appendChild(span);
-          }
-          globalWordIndex++;
-        } else {
-          // Preserve whitespace
-          fragment.appendChild(document.createTextNode(word));
-        }
-      });
-
-      // Replace the text node
-      parent.replaceChild(fragment, textNode);
+    // Perform DOM replacements after iterating
+    newNodesToReplace.forEach((fragment, originalNode) => {
+      originalNode.parentNode?.replaceChild(fragment, originalNode);
     });
 
-    // Update the word count for this message
-    animatedWordsMap.set(messageId, globalWordIndex);
+    if (wordsInCurrentContainer > messageState.processedWords) {
+        messageState.processedWords = wordsInCurrentContainer;
+        animatedWordsMap.set(messageId, messageState);
+    }
   }
 
   // Create a mutation observer to detect new code blocks and text during streaming
@@ -252,21 +244,10 @@
         }
       }
 
-      // Apply word animations if there were text changes
+      // Apply animation to new words
       if (hasTextChanges) {
-        // Apply animations multiple times to catch new content
-        // Initial application
-        applyWordAnimation(container, messageId);
-
-        // Apply again after a short delay to catch any async rendering
-        setTimeout(() => {
-          applyWordAnimation(container, messageId);
-        }, 10);
-
-        // And once more after DOM settles
-        requestAnimationFrame(() => {
-          applyWordAnimation(container, messageId);
-        });
+        highlightCodeBlocks(container); // Highlight first
+        applyRealtimeWordAnimation(container, messageId); // Then animate
       }
     });
 
@@ -417,6 +398,8 @@
         modelUsed: currentSelectedTextModel
       }
     ];
+    // Initialize/reset processedWords count for the new assistant message
+    animatedWordsMap.set(assistantMessageId, { processedWords: 0 });
     // scrollToBottom(); // Will be handled by reactive messages update
 
     try {
@@ -721,14 +704,15 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
             return msg;
           });
 
-          // Immediately trigger animation for new content
+          // Apply animations immediately to new content
           await tick();
           const container = markdownContainers[assistantMessageId];
           if (container) {
-            // Apply animation right after content update
-            setTimeout(() => {
-              applyWordAnimation(container, assistantMessageId);
-            }, 0);
+            // Small delay to ensure DOM has updated
+            // The MutationObserver will now handle this
+            // setTimeout(() => {
+            //   animateNewWords(container, messageId);
+            // }, 10);
           }
         }
       }
@@ -740,7 +724,7 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
             ...msg,
             isStreaming: false,
             content: finalContent,
-            _previousContent: ''
+            _previousContent: '' // Clear previous content tracking
           };
         }
         return msg;
@@ -989,11 +973,11 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
           observer.disconnect();
           messageObservers.delete(message.id);
 
-          // Final highlighting and animation pass
+          // Final highlighting pass
           if (markdownContainers[message.id]) {
             highlightCodeBlocks(markdownContainers[message.id]);
-            // Apply final animation to any remaining words
-            applyWordAnimation(markdownContainers[message.id], message.id);
+            // Reset animated word count for this message (already handled by observer logic if stream ends)
+            // animatedWordsMap.delete(message.id);
           }
         }
       }
@@ -1224,8 +1208,8 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
                     highlightCodeBlocks(markdownContainers[message.id]);
                     if (message.isStreaming) {
                       setupStreamingContentObserver(markdownContainers[message.id], message.id);
-                      // Apply word animations immediately after render
-                      applyWordAnimation(markdownContainers[message.id], message.id);
+                      // Apply initial animation
+                      applyRealtimeWordAnimation(markdownContainers[message.id], message.id);
                     }
                   }} />
                   <!-- Cursor and thinking text container -->
@@ -2816,6 +2800,35 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
     display: inline;
     opacity: 1 !important;
     animation: none;
+    transform: translateY(0);
+    filter: blur(0);
+  }
+
+  /* Word fade-in animation for streaming text */
+  :global(.streaming-word-fade-in) {
+    display: inline;
+    animation-name: fadeInWord;
+    animation-timing-function: cubic-bezier(0.25, 0.1, 0.25, 1);
+    animation-fill-mode: forwards;
+    /* animation-duration is set inline by JS */
+    opacity: 0; /* Start invisible */
+  }
+
+  @keyframes fadeInWord {
+    from {
+      opacity: 0;
+      transform: translateY(3px); /* Optional: slight upward movement */
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  /* Already animated words */
+  :global(.word-animated) {
+    display: inline;
+    opacity: 1;
     transform: translateY(0);
     filter: blur(0);
   }
