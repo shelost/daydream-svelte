@@ -436,6 +436,7 @@
     display: flex;
     flex-direction: column;
     align-items: center;
+
     gap: 8px;
     z-index: 10; /* Ensure it's above other content if fixed */
     box-sizing: border-box;
@@ -458,6 +459,7 @@
       box-shadow: 0 16px 32px 8px rgba(black, 0.3);
       backdrop-filter: blur(20px);
       gap: 0px;
+      border: 1px solid #e0e0e0;
     }
 
     .text-input-area-omnibar {
@@ -609,7 +611,7 @@
     &.light{
       .input-form{
         background: white;
-        box-shadow: 0 40px 32px rgba(#030025, 0.12);
+        box-shadow: -6px 24px 24px rgba(#030025, 0.12);
         textarea{
           color: #030025;
         }

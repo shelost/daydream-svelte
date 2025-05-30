@@ -205,6 +205,68 @@ if (!LLM_API_KEY) {
 const CU_PROVIDER = 'openai'
 const CU_MODEL = CU_PROVIDER === 'openai' ? 'computer-use-preview' : 'claude-3-7-sonnet-20250219';
 
+// Function to interpret direct commands for navigation or action
+function interpretDirectCommand(commandText: string): { type: 'navigate' | 'act'; url?: string; actionString?: string } {
+  const normalizedCommand = commandText.toLowerCase().trim();
+
+  // Navigation patterns
+  const navKeywords = ['go to', 'open', 'navigate to', 'visit'];
+  for (const keyword of navKeywords) {
+    if (normalizedCommand.startsWith(keyword)) {
+      let target = normalizedCommand.substring(keyword.length).trim();
+      // Remove potential leading/trailing quotes
+      target = target.replace(/^['"]|['"]$/g, '');
+
+      // Common website name resolution
+      const commonSites = {
+        'google': 'https://www.google.com',
+        'youtube': 'https://www.youtube.com',
+        'openai': 'https://www.openai.com',
+        'github': 'https://www.github.com',
+        'linkedin': 'https://www.linkedin.com',
+        'facebook': 'https://www.facebook.com',
+        'twitter': 'https://www.twitter.com',
+        'amazon': 'https://www.amazon.com',
+        'wikipedia': 'https://www.wikipedia.org',
+      };
+
+      if (commonSites[target]) {
+        return { type: 'navigate', url: commonSites[target] };
+      }
+
+      // Check if it looks like a domain/URL
+      if (target.includes('.') && !target.includes(' ')) {
+        const url = target.startsWith('http://') || target.startsWith('https://') ? target : `https://${target}`;
+        return { type: 'navigate', url };
+      }
+
+      // If it's a navigation command but not a clear URL, treat as an action string
+      // This allows Stagehand's `page.act` to attempt navigation based on context
+      // e.g., "go to my profile page" or "open the first link"
+      return { type: 'act', actionString: `navigate to ${target}` };
+    }
+  }
+
+  // Default to action
+  // Refine some common action phrases for clarity for page.act()
+  if (normalizedCommand.startsWith('click ') && normalizedCommand.length > 'click '.length) {
+    return { type: 'act', actionString: `click the ${normalizedCommand.substring('click '.length)} button or link` };
+  }
+  if (normalizedCommand.startsWith('type ') && normalizedCommand.includes(' in ')) {
+    // "type 'hello' in 'search bar'"
+    const parts = normalizedCommand.match(/type ['"]?(.*?)['"]? in ['"]?(.*?)['"]?/);
+    if (parts && parts.length === 3) {
+      return { type: 'act', actionString: `type "${parts[1]}" into the ${parts[2]}` };
+    }
+  }
+   if (normalizedCommand.startsWith('search for ') && normalizedCommand.length > 'search for '.length) {
+    return { type: 'act', actionString: normalizedCommand }; // Already a good action string
+  }
+
+  // Fallback to the original command as an action
+  return { type: 'act', actionString: commandText };
+}
+
 // Function to check if current session is still valid
 async function isSessionValid(): Promise<boolean> {
   if (!globalStagehandSession || !globalSessionId) {
@@ -557,10 +619,21 @@ export async function POST({ request }) {
 
             if (commandType === 'direct') {
               if (!globalStagehandSession?.page) throw new Error('Stagehand page not available for direct command.');
-              // For page.act, the result might not be as structured as agent.execute.
-              // We'll rely on logs and final screenshot.
-              await globalStagehandSession.page.act({ action: command });
-              executionResponse = { message: `Direct action "${command}" attempted.` , actions: [{type: 'direct_act', description: command, parameters: command}]}; // Simulate an action for frontend
+
+              const interpretation = interpretDirectCommand(command);
+              console.log('🤖 Direct command interpretation:', interpretation);
+
+              if (interpretation.type === 'navigate' && interpretation.url) {
+                await globalStagehandSession.page.goto(interpretation.url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+                executionResponse = { message: `Navigated to ${interpretation.url}`, actions: [{type: 'navigate', description: `Navigated to ${interpretation.url}`, parameters: interpretation.url}]};
+              } else if (interpretation.actionString) {
+                await globalStagehandSession.page.act({ action: interpretation.actionString });
+                executionResponse = { message: `Direct action "${interpretation.actionString}" attempted.`, actions: [{type: 'direct_act', description: interpretation.actionString, parameters: interpretation.actionString}]};
+              } else {
+                 // Fallback if interpretation is somehow invalid (should not happen with current logic)
+                await globalStagehandSession.page.act({ action: command });
+                executionResponse = { message: `Direct action (fallback) "${command}" attempted.` , actions: [{type: 'direct_act', description: command, parameters: command}]};
+              }
             } else { // 'agent' commandType
               const activeAgent = globalStagehandSession.agent({
                   provider: agentProvider,
@@ -641,8 +714,20 @@ export async function POST({ request }) {
 
     if (commandType === 'direct') {
       if (!globalStagehandSession?.page) throw new Error('Stagehand page not available for direct command.');
-      await globalStagehandSession.page.act({ action: command });
-      executionResponse = { message: `Direct action "${command}" attempted.`, actions: [{type: 'direct_act', description: command, parameters: command}] };
+
+      const interpretation = interpretDirectCommand(command);
+      console.log('🤖 Direct command interpretation (non-streaming):', interpretation);
+
+      if (interpretation.type === 'navigate' && interpretation.url) {
+        await globalStagehandSession.page.goto(interpretation.url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+        executionResponse = { message: `Navigated to ${interpretation.url}`, actions: [{type: 'navigate', description: `Navigated to ${interpretation.url}`, parameters: interpretation.url}]};
+      } else if (interpretation.actionString) {
+        await globalStagehandSession.page.act({ action: interpretation.actionString });
+        executionResponse = { message: `Direct action "${interpretation.actionString}" attempted.`, actions: [{type: 'direct_act', description: interpretation.actionString, parameters: interpretation.actionString}]};
+      } else {
+        await globalStagehandSession.page.act({ action: command });
+        executionResponse = { message: `Direct action (fallback) "${command}" attempted.`, actions: [{type: 'direct_act', description: command, parameters: command}] };
+      }
     } else { // 'agent'
       const activeAgent = globalStagehandSession.agent({
           provider: agentProvider,

@@ -3195,3 +3195,51 @@ Users can prefix their prompts to direct them to different backends:
 *   Provides users with explicit control over how their prompts are interpreted and executed.
 *   Leverages the appropriate backend for the task, potentially improving efficiency and reducing costs (e.g., not using the full CU agent for simple page navigation).
 *   Enables standard chatbot functionality within the same interface.
+
+## Stagehand Direct Command Parsing Enhancement (DONE)
+
+**1. Problem Identified**
+
+Direct Stagehand commands (prefixed with `>` in the chat UI, e.g., `>go to openai.com`) are passed almost verbatim to the `page.act({ action: command })` method in `src/routes/api/stagehand/+server.ts`. This is not always effective for navigation tasks, as `page.act()` might not correctly interpret simple navigation phrases, or it might require very specific phrasing that users are unlikely to provide. The goal is to make these direct commands more robust, especially for common navigation actions.
+
+**2. Solution Outline**
+
+To improve the reliability of direct Stagehand commands, particularly for navigation, we will implement a parsing layer within `src/routes/api/stagehand/+server.ts`.
+
+*   **Create an `interpretDirectCommand` function:** This new function will be responsible for analyzing the raw text of a direct command (the string after the `>` prefix).
+    *   **Navigation Intent:** If the command clearly indicates a navigation action (e.g., using keywords like "go to", "open", "navigate to", "visit"), the function will attempt to extract or resolve a target URL.
+        *   It will recognize common website names (e.g., "google", "youtube", "openai") and map them to their canonical URLs (e.g., `https://www.google.com`).
+        *   It will also attempt to normalize user-provided URLs (e.g., ensuring `http://` or `https://` is present if the target looks like a domain name).
+        *   If a valid URL is successfully determined, the function will return an object indicating a `navigate` action with the resolved URL (e.g., `{ type: 'navigate', url: 'https://www.openai.com' }`).
+        *   If a navigation intent is detected but a clear URL cannot be resolved (e.g., "go to my profile page"), it will formulate a descriptive action string for `page.act()` (e.g., `{ type: 'act', actionString: 'navigate to my profile page' }`).
+    *   **Action Intent:** For other types of commands (e.g., "click login button", "search for AI news", "type 'hello' in search bar"), the function may refine the command string to be a clearer instruction for `page.act()`. It will then return an object indicating an `act` action with the (potentially refined) command string (e.g., `{ type: 'act', actionString: 'click the login button or link' }`).
+    *   **Fallback:** If no specific intent is strongly matched, the function will default to returning an `act` action with the original command string.
+*   **Modify the `POST` handler in `src/routes/api/stagehand/+server.ts`:**
+    *   When `commandType` is `'direct'`, the user's command (the text after `>`) will first be processed by `interpretDirectCommand`.
+    *   If the interpretation result is `{ type: 'navigate', url: ... }`, the server will use `globalStagehandSession.page.goto(url, ...)` for more reliable navigation.
+    *   If the interpretation result is `{ type: 'act', actionString: ... }`, the server will use `globalStagehandSession.page.act({ action: actionString })`.
+    *   The response message (`executionResponse`) sent back to the client will be updated to accurately reflect whether a direct navigation (`page.goto`) or a general action (`page.act`) was performed, and what the target URL or action string was.
+*   This approach allows for more intelligent handling of common direct commands, improving the user experience by making simple navigation requests work as expected, while still leveraging the general-purpose `page.act()` for more complex or ambiguous direct instructions.
+
+**3. Implementation Checklist**
+
+*   [x] Define and implement the `interpretDirectCommand` function in `src/routes/api/stagehand/+server.ts` with logic for:
+    *   [x] Recognizing navigation keywords.
+    *   [x] Mapping common site names to URLs.
+    *   [x] Normalizing potential URLs (adding scheme).
+    *   [x] Refining common action phrases for `page.act()`.
+    *   [x] Returning a structured object (`{ type: 'navigate', url: '...' }` or `{ type: 'act', actionString: '...' }`).
+*   [x] Integrate `interpretDirectCommand` into the `POST` request handler in `src/routes/api/stagehand/+server.ts` for `commandType === 'direct'`.
+    *   [x] Call `page.goto()` if `interpretDirectCommand` returns a `navigate` type with a URL.
+    *   [x] Call `page.act()` if `interpretDirectCommand` returns an `act` type with an action string.
+    *   [x] Update `executionResponse` messages to be more specific about the action taken (navigated to URL vs. attempted action string).
+    *   [x] Ensure this logic is applied in both streaming and non-streaming execution paths.
+*   [x] Add console logging for the interpreted command to aid debugging.
+*   [x] Test with various direct commands:
+    *   [x] `>go to youtube.com`
+    *   [x] `>open google`
+    *   [x] `>visit openai`
+    *   [x] `>navigate to my dashboard` (should use `page.act` with refined string)
+    *   [x] `>click login`
+    *   [x] `>search for sveltekit`
+    *   [x] `>type 'hello world' in the chat input`

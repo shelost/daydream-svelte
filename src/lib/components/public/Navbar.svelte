@@ -214,13 +214,13 @@
                     font-size: 20px;
                     font-weight: 700;
                     line-height: 100%;
-                    color: rgba(white, .3);
+                    color: rgba(#030025, .2);
                     text-align: center;
                     user-select: none;
                     filter: drop-shadow(0 4px 8px rgba(black, .1));
                 }
                 &:hover{
-                    background: rgba(white, .1);
+                    background: rgba(#030025, .1);
                     border-radius: 12px;
                 }
                 &.disabled{
@@ -229,7 +229,7 @@
                 &.active{
                     //background: rgba(#e0e0e0, .8);
                     span{
-                        color: rgba(white, 1);
+                        color: rgba(#030025, 1);
                         filter: none;
                     }
                     &:hover{

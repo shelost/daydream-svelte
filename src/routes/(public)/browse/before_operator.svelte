@@ -21,7 +21,7 @@
   // Unified event log entry
   interface EventLogEntry {
     id: string; // Unique ID for Svelte #each key
-    type: 'reasoning' | 'action' | 'summary';
+    type: 'reasoning' | 'action';
     description: string;
     fullDetails: any; // Store the original action/reasoning object
   }
@@ -55,44 +55,54 @@
   let isBrowserLoading: boolean = false;
   let browserUrl: string = 'https://google.com';
   let showBrowserViewport: boolean = true;
-  let isCleaningUpStaleSession: boolean = false; // New flag
 
-  // Reactive statement to ensure loader hides once liveViewUrl is available
-  $: if (browserLiveViewUrl && isBrowserLoading) {
-    isBrowserLoading = false;
-  }
+  // Browser auto-initialization function
+  async function initializeBrowser() {
+    if (browserSessionId) return;
 
-  // Browser auto-initialization function - now split to allow waiting for cleanup
-  async function initializeNewStagehandSession() {
-    if (browserSessionId || isCleaningUpStaleSession) return; // Don't init if already exists or cleaning up
-
-    console.log("🚀 Initiating new Stagehand session (e.g., navigating to linkedin.com)...");
-    isBrowserLoading = !browserLiveViewUrl;
-    showBrowserViewport = true;
+    console.log('🚀 Auto-initializing browser session and navigating to LinkedIn...');
+    isBrowserLoading = true;
+    showBrowserViewport = true; // Show viewport during loading
 
     try {
-      const response = await fetch('/api/stagehand', {
+      const response = await fetch('/api/browserbase', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          initUrl: 'https://www.linkedin.com', // Direct bootstrap URL
-          chatId: 'init-' + generateUniqueId(),
-          stream: false
+          message: 'go to https://linkedin.com',
+          chatId: 'auto-init-' + generateUniqueId()
         })
       });
 
       if (response.ok) {
         const result = await response.json();
-        console.log('✅ Initial Stagehand session established:', result);
-        if (result.sessionId) browserSessionId = result.sessionId;
-        if (result.liveViewUrl) browserLiveViewUrl = result.liveViewUrl;
-        if (result.screenshot) browserScreenshot = result.screenshot;
-        showBrowserViewport = true;
+        console.log('✅ Browser auto-initialized and navigated to LinkedIn:', result);
+
+        // Extract session ID and live view URL
+        if (result.sessionId) {
+          browserSessionId = result.sessionId;
+        }
+
+        if (result.liveViewUrl) {
+          browserLiveViewUrl = result.liveViewUrl;
+          console.log('🔗 Browser live view URL obtained:', browserLiveViewUrl);
+        }
+
+        // Extract screenshot if available from results
+        if (result.results && result.results.length > 0) {
+          const screenshotResult = result.results.find(r => r.data && r.data.screenshot);
+          if (screenshotResult) {
+            browserScreenshot = screenshotResult.data.screenshot;
+            console.log('📸 Browser screenshot obtained');
+          }
+        }
+
+        console.log('🎉 Browser viewport should now be visible with LinkedIn loaded');
       } else {
-        console.warn('⚠️ Failed to establish initial Stagehand session:', response.status, await response.text());
+        console.error('❌ Browser initialization failed:', await response.text());
       }
     } catch (error) {
-      console.warn('⚠️ Error establishing initial Stagehand session:', error);
+      console.error('❌ Browser auto-initialization failed:', error);
     } finally {
       isBrowserLoading = false;
     }
@@ -252,7 +262,7 @@
       {
         id: generateUniqueId(),
         role: 'assistant',
-        content: "Hi there! I'm your AI-powered browser automation assistant. I can understand natural language commands and translate them into precise browser actions.\n\n**Try natural commands like:**\n• 'find Vitalii Dodonov\'s LinkedIn profile' - I'll navigate to LinkedIn and search for the person\n• 'go to OpenAI\'s website' - I'll understand you want openai.com\n• 'search for AI news' - I'll search on the current page or find a search engine\n• 'read the latest posts' - I'll extract content from the page\n• 'take a screenshot' - I'll capture the current page\n\nI use advanced AI to understand your intent, then execute precise browser actions. The live browser window shows real-time results!"
+        content: "Hi there! I'm your AI-powered browser automation assistant. I can understand natural language commands and translate them into precise browser actions.\\n\\n**Try natural commands like:**\\n• 'find Vitalii Dodonov\'s LinkedIn profile' - I'll navigate to LinkedIn and search for the person\\n• 'go to OpenAI\'s website' - I'll understand you want openai.com\\n• 'search for AI news' - I\'ll search on the current page or find a search engine\\n• 'read the latest posts' - I\'ll extract content from the page\\n• 'take a screenshot' - I\'ll capture the current page\\n\\nI use advanced AI to understand your intent, then execute precise browser actions. The live browser window shows real-time results!"
       }
     ];
     isStartState = true;
@@ -347,165 +357,33 @@
     })();
   }
 
-  // Unified configuration for each supported LLM model
-  // provider:  "openai" | "anthropic" | "google"
-  // endpoint:  API route that will be called for the provider
-  const llmApiConfig = {
-    'claude-3-7-sonnet-20250219': { provider: 'anthropic', endpoint: '/api/ai/anthropic' },
-    'gpt-4o': { provider: 'openai', endpoint: '/api/ai/chat' },
-    'gpt-4o-mini': { provider: 'openai', endpoint: '/api/ai/chat' },
-    'gpt-3.5-turbo': { provider: 'openai', endpoint: '/api/ai/chat' },
-    'gemini-2.5-pro-preview-05-06': { provider: 'google', endpoint: '/api/ai/google' },
-    'gemini-2.5-flash-preview-05-20': { provider: 'google', endpoint: '/api/ai/google' },
-  };
 
-  async function handleStandardChat(promptText: string) {
-    const userMessageId = messages.find((m) => m.role === 'user' && m.content === promptText)?.id || generateUniqueId();
-    const assistantMessageId = generateUniqueId();
+  // Main omnibar submit function with browser automation
+  async function handleOmnibarSubmit() {
+    const currentPrompt = omnibarPrompt.trim();
+    if (!currentPrompt || isOverallLoading) return;
 
-    // Update or append user message
-    if (!messages.find((m) => m.id === userMessageId)) {
-      messages = [...messages, { id: userMessageId, role: 'user', content: promptText }];
-    } else {
-      messages = messages.map((m) => (m.id === userMessageId ? { ...m, content: promptText } : m));
-    }
-
-    // Assistant placeholder
-    messages = [
-      ...messages,
-      {
-        id: assistantMessageId,
-        role: 'assistant',
-        content: '',
-        isLoading: true,
-        isStreaming: true,
-        modelUsed: getModelLabel(currentSelectedTextModel)
-      }
-    ];
-
-    isOverallLoading = true;
     currentAbortController = new AbortController();
 
-    // Determine provider config
-    const config = llmApiConfig[currentSelectedTextModel] || { provider: 'openai', endpoint: '/api/ai/chat' };
+    if (isStartState) {
+      isStartState = false;
+    }
 
-    // Build request payload based on provider expectations
-    let requestBody: any = { model: currentSelectedTextModel };
-
-    if (config.provider === 'openai') {
-      requestBody.messagesHistory = messages
-        .filter((m) => m.id !== assistantMessageId && m.role !== 'system')
-        .map((m) => ({ role: m.role, content: m.content }));
+    isOverallLoading = true;
+    if (!browserSessionId || !browserLiveViewUrl) {
+      showBrowserViewport = true;
+      isBrowserLoading = true;
     } else {
-      // For Anthropic & Google endpoints
-      requestBody.prompt = promptText;
+      showBrowserViewport = true;
+      isBrowserLoading = false;
+      console.log('🎯 Keeping browser viewport visible for real-time actions');
     }
 
-    console.log(`💬 Standard chat via ${config.provider.toUpperCase()} (${currentSelectedTextModel}) → ${config.endpoint}`);
+    const userMessageId = generateUniqueId();
+    messages = [...messages, { id: userMessageId, role: 'user', content: currentPrompt }];
+    omnibarPrompt = '';
 
-    try {
-      const response = await fetch(config.endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(requestBody),
-        signal: currentAbortController.signal
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`HTTP ${response.status}: ${errorText || response.statusText}`);
-      }
-
-      const reader = response.body?.getReader();
-      const decoder = new TextDecoder();
-      if (!reader) throw new Error('Failed to get response reader for standard chat.');
-
-      let streamedContent = '';
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        const chunkStr = decoder.decode(value, { stream: true });
-
-        // Skip API log metadata if present
-        if (chunkStr.trim().startsWith('{') && chunkStr.includes('"apiLogEntry"')) {
-          continue;
-        }
-
-        // Attempt to parse OpenAI SSE format; fall back to raw text otherwise
-        let processed = false;
-        const lines = chunkStr.split('\n');
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            const jsonData = line.substring(6);
-            if (jsonData.trim() === '[DONE]') {
-              processed = true;
-              continue;
-            }
-            try {
-              const parsed = JSON.parse(jsonData);
-              if (parsed.choices && parsed.choices[0]?.delta?.content) {
-                streamedContent += parsed.choices[0].delta.content;
-                processed = true;
-              }
-            } catch (e) {
-              /* ignore JSON errors */
-            }
-          }
-        }
-
-        if (!processed) {
-          streamedContent += chunkStr;
-        }
-
-        messages = messages.map((msg) =>
-          msg.id === assistantMessageId ? { ...msg, content: streamedContent, isLoading: false, isStreaming: true } : msg
-        );
-        await tick();
-        scrollToBottom();
-      }
-
-      messages = messages.map((msg) =>
-        msg.id === assistantMessageId ? { ...msg, isStreaming: false, rawContent: streamedContent } : msg
-      );
-
-    } catch (error: any) {
-      console.error('Error during standard chat:', error);
-      messages = messages.map((msg) =>
-        msg.id === assistantMessageId
-          ? {
-              ...msg,
-              isLoading: false,
-              isStreaming: false,
-              error: error.message || 'Failed to get response from chat model.',
-              content: `Error: ${error.message || 'Failed to get response from chat model.'}`
-            }
-          : msg
-      );
-    } finally {
-      isOverallLoading = false;
-      if (currentAbortController && !currentAbortController.signal.aborted) {
-        currentAbortController = null;
-      }
-      await tick();
-      scrollToBottom();
-    }
-  }
-
-  // Generic handler for Stagehand (Agent and Direct Browser commands)
-  async function handleStagehandCommand(promptText: string, commandType: 'agent' | 'direct') {
-    const userMessageId = messages.find(m => m.role === 'user' && m.content.endsWith(promptText))?.id || generateUniqueId();
     const assistantMessageId = generateUniqueId();
-
-    // Update existing user message or add new one
-    const fullUserPrompt = commandType === 'agent' ? `@${promptText}` : `>${promptText}`;
-    if (!messages.find(m => m.id === userMessageId)) {
-      messages = [...messages, { id: userMessageId, role: 'user', content: fullUserPrompt }];
-    } else {
-       messages = messages.map(m => m.id === userMessageId ? { ...m, content: fullUserPrompt } : m);
-    }
-
-
     messages = [
       ...messages,
       {
@@ -515,109 +393,84 @@
         eventLog: [],
         isLoading: true,
         isStreaming: true,
-        modelUsed: commandType === 'agent' ? 'Stagehand CU Agent' : 'Stagehand Direct Browser'
+        modelUsed: 'Stagehand AI Browser'
       }
     ];
 
-    isOverallLoading = true;
-    currentAbortController = new AbortController();
-
-    if (!browserLiveViewUrl && commandType !== 'agent') { // Don't auto-show browser for agent unless it was already up
-      isBrowserLoading = true;
-    }
-    showBrowserViewport = true; // Always attempt to show for any browser interaction
-
     try {
-      console.log(`🚀 Starting Stagehand command (type: ${commandType}):`, promptText);
-
-      const response = await fetch('/api/stagehand', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+      console.log('🚀 Sending command to Stagehand API:', currentPrompt);
+      const stagehandResponse = await fetch('/api/stagehand', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          command: promptText,
-          chatId: userMessageId,
-          stream: true,
-          commandType: commandType // 'agent' or 'direct'
+          command: currentPrompt,
+          chatId: userMessageId
         }),
-        signal: currentAbortController?.signal
+          signal: currentAbortController?.signal
       });
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`HTTP ${response.status}: ${errorText || response.statusText}`);
-      }
+      console.log('📡 Stagehand API response status:', stagehandResponse.status);
 
-      const reader = response.body?.getReader();
-      const decoder = new TextDecoder();
-      if (!reader) throw new Error('Failed to get response reader for Stagehand command.');
+      if (stagehandResponse.ok) {
+        const stagehandResult = await stagehandResponse.json();
+        console.log('🤖 Stagehand API result:', stagehandResult);
 
-      let buffer = '';
-      let finalData: any = null;
-      let currentEventType = '';
+        let responseContent = stagehandResult.message || "Stagehand processed the command.";
+        const interleavedEvents: EventLogEntry[] = [];
 
-      // eslint-disable-next-line no-constant-condition
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
-
-        for (const line of lines) {
-          if (line.startsWith('event: ')) {
-            currentEventType = line.slice(7).trim();
-          } else if (line.startsWith('data: ') && line.trim() !== 'data: ') {
-            try {
-              const data = JSON.parse(line.slice(6));
-              if (currentEventType === 'pill') {
-                messages = messages.map((m) =>
-                  m.id === assistantMessageId
-                    ? { ...m, eventLog: [...(m.eventLog || []), data] }
-                    : m
-                );
-              } else if (currentEventType === 'start') {
-                messages = messages.map((m) =>
-                  m.id === assistantMessageId
-                    ? { ...m, content: data.message || 'Starting execution...' }
-                    : m
-                );
-              } else if (currentEventType === 'session') {
-                if (data.sessionId) browserSessionId = data.sessionId;
-                if (data.liveViewUrl) browserLiveViewUrl = data.liveViewUrl;
-                showBrowserViewport = true;
-              } else if (currentEventType === 'complete') {
-                finalData = data;
-              } else if (currentEventType === 'error') {
-                throw new Error(data.error || 'Streaming error occurred for Stagehand command');
-              }
-              currentEventType = '';
-            } catch (parseError) {
-              console.warn('⚠️ Failed to parse SSE data from Stagehand:', parseError, 'Line:', line);
+        if (stagehandResult.actionsPerformed && Array.isArray(stagehandResult.actionsPerformed)) {
+          stagehandResult.actionsPerformed.forEach((performedAction: any, index: number) => {
+            // 1. Add reasoning step if it exists and is a string
+            if (performedAction && typeof performedAction.reasoning === 'string' && performedAction.reasoning.trim() !== '') {
+              interleavedEvents.push({
+                id: generateUniqueId() + `-reason-${index}`,
+                type: 'reasoning',
+                description: performedAction.reasoning,
+                fullDetails: performedAction
+              });
             }
-          }
+
+            // 2. Add the main action step
+            let actionDescription = "Unknown action";
+            if (typeof performedAction === 'string') { // Should not happen if reasoning is a property
+              actionDescription = performedAction;
+            } else if (performedAction && performedAction.description) {
+              actionDescription = performedAction.description;
+            } else if (performedAction && performedAction.type) { // Construct description if not present
+              actionDescription = `Performed: ${performedAction.type}`;
+              if (performedAction.target) actionDescription += ` on "${performedAction.target}"`;
+              if (performedAction.query) actionDescription += ` for "${performedAction.query}"`;
+              if (performedAction.url) actionDescription += ` to ${performedAction.url}`;
+              if (performedAction.text) actionDescription += ` with text "${performedAction.text}"`;
+            } else {
+              try {
+                actionDescription = `Executed: ${JSON.stringify(performedAction)}`;
+              } catch { /* ignore */ }
+            }
+            interleavedEvents.push({
+              id: generateUniqueId() + `-action-${index}`,
+              type: 'action',
+              description: actionDescription,
+              fullDetails: performedAction
+            });
+          });
         }
-        await tick();
-        scrollToBottom();
-      }
 
-      if (finalData) {
-        let responseContent = typeof finalData.message === 'string' ? finalData.message : JSON.stringify(finalData.message, null, 2);
-        if (!responseContent && commandType === 'direct') responseContent = `Direct action "${promptText}" completed.`
-        else if (!responseContent) responseContent = "Stagehand processed the command.";
+        if (stagehandResult.data) {
+          responseContent += `\\n\\n**Extracted Data:**\\n\`\`\`json\\n${JSON.stringify(stagehandResult.data, null, 2)}\\n\`\`\``;
+        }
 
+        if (stagehandResult.screenshot) {
+          browserScreenshot = stagehandResult.screenshot;
+        }
+        if (stagehandResult.liveViewUrl) {
+          browserLiveViewUrl = stagehandResult.liveViewUrl;
+        }
+        if (stagehandResult.sessionId) {
+          browserSessionId = stagehandResult.sessionId;
+        }
 
-        const summaryPill: EventLogEntry = {
-          id: generateUniqueId() + '-summary',
-          type: 'summary',
-          description: `Stagehand ${commandType} completed ${finalData.actionsPerformed?.length || 0} actions`,
-          fullDetails: {
-            actionsPerformed: finalData.actionsPerformed || [],
-            data: finalData.data,
-            success: finalData.success,
-            modelUsed: finalData.modelUsed,
-          }
-        };
+        showBrowserViewport = true;
 
         messages = messages.map(msg =>
           msg.id === assistantMessageId
@@ -626,93 +479,60 @@
                 content: responseContent,
                 isLoading: false,
                 isStreaming: false,
-                modelUsed: finalData.modelUsed || (commandType === 'agent' ? 'Stagehand CU Agent' : 'Stagehand Direct Browser'),
-                eventLog: [...(msg.eventLog || []), summaryPill]
+                modelUsed: stagehandResult.modelUsed || 'Stagehand AI Browser'
               }
-            : msg
+              : msg
         );
 
-        if (finalData.screenshot) browserScreenshot = finalData.screenshot;
-        if (finalData.liveViewUrl) browserLiveViewUrl = finalData.liveViewUrl;
-        if (finalData.sessionId) browserSessionId = finalData.sessionId;
-        showBrowserViewport = true;
-      } else {
-        messages = messages.map(msg =>
-          msg.id === assistantMessageId
-            ? { ...msg, content: "Stagehand execution completed.", isLoading: false, isStreaming: false }
-            : msg
-        );
-      }
+        if (interleavedEvents.length > 0) {
+          streamEvents(assistantMessageId, interleavedEvents);
+        }
 
+        } else {
+        const errorResult = await stagehandResponse.json().catch(() => ({ error: 'Failed to parse error response from Stagehand API' }));
+        console.error('❌ Stagehand API error:', errorResult);
+            messages = messages.map(msg =>
+              msg.id === assistantMessageId
+            ? {
+                ...msg,
+                content: `Error with Stagehand: ${errorResult.error || stagehandResponse.statusText}`,
+                isLoading: false,
+                isStreaming: false,
+                error: errorResult.error || stagehandResponse.statusText
+              }
+                : msg
+            );
+          }
     } catch (error: any) {
-      console.error(`Error during Stagehand command (type: ${commandType}):`, error);
+      console.error('Error during Stagehand interaction:', error);
       if (error.name === 'AbortError') {
+        console.log('Request was aborted by user');
         messages = messages.map(msg =>
-          msg.id === assistantMessageId && msg.isLoading
+            msg.id === assistantMessageId && msg.isLoading
             ? { ...msg, content: "Operation aborted.", isLoading: false, isStreaming: false }
             : msg
         );
-      } else {
-        messages = messages.map(msg =>
-          msg.id === assistantMessageId
-            ? {
-                ...msg,
-                isLoading: false,
-                isStreaming: false,
-                error: error.message || 'Failed to get response from Stagehand.',
-                content: `Error: ${error.message || 'Failed to get response from Stagehand.'}`
-              }
-            : msg
-        );
+        return;
       }
+      messages = messages.map(msg =>
+        msg.id === assistantMessageId
+          ? {
+              ...msg,
+              isLoading: false,
+              isStreaming: false,
+              error: error.message || 'Unknown error with Stagehand',
+              content: `Error: ${error.message || 'Failed to get response from Stagehand.'}`,
+            }
+          : msg
+      );
     } finally {
-      isOverallLoading = false;
+        isOverallLoading = false;
       isBrowserLoading = false;
       if (currentAbortController && !currentAbortController.signal.aborted) {
         currentAbortController = null;
       }
-      await tick();
-      scrollToBottom();
     }
   }
-
-  // Main omnibar submit function - NOW A DISPATCHER
-  async function handleOmnibarSubmit() {
-    const currentPromptValue = omnibarPrompt.trim();
-    if (!currentPromptValue || isOverallLoading) return;
-
-    if (isStartState) {
-      isStartState = false;
-    }
-
-    // Add user message immediately
-    const userMessageId = generateUniqueId();
-    messages = [...messages, { id: userMessageId, role: 'user', content: currentPromptValue }];
-    omnibarPrompt = ''; // Clear omnibar after capturing prompt
-    await tick();
-    scrollToBottom();
-
-    if (currentPromptValue.startsWith('@')) {
-      const commandText = currentPromptValue.substring(1).trim();
-      if (commandText) {
-        await handleStagehandCommand(commandText, 'agent');
-      } else {
-         messages = [...messages, { id: generateUniqueId(), role: 'assistant', content: "Agent command cannot be empty after '@'.", modelUsed: "System" }];
-         isOverallLoading = false;
-      }
-    } else if (currentPromptValue.startsWith('>')) {
-      const commandText = currentPromptValue.substring(1).trim();
-      if (commandText) {
-        await handleStagehandCommand(commandText, 'direct');
-      } else {
-        messages = [...messages, { id: generateUniqueId(), role: 'assistant', content: "Browser command cannot be empty after '>'.", modelUsed: "System" }];
-        isOverallLoading = false;
-      }
-    } else {
-      await handleStandardChat(currentPromptValue);
-    }
-  }
-
 
   function handleFollowUpClick(question: string) {
     if (isOverallLoading) return;
@@ -737,116 +557,130 @@
           console.log('🔌 Browserbase connection lost:', event.data);
           browserLiveViewUrl = null;
           showBrowserViewport = false;
+        } else if (typeof event.data === 'string' && event.data.includes('error')) {
+          console.warn('⚠️ Browserbase iframe error:', event.data);
         }
       };
 
       (async () => {
-        isCleaningUpStaleSession = true;
         const staleSessionId = sessionStorage.getItem('browserSessionId');
-
         if (staleSessionId) {
-          console.log('🧹 Found stale session ID in storage:', staleSessionId, "Attempting to close immediately.");
+          console.log('🧹 Found stale session ID in storage: ', staleSessionId, "Attempting to close via /api/browserbase DELETE.");
           try {
-            // IMPORTANT: Call DELETE on BOTH Stagehand and Browserbase
-            const stagehandDelete = fetch('/api/stagehand', {
+            const resp = await fetch('/api/browserbase', {
               method: 'DELETE',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ sessionId: staleSessionId }),
-              // keepalive: true, // Not strictly needed for onMount, but doesn't hurt
-            });
-            const browserbaseDelete = fetch('/api/browserbase', {
-              method: 'DELETE',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ sessionId: staleSessionId }),
-              // keepalive: true,
+              keepalive: true
             });
 
-            await Promise.all([stagehandDelete, browserbaseDelete]);
-            console.log('✅ Stale session cleanup requests sent for:', staleSessionId);
-
+            if (resp.ok) {
+              console.log('✅ Stale session closed successfully via /api/browserbase');
+              } else {
+              console.warn('⚠️ Failed to close stale session via /api/browserbase:', await resp.text());
+            }
           } catch (err) {
-            console.warn('⚠️ Error during stale session cleanup fetch:', err);
+            console.warn('⚠️ Error while closing stale session via /api/browserbase:', err);
           } finally {
-            sessionStorage.removeItem('browserSessionId'); // Remove regardless of API success
-            console.log('🧹 Stale session ID removed from sessionStorage.');
+            sessionStorage.removeItem('browserSessionId');
           }
         }
-        isCleaningUpStaleSession = false;
 
-        // Now that cleanup is done (or if there was nothing to clean), proceed with new session init
-        // Only initialize if it's truly a fresh start, not if messages are loaded from session storage
-        const storedMessages = sessionStorage.getItem(SESSION_STORAGE_KEY);
-        if (storedMessages) {
-          try {
-            messages = JSON.parse(storedMessages);
-            isStartState = messages.length <= 1 && messages[0]?.content.startsWith("Hi there!"); // Re-evaluate start state
-            console.log('Chat history loaded from sessionStorage.');
-          } catch (e) {
-            console.error('Failed to parse chat history from sessionStorage:', e);
-            handleClearChat(); // Start fresh if parsing fails
+        showBrowserViewport = true;
+        console.log("🛠️ Stagehand integration: Browser viewport ready. Waiting for first user command to initialize session via Stagehand API.");
+
+        try {
+          console.log('🚀 Sending initial command to Stagehand to establish session...');
+          isBrowserLoading = true;
+          const response = await fetch('/api/stagehand', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              command: 'navigate to linkedin.com',
+              chatId: 'init-' + generateUniqueId()
+            })
+          });
+
+          if (response.ok) {
+            const result = await response.json();
+            console.log('✅ Initial Stagehand session established:', result);
+
+            if (result.sessionId) {
+              browserSessionId = result.sessionId;
+              console.log('🆔 Browser session ID set to:', browserSessionId);
+            }
+
+            if (result.liveViewUrl) {
+              browserLiveViewUrl = result.liveViewUrl;
+              console.log('🔗 Initial live view URL obtained:', browserLiveViewUrl);
+              showBrowserViewport = true;
+              console.log('👁️ Browser viewport made visible with live URL');
+            }
+
+            if (result.screenshot) {
+              browserScreenshot = result.screenshot;
+              console.log('📸 Initial screenshot obtained');
+            }
+
+            if (browserLiveViewUrl) {
+              console.log('🎯 Final browser state:', {
+                sessionId: browserSessionId,
+                liveViewUrl: browserLiveViewUrl,
+                showViewport: showBrowserViewport,
+                hasScreenshot: !!browserScreenshot
+              });
+            }
+          } else {
+            console.warn('⚠️ Failed to establish initial Stagehand session:', response.status, await response.text());
           }
-        } else {
+        } catch (error) {
+          console.warn('⚠️ Error establishing initial Stagehand session:', error);
+        } finally {
+          isBrowserLoading = false;
+        }
+
+        window.addEventListener("message", handleBrowserbaseMessage);
+      })();
+
             messages = [
                 {
                     id: generateUniqueId(),
                     role: 'assistant',
-                    content: "Hi there! I'm now powered by Stagehand for advanced browser automation. I can understand complex natural language commands.\n\n**Use prefixes for different modes:**\n• `@command` for complex Agent tasks (e.g., `@find Vitalii Dodonov\'s LinkedIn and tell me his current role`)\n• `>command` for direct Browser actions (e.g., `>go to openai.com` or `>click the login button`)\n• `command` (no prefix) for standard Chat (e.g., `What is Svelte?`)\n\nThe live browser window will show real-time results for Agent and Browser commands!"
+                    content: "Hi there! I'm now powered by Stagehand for advanced browser automation. I can understand complex natural language commands.\\n\\n**Try commands like:**\\n• 'Navigate to LinkedIn and find Vitalii Dodonov\\'s profile.'\\n• 'Search Google for recent AI news and open the first two articles.'\\n• 'Go to OpenAI\\'s website and summarize the GPT-4o page.'\\n• 'Take a screenshot.'\\n\\nThe live browser window will show real-time results driven by Stagehand!"
                 }
             ];
             isStartState = true;
-        }
-
-        // Initialize Stagehand session only if it seems necessary (e.g. no active session from previous page load)
-        // and not if we are in a pure chat context without prior browser interaction
-        // This logic might need refinement based on desired UX for when the browser automatically opens.
-        if (isStartState || !browserSessionId) {
-            await initializeNewStagehandSession();
-        }
-
         isInitialized = true;
         scrollToBottom();
-        window.addEventListener("message", handleBrowserbaseMessage);
-      })();
-
-      const cleanupSessions = async (isUnloading = false) => {
-        if (browserSessionId) {
-          console.log(`🧹 Cleaning up sessions (unload: ${isUnloading}):`, browserSessionId);
-          const headers = { 'Content-Type': 'application/json' };
-          const body = JSON.stringify({ sessionId: browserSessionId });
-
-          try {
-            if (isUnloading && navigator.sendBeacon) {
-              // navigator.sendBeacon('/api/stagehand', body); // sendBeacon expects specific content types
-              // navigator.sendBeacon('/api/browserbase', body);
-              // Using fetch with keepalive for JSON bodies is more reliable cross-browser for beacons
-              fetch('/api/stagehand', { method: 'DELETE', headers, body, keepalive: true });
-              fetch('/api/browserbase', { method: 'DELETE', headers, body, keepalive: true });
-              console.log('🚀 Session cleanup initiated via fetch keepalive (for beacon-like behavior)');
-            } else {
-              await Promise.all([
-                fetch('/api/stagehand', { method: 'DELETE', headers, body, keepalive: true }),
-                fetch('/api/browserbase', { method: 'DELETE', headers, body, keepalive: true })
-              ]);
-              console.log('🚀 Session cleanup initiated via fetch keepalive');
-            }
-          } catch (error) {
-            console.warn('⚠️ Error during session cleanup:', error);
-          }
-          // Clear current session ID from state, but let sessionStorage be handled by the next load or explicit clear
-          // browserSessionId = null;
-        }
-        // Always remove from sessionStorage on unload to ensure next load attempts cleanup if beacon fails
-        if (isUnloading && typeof window !== 'undefined') {
-            sessionStorage.removeItem('browserSessionId');
-        }
-      };
 
       const handleBeforeUnload = (event) => {
-        cleanupSessions(true);
+        console.log('🔄 Page unloading - cleaning up Stagehand session...');
+        if (browserSessionId) {
+          fetch('/api/stagehand', {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sessionId: browserSessionId }),
+            keepalive: true
+          }).catch(error => {
+            console.warn('⚠️ Error cleaning up Stagehand session on unload:', error);
+          });
+        }
+        if (typeof window !== 'undefined') {
+          sessionStorage.removeItem('browserSessionId');
+        }
       };
 
       const handleUnload = () => {
-        cleanupSessions(true); // ensure it runs, sendBeacon is preferred here
+        console.log('🔄 Page unloaded - final Stagehand cleanup');
+        if (browserSessionId) {
+          navigator.sendBeacon('/api/stagehand', JSON.stringify({
+            method: 'DELETE',
+            sessionId: browserSessionId
+          }));
+        }
+        if (typeof window !== 'undefined') {
+          sessionStorage.removeItem('browserSessionId');
+        }
       };
 
       window.addEventListener('beforeunload', handleBeforeUnload);
@@ -856,30 +690,9 @@
         window.removeEventListener('beforeunload', handleBeforeUnload);
         window.removeEventListener('unload', handleUnload);
         window.removeEventListener('message', handleBrowserbaseMessage);
-        // Optional: Call cleanup if component is unmounted mid-session without page close
-        // This might be redundant if beforeunload/unload always fire, but can be a safeguard.
-        // cleanupSessions(false);
       };
     }
   });
-
-  function parseLog(log: string) {
-
-    return log
-
-    if (log.includes('Processing block')){
-      const json = JSON.parse(log.substring(18))
-      switch (json.type){
-        case 'text':
-          return `text: ${json.text}`
-        case 'tool_use':
-          return `tool_use: ${json.input?.action}`
-        default:
-          break
-      }
-    }
-
-  }
 
   $: {
     const browser = typeof window !== 'undefined';
@@ -920,7 +733,7 @@
     <div id="start-state-container">
     <div class="welcome-header" in:fade={{ delay: 300, duration: 500 }}>
         <img src="/opal.png" alt="Chat" class="stan-avatar">
-        <h2> Chat </h2>
+        <h2>Chat with Browser</h2>
     </div>
 
     <!-- Example Prompts Section -->
@@ -929,83 +742,83 @@
         <div class="carousel-track carousel-left-to-right">
           <button
             class="prompt-card"
-              on:click={() => handleExamplePrompt("@find Vitalii Dodonov's LinkedIn profile")}
+              on:click={() => handleExamplePrompt("find Vitalii Dodonov's LinkedIn profile")}
             disabled={isOverallLoading}
           >
-              <span class="prompt-text">@find Vitalii Dodonov's LinkedIn profile</span>
+              <span class="prompt-text">find Vitalii Dodonov's LinkedIn profile</span>
           </button>
 
           <button
             class="prompt-card"
-              on:click={() => handleExamplePrompt(">search for AI news")}
+              on:click={() => handleExamplePrompt("search for AI news")}
             disabled={isOverallLoading}
           >
-              <span class="prompt-text">>search for AI news</span>
+              <span class="prompt-text">search for AI news</span>
           </button>
 
           <button
             class="prompt-card"
-              on:click={() => handleExamplePrompt(">go to OpenAI's website")}
+              on:click={() => handleExamplePrompt("go to OpenAI's website")}
             disabled={isOverallLoading}
           >
-              <span class="prompt-text">>go to OpenAI's website</span>
+              <span class="prompt-text">go to OpenAI's website</span>
           </button>
 
           <button
             class="prompt-card"
-              on:click={() => handleExamplePrompt("What is Svelte?")}
+              on:click={() => handleExamplePrompt("take a screenshot")}
             disabled={isOverallLoading}
           >
-              <span class="prompt-text">What is Svelte?</span>
+              <span class="prompt-text">take a screenshot</span>
           </button>
 
           <button
             class="prompt-card"
-              on:click={() => handleExamplePrompt(">take a screenshot")}
+              on:click={() => handleExamplePrompt("read the latest posts")}
             disabled={isOverallLoading}
           >
-              <span class="prompt-text">>take a screenshot</span>
+              <span class="prompt-text">read the latest posts</span>
           </button>
 
             <!-- Duplicates for seamless loop -->
           <button
             class="prompt-card"
-              on:click={() => handleExamplePrompt("@find Vitalii Dodonov's LinkedIn profile")}
+              on:click={() => handleExamplePrompt("find Vitalii Dodonov's LinkedIn profile")}
             disabled={isOverallLoading}
           >
-              <span class="prompt-text">@find Vitalii Dodonov's LinkedIn profile</span>
+              <span class="prompt-text">find Vitalii Dodonov's LinkedIn profile</span>
           </button>
 
           <button
             class="prompt-card"
-              on:click={() => handleExamplePrompt(">search for AI news")}
+              on:click={() => handleExamplePrompt("search for AI news")}
             disabled={isOverallLoading}
           >
-              <span class="prompt-text">>search for AI news</span>
+              <span class="prompt-text">search for AI news</span>
           </button>
 
           <button
             class="prompt-card"
-              on:click={() => handleExamplePrompt(">go to OpenAI's website")}
+              on:click={() => handleExamplePrompt("go to OpenAI's website")}
             disabled={isOverallLoading}
           >
-              <span class="prompt-text">>go to OpenAI's website</span>
+              <span class="prompt-text">go to OpenAI's website</span>
           </button>
 
           <button
             class="prompt-card"
-              on:click={() => handleExamplePrompt("What is Svelte?")}
+              on:click={() => handleExamplePrompt("take a screenshot")}
             disabled={isOverallLoading}
           >
-              <span class="prompt-text">What is Svelte?</span>
+              <span class="prompt-text">take a screenshot</span>
           </button>
 
           <button
             class="prompt-card"
-              on:click={() => handleExamplePrompt(">take a screenshot")}
+              on:click={() => handleExamplePrompt("read the latest posts")}
             disabled={isOverallLoading}
           >
-              <span class="prompt-text">>take a screenshot</span>
+              <span class="prompt-text">read the latest posts</span>
           </button>
         </div>
 
@@ -1053,91 +866,30 @@
               <div class="message-bubble assistant-bubble" style={message.isStreaming ? `min-height: 32px; transition: min-height 0.3s;` : ''}>
                 <div class="markdown-container animated-text-container" bind:this={markdownContainers[message.id]}>
                     <Markdown content={message.content} />
-
+                    {#if message.isLoading}
+                      <span class="thinking-text">
+                        <div class="loader"></div>
+                      </span>
+                    {/if}
                 </div>
 
                 {#if message.eventLog && message.eventLog.length > 0}
                   <div class="event-log-container">
                     {#each message.eventLog as event, i (event.id)}
                       {#if event.type === 'reasoning'}
-                        <div class="reasoning-pill" in:fly={{ y: 50, duration: 300, delay: 50, easing: cubicOut }}>
+                        <div class="reasoning-pill" in:fly={{ y: 10, duration: 300, delay: 50, easing: cubicOut }}>
                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#00AEEF" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="reasoning-pill-icon"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
                           <span class="reasoning-pill-text">{event.description}</span>
                         </div>
                       {:else if event.type === 'action'}
-                        <div class="action-pill" in:fly={{ y: 50, duration: 300, delay: 50, easing: cubicOut }}>
+                        <div class="action-pill" in:fly={{ y: 10, duration: 300, delay: 50, easing: cubicOut }}>
                           <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="action-pill-icon"><polyline points="20 6 9 17 4 12"></polyline></svg>
-                          <span class="action-pill-text">
-                            { parseLog(event.description)  }
-                          </span>
+                          <span class="action-pill-text">{event.description}</span>
                         </div>
-                      {:else if event.type === 'summary'}
-                        <details class="summary-pill" in:fly={{ y: 50, duration: 300, delay: 50, easing: cubicOut }}>
-                          <summary class="summary-pill-header">
-                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="summary-pill-icon">
-                              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-                              <polyline points="14,2 14,8 20,8"></polyline>
-                              <line x1="16" y1="13" x2="8" y2="13"></line>
-                              <line x1="16" y1="17" x2="8" y2="17"></line>
-                              <polyline points="10,9 9,9 8,9"></polyline>
-                            </svg>
-                            <span class="summary-pill-text">{event.description}</span>
-                            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="summary-chevron">
-                              <polyline points="6 9 12 15 18 9"></polyline>
-                            </svg>
-                          </summary>
-                          <div class="summary-pill-content">
-                            <div class="summary-actions">
-                              <h4>Actions Performed ({event.fullDetails.actionsPerformed?.length || 0})</h4>
-                              {#if event.fullDetails.actionsPerformed && event.fullDetails.actionsPerformed.length > 0}
-                                <div class="action-list">
-                                  {#each event.fullDetails.actionsPerformed as action, i}
-                                    <div class="action-item">
-                                      <div class="action-number">{i + 1}</div>
-                                      <div class="action-details">
-                                        <div class="action-description">
-                                          {#if action.description}
-                                            {action.description}
-                                          {:else if action.type}
-                                            {action.type}: {action.parameters || 'No parameters'}
-                                          {:else}
-                                            Unknown action
-                                          {/if}
-                                        </div>
-                                        {#if action.reasoning}
-                                          <div class="action-reasoning">💭 {action.reasoning}</div>
-                                        {/if}
-                                        {#if action.taskCompleted !== undefined}
-                                          <div class="action-status {action.taskCompleted ? 'completed' : 'pending'}">
-                                            {action.taskCompleted ? '✓ Completed' : '⏳ Pending'}
-                                          </div>
-                                        {/if}
-                                      </div>
-                                    </div>
-                                  {/each}
-                                </div>
-                              {:else}
-                                <p class="no-actions">No actions recorded</p>
-                              {/if}
-                            </div>
-                            {#if event.fullDetails.data}
-                              <div class="summary-data">
-                                <h4>Extracted Data</h4>
-                                <pre><code>{JSON.stringify(event.fullDetails.data, null, 2)}</code></pre>
-                              </div>
-                            {/if}
-                          </div>
-                        </details>
                       {/if}
                     {/each}
                   </div>
                 {/if}
-
-                {#if message.isLoading || message.isStreaming}
-                <div class = 'spinner'>
-                  <div class="loader"></div>
-                </div>
-              {/if}
 
                 <div class="assistant-message-footer">
                   {#if message.modelUsed && !message.isStreaming && !message.isLoading}
@@ -1184,8 +936,6 @@
   </div>
 {/if}
 
-
-<div id = 'panel'>
   <!-- Live Browser Viewport (refactored) -->
   <Browserbase
     show={showBrowserViewport && (Boolean(browserLiveViewUrl) || Boolean(browserScreenshot) || isBrowserLoading || Boolean(browserSessionId))}
@@ -1198,29 +948,16 @@
       showBrowserViewport = false;
     }}
   />
-  <div class = 'log'>
-
-  </div>
-</div>
-
 
 </div>
 
 <style lang="scss">
-  .spinner{
-    filter: drop-shadow(-2px 4px 4px rgba(#030025, .15));
-    margin: 20px 0;
-    transform-origin: center center;
-    width: fit-content;
-    animation: bouncer .5s infinite alternate-reverse ease-in-out;
-  }
   .loader {
     width: 17px;
     aspect-ratio: 1;
     border-radius: 50%;
     background: var(--highlight);
     display: grid;
-    box-shadow: inset -2px -2px 8px rgba(black, .1), inset 1px 1px 3px rgba(white, .5);
     animation: l22-0 2s infinite linear;
   }
   .loader:before,
@@ -1237,63 +974,32 @@
     animation-delay: -.5s
   }
   @keyframes l22-0 {
-    100% {transform: rotate(1turn) scale(1)}
+    100% {transform: rotate(1turn)}
   }
   @keyframes l22 {
     100% {transform: rotate(1turn) translate(150%)}
-  }
-  @keyframes bouncer{
-    0%{
-      transform: scale(1);
-    }
-    100%{
-      transform: scale(.8);
-    }
-
   }
 
   #main {
     height: 100%;
     max-height: 100vh;
+    overflow: auto;
     position: relative;
     touch-action: pan-y pan-x;
     -webkit-overflow-scrolling: touch;
-    display: flex;
-  }
-
-  #panel{
-    display: flex;
-    flex-direction: column;
-    box-sizing: border-box;
-    padding: 32px;
-    gap: 16px;
-
-    .log{
-      background: rgba(black, .08);
-      flex: 1;
-      border-radius: 8px;
-      padding: 12px;
-    }
-  }
-
-  :global(.app){
-    position: fixed;
-    top: 0;
-    left: 0;
-
   }
 
   .global-refresh-button {
     position: absolute;
     top: 16px;
-    left: 16px;
+    right: 16px;
     z-index: 1000;
     padding: 8px;
-    width: 32px;
-    height: 32px;
+    width: 36px;
+    height: 36px;
     border-radius: 50%;
     border: none;
-    background-color: var(--highlight);
+    background-color: rgba(#6355FF, 1);
     color: white;
     cursor: pointer;
     display: flex;
@@ -1304,8 +1010,8 @@
     touch-action: manipulation;
 
     svg {
-      height: 14px;
-      width: 14px;
+      height: 16px;
+      width: 16px;
     }
 
     &:hover {
@@ -1542,6 +1248,23 @@
   }
 
 
+
+
+  /* Regular chat styles */
+  #image-chat-page { // Consider renaming ID to #text-chat-page if it causes confusion
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    max-height: 100vh;
+    width: 100%;
+    max-width: 100vw;
+    margin: auto;
+    overflow: hidden;
+    color: #f0f0f0;
+    box-sizing: border-box;
+  }
+
+
   .chat-header {
     padding: 8px 24px;
     background-color: rgba(black, 0);
@@ -1557,24 +1280,20 @@
     p { margin: 0; font-size: 12px; color: #aaa; }
   }
 
-  #chat-page{
-    width: 100%;
-    max-width: 100%;
-    padding: 0;
-    box-sizing: border-box;
-  }
 
   .chat-messages-container {
+    flex-grow: 1;
     overflow-y: auto;
     height: 100%;
     max-height: 100vh;
     padding: 16px 24px 180px 24px;
 
-    max-width: 100%;
 
     touch-action: pan-y;
     -webkit-overflow-scrolling: touch;
+    transform: translateZ(0);
     will-change: scroll-position;
+
 
     box-sizing: border-box;
     display: flex;
@@ -1584,6 +1303,7 @@
     scrollbar-width: thin;
     scrollbar-color: #444 #222;
 
+
     &::-webkit-scrollbar { width: 8px; }
     &::-webkit-scrollbar-track { background: #222; border-radius: 4px; }
     &::-webkit-scrollbar-thumb { background-color: #444; border-radius: 4px; border: 2px solid #222; }
@@ -1592,8 +1312,8 @@
 
   .message-wrapper {
     display: flex;
-    width: 85%;
-    max-width: 1000px;
+    max-width: 85%;
+    width: 1000px;
     box-sizing: border-box;
     flex-grow: 0;
     margin: 0 auto;
@@ -1727,7 +1447,24 @@
   }
 
 
+  .spinner {
+    width: 20px;
+    height: 20px;
+    border: 2px solid rgba(255,255,255,0.3);
+    border-top-color: #fff;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    &.small {
+      width: 14px;
+      height: 14px;
+      border-width: 2px;
+    }
+  }
 
+
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
 
 
   .chat-input-area {
@@ -2469,6 +2206,7 @@
   .event-log-container {
     margin-top: 16px;
     padding-top: 12px;
+    border-top: 1px solid rgba(#030025, 0.1);
     display: flex;
     flex-direction: column;
     gap: 10px;
@@ -2481,10 +2219,10 @@
     border-radius: 8px;
     padding: 8px 12px;
     font-size: 13px;
-    width: fit-content;
     color: #030025;
     font-family: "Inter", sans-serif;
     line-height: 1.4;
+    box-shadow: 0 2px 4px rgba(#030025, 0.05);
 
     svg {
       flex-shrink: 0;
@@ -2493,15 +2231,12 @@
     }
     span {
       flex-grow: 1;
-      font-weight: 550;
       word-break: break-word;
     }
   }
 
   .action-pill {
-    background-color: white;
-    box-shadow: -4px 8px 8px rgba(#030025, 0.5);
-    border-radius: 18px;
+    background-color: rgba(#6355FF, 0.08);
     .action-pill-icon {
       color: #6355FF;
       stroke-width: 2.5;
@@ -2509,162 +2244,10 @@
   }
 
   .reasoning-pill {
-    background-color: rgba(white, 0.8);
+    background-color: rgba(#00AEEF, 0.08);
     .reasoning-pill-icon {
       color: #00AEEF;
       stroke-width: 2.5;
-    }
-  }
-
-  .summary-pill {
-    background-color: rgba(#FF6B35, 0.08);
-    border-radius: 12px;
-    border: 1px solid rgba(#FF6B35, 0.15);
-    font-family: "Inter", sans-serif;
-    color: #030025;
-    width: 100%;
-    margin: 8px 0;
-
-    summary {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      padding: 12px 16px;
-      cursor: pointer;
-      list-style: none;
-      user-select: none;
-      font-weight: 550;
-      font-size: 13px;
-      border-radius: 12px;
-      transition: background-color 0.2s ease;
-
-      &:hover {
-        background-color: rgba(#FF6B35, 0.12);
-      }
-
-      .summary-pill-icon {
-        color: #FF6B35;
-        flex-shrink: 0;
-      }
-
-      .summary-pill-text {
-        flex-grow: 1;
-      }
-
-      .summary-chevron {
-        color: #FF6B35;
-        flex-shrink: 0;
-        transition: transform 0.2s ease;
-      }
-    }
-
-    &[open] summary .summary-chevron {
-      transform: rotate(180deg);
-    }
-
-    .summary-pill-content {
-      padding: 0 16px 16px 16px;
-      border-top: 1px solid rgba(#FF6B35, 0.1);
-      margin-top: 8px;
-
-      h4 {
-        font-size: 12px;
-        font-weight: 600;
-        color: #FF6B35;
-        margin: 12px 0 8px 0;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-      }
-
-      .action-list {
-        display: flex;
-        flex-direction: column;
-        gap: 8px;
-      }
-
-      .action-item {
-        display: flex;
-        gap: 12px;
-        padding: 10px;
-        background: rgba(white, 0.5);
-        border-radius: 8px;
-        border: 1px solid rgba(#FF6B35, 0.1);
-
-        .action-number {
-          background: #FF6B35;
-          color: white;
-          width: 20px;
-          height: 20px;
-          border-radius: 50%;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          font-size: 11px;
-          font-weight: 600;
-          flex-shrink: 0;
-        }
-
-        .action-details {
-          flex-grow: 1;
-
-          .action-description {
-            font-size: 12px;
-            font-weight: 500;
-            line-height: 1.4;
-            margin-bottom: 4px;
-          }
-
-          .action-reasoning {
-            font-size: 11px;
-            color: #666;
-            font-style: italic;
-            margin-bottom: 4px;
-          }
-
-          .action-status {
-            font-size: 10px;
-            font-weight: 600;
-            padding: 2px 6px;
-            border-radius: 4px;
-            display: inline-block;
-
-            &.completed {
-              background: rgba(#28a745, 0.1);
-              color: #28a745;
-            }
-
-            &.pending {
-              background: rgba(#ffc107, 0.1);
-              color: #ffc107;
-            }
-          }
-        }
-      }
-
-      .no-actions {
-        font-size: 12px;
-        color: #666;
-        font-style: italic;
-        margin: 8px 0;
-      }
-
-      .summary-data {
-        margin-top: 16px;
-
-        pre {
-          background: rgba(#030025, 0.05);
-          border-radius: 6px;
-          padding: 8px;
-          font-size: 10px;
-          overflow-x: auto;
-          border: 1px solid rgba(#030025, 0.1);
-
-          code {
-            font-family: 'Fira Code', 'Consolas', monospace;
-            color: #030025;
-          }
-        }
-      }
     }
   }
 
