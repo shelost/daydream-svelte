@@ -433,7 +433,7 @@ async function closeSession(sessionIdToClose?: string) {
 
   // Always attempt to directly terminate the Browserbase session as a safeguard
   if (targetSessionId && BROWSERBASE_API_BASE && BROWSERBASE_API_KEY) {
-    console.log(` diretamente Browserbase session for ID: ${targetSessionId}`);
+    console.log(`Terminating Browserbase session directly for ID: ${targetSessionId}`);
     try {
       const response = await fetch(`${BROWSERBASE_API_BASE}/sessions/${targetSessionId}`, {
         method: 'DELETE',
@@ -462,7 +462,7 @@ async function closeSession(sessionIdToClose?: string) {
 
 export async function POST({ request }) {
   const body = await request.json();
-  const { command, chatId, stream = false, agentProvider = CU_PROVIDER, agentModel = CU_MODEL, initUrl } = body; // Allow client to specify agent and initUrl
+  const { command, chatId, stream = false, agentProvider = CU_PROVIDER, agentModel = CU_MODEL, initUrl, commandType = 'agent' } = body; // Added commandType, default to 'agent'
 
   if (!command && !initUrl) {
     return json({ success: false, error: 'Either command or initUrl must be provided' }, { status: 400 });
@@ -472,22 +472,24 @@ export async function POST({ request }) {
     return json({ success: false, error: 'Server configuration error: Missing Browserbase API keys.' }, { status: 500 });
   }
 
-  // Validate API key for the selected provider
+  // Validate API key for the selected provider (only if commandType is 'agent')
   let selectedApiKey;
-  if (agentProvider === 'anthropic') {
-    selectedApiKey = ANTHROPIC_API_KEY;
-  } else if (agentProvider === 'openai') {
-    selectedApiKey = OPENAI_API_KEY; // Assuming OPENAI_API_KEY is also loaded
+  if (commandType === 'agent') {
+    if (agentProvider === 'anthropic') {
+      selectedApiKey = ANTHROPIC_API_KEY;
+    } else if (agentProvider === 'openai') {
+      selectedApiKey = OPENAI_API_KEY;
+    }
+    if (!selectedApiKey) {
+      return json({ success: false, error: `API key for CU agent provider '${agentProvider}' is missing.` }, { status: 500 });
+    }
   }
 
-  if (!selectedApiKey) {
-    return json({ success: false, error: `API key for provider '${agentProvider}' is missing.` }, { status: 500 });
-  }
 
-  console.log(`🤖 Stagehand (CU) received command: "${command}" (chatId: ${chatId}, stream: ${stream}, provider: ${agentProvider}, model: ${agentModel}, initUrl: ${initUrl})`);
+  console.log(`🤖 Stagehand received: type="${commandType}", command="${command}" (chatId: ${chatId}, stream: ${stream}, provider: ${agentProvider}, model: ${agentModel}, initUrl: ${initUrl})`);
 
-  // If only initUrl is provided (bootstrap navigation) perform direct navigation without using CU agent
-  if (initUrl && !command) {
+  // Handle direct initUrl navigation (bootstrap)
+  if (initUrl && !command && commandType !== 'direct') { // Make sure direct commands with initUrl still go through main logic
     try {
       const { sessionId, liveViewUrl } = await ensureValidSession();
 
@@ -498,7 +500,6 @@ export async function POST({ request }) {
         throw new Error('Stagehand page object not available after session initialization');
       }
 
-      // Optional screenshot after navigation
       let finalScreenshot: string | null = null;
       try {
         const screenshotBuffer = await globalStagehandSession.page.screenshot();
@@ -513,13 +514,14 @@ export async function POST({ request }) {
         screenshot: finalScreenshot,
         liveViewUrl,
         sessionId,
-        sessionReused: false
+        sessionReused: false // This is effectively a new interaction context
       });
     } catch (navError) {
       console.error('❌ Error during direct initUrl navigation:', navError);
       return json({ success: false, error: navError.message || 'Failed direct navigation to initUrl' }, { status: 500 });
     }
   }
+
 
   // Handle streaming requests
   if (stream) {
@@ -534,42 +536,49 @@ export async function POST({ request }) {
           }
 
           try {
-            // Capture console.log and forward the parsed pill object as-is
             startLogCapture((pillData) => {
               sendEvent('pill', pillData);
             });
 
-            sendEvent('start', { message: 'Starting Stagehand CU execution...' });
-            const { sessionId, liveViewUrl, stagehandAgent } = await ensureValidSession(); // Gets the configured agent
-
-            // Override agent if client sent specific provider/model
-            const activeAgent = globalStagehandSession.agent({
-                provider: agentProvider,
-                model: agentModel,
-                options: { apiKey: selectedApiKey }
-            });
+            sendEvent('start', { message: `Starting Stagehand ${commandType === 'direct' ? 'direct action' : 'CU execution'}...` });
+            const { sessionId, liveViewUrl } = await ensureValidSession(); // Ensure session is ready
 
             sendEvent('session', { sessionId, liveViewUrl });
-            let agentResponse;
-            let finalScreenshot = null;
 
-            console.log('🧠 Executing CU command with session:', command);
-            if (initUrl) {
+            let executionResponse: any;
+            let finalScreenshot = null;
+            const modelUsedString = commandType === 'direct' ? 'Stagehand Direct Action' : `Stagehand CU (${agentProvider}/${agentModel})`;
+
+            console.log(`🧠 Executing ${commandType} command with session: "${command}"`);
+
+            if (initUrl && globalStagehandSession?.page) {
               await globalStagehandSession.page.goto(initUrl);
-              agentResponse = await activeAgent.execute(command);
-            } else {
-              agentResponse = await activeAgent.execute(command);
             }
-            console.log('💬 Stagehand CU agent response:', agentResponse);
+
+            if (commandType === 'direct') {
+              if (!globalStagehandSession?.page) throw new Error('Stagehand page not available for direct command.');
+              // For page.act, the result might not be as structured as agent.execute.
+              // We'll rely on logs and final screenshot.
+              await globalStagehandSession.page.act({ action: command });
+              executionResponse = { message: `Direct action "${command}" attempted.` , actions: [{type: 'direct_act', description: command, parameters: command}]}; // Simulate an action for frontend
+            } else { // 'agent' commandType
+              const activeAgent = globalStagehandSession.agent({
+                  provider: agentProvider,
+                  model: agentModel,
+                  options: { apiKey: selectedApiKey }
+              });
+              executionResponse = await activeAgent.execute(command);
+            }
+            console.log(`💬 Stagehand ${commandType} response:`, executionResponse);
 
             if (globalStagehandSession.page) {
               try {
-                console.log('📸 Taking screenshot CU...');
+                console.log(`📸 Taking screenshot (${commandType})...`);
                 const screenshotBuffer = await globalStagehandSession.page.screenshot();
                 finalScreenshot = screenshotBuffer.toString('base64');
-                console.log('📸 Screenshot CU taken successfully');
+                console.log(`📸 Screenshot (${commandType}) taken successfully`);
               } catch (screenshotError) {
-                console.warn('⚠️ CU Could not take screenshot:', screenshotError.message);
+                console.warn(`⚠️ (${commandType}) Could not take screenshot:`, screenshotError.message);
               }
             }
 
@@ -580,23 +589,23 @@ export async function POST({ request }) {
 
             sendEvent('complete', {
               success: true,
-              message: agentResponse?.message || "Stagehand CU executed the command successfully.",
-              actionsPerformed: agentResponse?.actions || [],
-              data: agentResponse?.data,
+              message: executionResponse?.message || `Stagehand ${commandType} command executed successfully.`,
+              actionsPerformed: executionResponse?.actions || [],
+              data: executionResponse?.data,
               screenshot: finalScreenshot,
               liveViewUrl: globalLiveViewUrl,
               sessionId: sessionId,
-              modelUsed: `Stagehand CU (${agentProvider}/${agentModel})`,
+              modelUsed: modelUsedString,
               sessionReused: true
             });
 
           } catch (error) {
-            console.error('❌ Stagehand CU streaming error:', error);
+            console.error(`❌ Stagehand ${commandType} streaming error:`, error);
             sendEvent('error', {
               success: false,
-              error: error.message || 'An unknown error occurred with Stagehand CU.',
+              error: error.message || `An unknown error occurred with Stagehand ${commandType}.`,
               sessionId: globalSessionId,
-              modelUsed: `Stagehand CU (${agentProvider}/${agentModel})`
+              modelUsed: commandType === 'direct' ? 'Stagehand Direct Action' : `Stagehand CU (${agentProvider}/${agentModel})`
             });
           } finally {
             stopLogCapture();
@@ -617,39 +626,44 @@ export async function POST({ request }) {
   }
 
   // Non-streaming execution
-  let agentResponse;
+  let executionResponse: any;
   let finalScreenshot = null;
+  const modelUsedString = commandType === 'direct' ? 'Stagehand Direct Action' : `Stagehand CU (${agentProvider}/${agentModel})`;
 
   try {
-    const { sessionId, liveViewUrl, stagehandAgent } = await ensureValidSession();
+    const { sessionId, liveViewUrl } = await ensureValidSession();
 
-    // Override agent if client sent specific provider/model
-    const activeAgent = globalStagehandSession.agent({
-        provider: agentProvider,
-        model: agentModel,
-        options: { apiKey: selectedApiKey }
-    });
+    console.log(`🧠 Executing ${commandType} non-streaming: "${command}"`);
 
-    console.log('🧠 Executing CU command non-streaming:', command);
-    if (initUrl) {
+    if (initUrl && globalStagehandSession?.page) {
       await globalStagehandSession.page.goto(initUrl);
-      agentResponse = await activeAgent.execute(command);
-    } else {
-      agentResponse = await activeAgent.execute(command);
     }
-    console.log('💬 Stagehand CU agent response non-streaming:', agentResponse);
+
+    if (commandType === 'direct') {
+      if (!globalStagehandSession?.page) throw new Error('Stagehand page not available for direct command.');
+      await globalStagehandSession.page.act({ action: command });
+      executionResponse = { message: `Direct action "${command}" attempted.`, actions: [{type: 'direct_act', description: command, parameters: command}] };
+    } else { // 'agent'
+      const activeAgent = globalStagehandSession.agent({
+          provider: agentProvider,
+          model: agentModel,
+          options: { apiKey: selectedApiKey }
+      });
+      executionResponse = await activeAgent.execute(command);
+    }
+    console.log(`💬 Stagehand ${commandType} response non-streaming:`, executionResponse);
 
     if (globalStagehandSession.page) {
         try {
-            console.log('📸 Taking CU screenshot non-streaming...');
+            console.log(`📸 Taking ${commandType} screenshot non-streaming...`);
             const screenshotBuffer = await globalStagehandSession.page.screenshot();
             finalScreenshot = screenshotBuffer.toString('base64');
-            console.log('📸 CU Screenshot non-streaming taken successfully');
+            console.log(`📸 ${commandType} Screenshot non-streaming taken successfully`);
         } catch (screenshotError) {
-            console.warn('⚠️ CU Could not take non-streaming screenshot:', screenshotError.message);
+            console.warn(`⚠️ ${commandType} Could not take non-streaming screenshot:`, screenshotError.message);
         }
     } else {
-        console.warn('⚠️ CU No page available for non-streaming screenshot');
+        console.warn(`⚠️ ${commandType} No page available for non-streaming screenshot`);
     }
 
     const updatedLiveViewUrl = await getBrowserbaseLiveViewUrl(sessionId);
@@ -657,32 +671,32 @@ export async function POST({ request }) {
       globalLiveViewUrl = updatedLiveViewUrl;
     }
 
-    console.log('🎯 CU Command executed successfully non-streaming with session:', sessionId);
+    console.log(`🎯 ${commandType} Command executed successfully non-streaming with session:`, sessionId);
 
     return json({
       success: true,
-      message: agentResponse?.message || "Stagehand CU executed the command successfully.",
-      actionsPerformed: agentResponse?.actions || [],
-      data: agentResponse?.data,
+      message: executionResponse?.message || `Stagehand ${commandType} command executed successfully.`,
+      actionsPerformed: executionResponse?.actions || [],
+      data: executionResponse?.data,
       screenshot: finalScreenshot,
       liveViewUrl: globalLiveViewUrl,
       sessionId: sessionId,
-      modelUsed: `Stagehand CU (${agentProvider}/${agentModel})`,
+      modelUsed: modelUsedString,
       sessionReused: true
     });
 
   } catch (error) {
-    console.error('❌ Stagehand CU non-streaming execution error:', error);
-    console.error('❌ CU Error details:', { name: error.name, message: error.message, stack: error.stack });
-    console.warn('⚠️ CU Command failed, session may need to be recreated on next request');
+    console.error(`❌ Stagehand ${commandType} non-streaming execution error:`, error);
+    console.error(`❌ ${commandType} Error details:`, { name: error.name, message: error.message, stack: error.stack });
+    console.warn(`⚠️ ${commandType} Command failed, session may need to be recreated on next request`);
 
     return json({
       success: false,
-      error: error.message || 'An unknown error occurred with Stagehand CU.',
+      error: error.message || `An unknown error occurred with Stagehand ${commandType}.`,
       screenshot: finalScreenshot,
       liveViewUrl: globalLiveViewUrl,
       sessionId: globalSessionId,
-      modelUsed: `Stagehand CU (${agentProvider}/${agentModel})`
+      modelUsed: modelUsedString
     }, { status: 500 });
   }
 }

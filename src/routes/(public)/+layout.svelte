@@ -16,9 +16,9 @@
 
 <div class="layout">
 
-    <div id="chat" class:hidden={!$chatVisible}>
-
-    </div>
+    <!--
+    <div id="chat" class:hidden={!$chatVisible}> </div>
+    -->
 
     <div class="app">
         <slot />

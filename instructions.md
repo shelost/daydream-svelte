@@ -3149,21 +3149,49 @@ While streaming Stagehand Computer-Use (CU) execution logs we currently lose cri
 - [ ] Verify server-side unit tests (or manual testing) to ensure full objects arrive in the browser.
 - [ ] (Follow-up) Adjust front-end pill component to use new fields.
 
-## 2025-06-01 — Implement Prompt Categorization for Agent, Browser, and Chat Tasks
+## Prefix-Based Prompt Routing for Chat Interface
 
-### Problem
-Currently, all user prompts in the chat interface are processed uniformly through the Stagehand API using a Computer Use (CU) agent for browser automation. This lacks flexibility, as not all tasks require complex agent capabilities; some are simple browser actions or pure chat interactions. This can lead to inefficient resource usage and suboptimal user experience.
+**Date:** 2025-05-31
 
-### Solution Outline
-1. **Manual Prefix Parsing**: In `src/routes/(public)/chat/+page.svelte`, parse user prompts based on prefixes to categorize tasks:
-   - `@` prefix for Agent tasks (complex browser automation via CU agent in `src/routes/api/stagehand/+server.ts`).
-   - `>` prefix for Browser tasks (simple browser actions using Stagehand's native `execute` feature).
-   - No prefix (or any other starting character) for Chat tasks (pure conversational tasks using standard LLM endpoints).
-2. **Routing Logic**: Implement logic to route requests to the appropriate endpoint:
-   - Agent tasks to `/api/stagehand` with full CU agent capabilities.
-   - Browser tasks to `/api/stagehand` with a parameter to indicate lightweight execution.
-   - Chat tasks to LLM endpoints like `/api/ai/anthropic`, `/api/ai/google`, or `/api/ai/gpt` based on the selected model.
-3. **Preserve UI and Functionality**: Ensure no changes to UI layout or styles, and maintain existing functionality like streaming and error handling across all task types.
+**Problem:**
+The chat interface in `src/routes/(public)/chat/+page.svelte` currently sends all user prompts to the Stagehand Computer Use (CU) agent. This is inflexible for handling different user intentions like simple browser commands or standard LLM chat conversations.
 
-### Why This Solves the Problem
-This categorization allows for efficient task handling by matching the task complexity to the appropriate backend service. Agent tasks use the full CU model for complex interactions, Browser tasks use lightweight Stagehand actions for quick operations, and Chat tasks avoid browser overhead by using standard LLM APIs. Manual prefixing ensures clear user intent without complex natural language parsing at this stage.
+**Solution: Implement Prefix-Based Routing**
+
+Users can prefix their prompts to direct them to different backends:
+
+1.  **`@` prefix (Agent Mode):**
+    *   **Action:** Routes the prompt (with prefix stripped) to the Stagehand Computer Use (CU) agent for complex, multi-step browser automation tasks requiring AI reasoning.
+    *   **Backend:** Uses `agent.execute()` in `src/routes/api/stagehand/+server.ts`.
+    *   **Example:** `@find the latest news on AI and summarize the top 3 articles.`
+
+2.  **`>` prefix (Browser Mode):**
+    *   **Action:** Routes the prompt (with prefix stripped) for simpler, direct browser actions using Stagehand's native capabilities.
+    *   **Backend:** Uses `page.act({ action: command })` in `src/routes/api/stagehand/+server.ts` by sending a `commandType: 'direct'` parameter.
+    *   **Example:** `>go to google.com` or `>click the login button`
+
+3.  **No prefix (Chat Mode - Default):**
+    *   **Action:** Routes the prompt to a standard LLM chat backend for conversational AI, without browser interaction.
+    *   **Backend:** Calls the appropriate LLM API endpoint (e.g., `/api/ai/anthropic`, `/api/ai/google`, `/api/ai/openai/chat`) based on the selected model in the UI.
+    *   **Example:** `What is the capital of France?`
+
+**Implementation Details:**
+
+**A. `src/routes/(public)/chat/+page.svelte` (`handleOmnibarSubmit` and new handlers):**
+    *   Parse the `omnibarPrompt` for prefixes (`@`, `>`).
+    *   Dispatch to new specialized handler functions:
+        *   `handleAgentCommand(promptText)`: For `@` prefixed prompts (existing Stagehand CU logic).
+        *   `handleDirectBrowserCommand(promptText)`: For `>` prefixed prompts (calls `/api/stagehand` with `commandType: 'direct'`).
+        *   `handleStandardChat(promptText)`: For unprefixed prompts (calls respective LLM chat API).
+    *   Each handler will manage its specific API call, including streaming and UI updates.
+    *   A mapping will connect `currentSelectedTextModel` to the correct LLM API endpoint for `handleStandardChat`.
+
+**B. `src/routes/api/stagehand/+server.ts` (`POST` handler):**
+    *   Accept a new `commandType` field in the request body.
+    *   If `commandType === 'direct'`, the server will use `globalStagehandSession.page.act({ action: command })` instead of `activeAgent.execute(command)`.
+    *   Ensure consistent response structure (JSON with success, message, screenshot, liveViewUrl, sessionId) and log streaming for both CU agent and direct browser commands.
+
+**Benefits:**
+*   Provides users with explicit control over how their prompts are interpreted and executed.
+*   Leverages the appropriate backend for the task, potentially improving efficiency and reducing costs (e.g., not using the full CU agent for simple page navigation).
+*   Enables standard chatbot functionality within the same interface.
