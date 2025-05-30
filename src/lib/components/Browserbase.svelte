@@ -1,9 +1,5 @@
 <!-- src/lib/components/Browserbase.svelte -->
 <script lang="ts">
-  /**
-   * Clean Browserbase component that uses only the native Browserbase UI
-   * without any custom browser chrome to avoid gutter issues.
-   */
   import { createEventDispatcher } from 'svelte';
   import { fade } from 'svelte/transition';
 
@@ -22,19 +18,10 @@
 
 {#if show}
   <div class="browser-viewport" in:fade={{ duration: 250 }}>
-    <!-- Close button floating over content -->
-    <button class="browser-close" title="Close browser viewport" on:click={() => dispatch('close')}>
-      ×
-    </button>
 
     <!-- Content area without custom header -->
     <div class="browser-content">
-      {#if loading}
-        <div class="browser-loading">
-          <div class="loader"></div>
-          <p>Connecting to browser session…</p>
-        </div>
-      {:else if iframeUrl}
+      {#if iframeUrl}
         <iframe
           src={iframeUrl}
           class="browser-iframe"
@@ -45,6 +32,11 @@
           on:error={() => console.error('❌ Browser iframe failed to load', iframeUrl)}
         />
         <div class="live-indicator"><div class="live-dot"></div><span>LIVE</span></div>
+      {:else if loading}
+        <div class="browser-loading">
+          <div class="loader"></div>
+          <p>Connecting to browser session…</p>
+        </div>
       {:else if screenshot}
         <div class="screenshot-container">
           <img src={`data:image/png;base64,${screenshot}`} alt="Browser screenshot" class="browser-screenshot" />
@@ -87,14 +79,18 @@
   @keyframes l22-0 { to { transform: rotate(1turn) } }
   @keyframes l22   { to { transform: rotate(1turn) translate(150%) } }
 
+  :global(.screencast-viewport){
+    background: red !important;
+  }
+
   /* Clean viewport container without custom chrome */
   .browser-viewport {
-    position: fixed;
-    top: 20px;
+    position: absolute;
+    top: 70px;
     right: 20px;
-    width: 420px;
-    height: 320px;
-    background: #fff;
+    width: 360px;
+    height: 260px;
+    background: white;
     border-radius: 8px;
     box-shadow: -8px 16px 48px rgba(#030025, .1);
     overflow: hidden;
@@ -157,6 +153,7 @@
     height: 100%;
     border: none;
     background: #fff;
+    padding: 0;
     display: block;
   }
 

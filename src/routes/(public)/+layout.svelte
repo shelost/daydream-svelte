@@ -63,7 +63,7 @@
         border: none;
         color: white;
         cursor: pointer;
-        display: flex;
+        display: none;
         align-items: center;
         justify-content: center;
         box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);

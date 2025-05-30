@@ -179,8 +179,14 @@ class DirectBrowserbaseService {
         method: 'POST',
         body: JSON.stringify({
           projectId: this.projectId,
+          keepAlive: true, // Allow reconnection after disconnect
+          timeout: 3600, // Set custom timeout to 1 hour (3600 seconds)
           browserSettings: { // Add browserSettings for stealth
             args: stealthArgs,
+            viewport: {
+              width: 1440,
+              height: 900,
+            },
             // We could also explore other settings like 'fingerprintId' or 'proxy' here in the future
           }
         }),
@@ -837,45 +843,57 @@ class DirectBrowserbaseService {
   }
 
   async closeSession(): Promise<void> {
-    if (!this.sessionInfo?.sessionId) {
-      console.log('🔍 No active session to close');
+    if (!this.sessionInfo || !this.sessionInfo.sessionId) {
+      console.log('🤷 No active session in this service instance to close.');
       return;
     }
 
-    const sessionId = this.sessionInfo.sessionId;
-    console.log('🔴 Closing browser session:', sessionId);
+    const sessionIdToClose = this.sessionInfo.sessionId;
+    console.log(`🧹 Closing session ${sessionIdToClose} managed by this service instance...`);
 
-    try {
-      // Attempt to close the session via Browserbase API
-      // DELETE requests don't need a body or content-type header
-      const url = `${BROWSERBASE_API_BASE}/sessions/${sessionId}`;
-      const headers = {
-        'x-bb-api-key': BROWSERBASE_API_KEY
-        // No Content-Type header needed for DELETE without body
-      };
-
-      console.log(`🌐 Making DELETE request to: ${url}`);
-
-      const response = await fetch(url, {
-        method: 'DELETE',
-        headers
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Browserbase API error: ${response.status} - ${errorText}`);
-      }
-
-      console.log('✅ Session closed via API:', sessionId);
-    } catch (error) {
-      console.warn('⚠️ Failed to close session via API:', error.message);
-      // Continue with cleanup even if API call fails
-    } finally {
-      // Reset service state regardless of API success
-      this.sessionInfo = null;
-      this.isInitializing = false;
-      console.log('🧹 Service state reset');
+    // Disconnect Playwright if connected
+    if (this.page && !this.page.isClosed()) {
+      try {
+        // await this.page.close(); // Closing context is usually better
+      } catch (e) { /* console.warn('Error closing page:', e.message) */ }
     }
+    if (this.context) {
+      try {
+        await this.context.close();
+        console.log(`🎭 Playwright context for session ${sessionIdToClose} closed.`);
+      } catch (e) { console.warn(`⚠️ Error closing Playwright context for ${sessionIdToClose}:`, e.message); }
+    }
+    if (this.browser && this.browser.isConnected()) {
+      try {
+        await this.browser.close(); // This might be too aggressive if browser is shared; disconnect is better
+        // Or if using connectOverCDP, a simple disconnect might be browser.disconnect() if available
+        console.log(`🤖 Playwright browser disconnected for session ${sessionIdToClose}.`);
+      } catch (e) { console.warn(`⚠️ Error closing/disconnecting Playwright browser for ${sessionIdToClose}:`, e.message); }
+    }
+    this.page = null;
+    this.context = null;
+    this.browser = null;
+
+    // Attempt to delete the session via Browserbase API
+    try {
+      console.log(`📞 Calling Browserbase API to delete session ${sessionIdToClose}...`);
+      const response = await this.makeRequest(`/sessions/${sessionIdToClose}`, { method: 'DELETE' });
+      // makeRequest throws on non-ok, so if we reach here, it was successful or handled by makeRequest
+      console.log(`✅ Browserbase session ${sessionIdToClose} confirmed deleted via API by service.`);
+    } catch (error: any) {
+      // Check if the error message or status indicates a 404
+      if (error.message && (error.message.includes('404') || error.message.includes('not found'))) {
+        console.log(`☑️ Browserbase session ${sessionIdToClose} was already terminated or not found (404) when service tried to close.`);
+      } else {
+        console.warn(`⚠️ Failed to delete session ${sessionIdToClose} via API from service:`, error.message);
+        // Do not re-throw, as we want to ensure local state is cleared.
+      }
+    }
+
+    // Clear local session state in all cases after attempting API deletion
+    console.log(`👻 Cleared local sessionInfo for ${sessionIdToClose} in service instance.`);
+    this.sessionInfo = null;
+    this.isInitializing = false; // Reset initializing flag too
   }
 }
 
@@ -1159,77 +1177,87 @@ export async function POST({ request }) {
 }
 
 export async function DELETE({ request }) {
-  console.log('🗑️ DELETE request received for session cleanup');
-
+  let requestBody;
   try {
-    let sessionId;
-
-    // Handle both regular DELETE requests and sendBeacon requests
+    // Handle different content types for sessionId extraction
     const contentType = request.headers.get('content-type');
     if (contentType && contentType.includes('application/json')) {
-      const body = await request.json();
-      sessionId = body.sessionId;
+      requestBody = await request.json();
     } else {
-      // Handle sendBeacon or other non-JSON requests
-      const body = await request.text();
-      try {
-        const parsed = JSON.parse(body);
-        sessionId = parsed.sessionId;
-      } catch {
-        console.warn('⚠️ Could not parse DELETE request body');
-        return json({ success: false, error: 'Invalid request body' }, { status: 400 });
-      }
+      const textBody = await request.text();
+      requestBody = JSON.parse(textBody); // Attempt to parse assuming it might be stringified JSON
     }
+  } catch (e) {
+    console.warn('⚠️ DELETE /api/browserbase: Could not parse request body:', e.message);
+    return json({ success: false, error: 'Invalid request body for session deletion.' }, { status: 400 });
+  }
 
-    if (!sessionId) {
-      console.warn('⚠️ No sessionId provided in DELETE request');
-      return json({ success: false, error: 'sessionId is required' }, { status: 400 });
-    }
+  const sessionId = requestBody?.sessionId;
 
-    console.log('🔄 Attempting to close session:', sessionId);
+  if (!sessionId) {
+    return json({ success: false, error: 'sessionId is required in DELETE request body' }, { status: 400 });
+  }
 
-    const browserService = getBrowserService();
-    const currentInfo = browserService.getSessionInfo();
+  console.log(`🗑️ Received DELETE request for Browserbase session: ${sessionId}`);
 
-    try {
-      // If the global browser service is currently holding this same session, use its close logic
-      if (currentInfo?.sessionId === sessionId) {
-        await browserService.closeSession();
-      } else {
-        // Otherwise, call Browserbase API directly to close the orphaned session
-        const url = `${BROWSERBASE_API_BASE}/sessions/${sessionId}`;
-        const headers = {
-          'x-bb-api-key': BROWSERBASE_API_KEY
-        };
+  if (!BROWSERBASE_API_BASE || !BROWSERBASE_API_KEY) {
+    console.error('❌ Browserbase API credentials not configured on server for DELETE.');
+    return json({ success: false, error: 'Server configuration error for Browserbase API.' }, { status: 500 });
+  }
 
-        console.log(`🌐 Sending direct DELETE to Browserbase API: ${url}`);
-        const resp = await fetch(url, { method: 'DELETE', headers });
-        if (!resp.ok) {
-          const text = await resp.text();
-          throw new Error(`Browserbase API error: ${resp.status} - ${text}`);
-        }
-        console.log('✅ Orphaned session closed directly via API');
-      }
-    } catch (err) {
-      console.error('❌ Failed to close session:', err);
-      return json({ success: false, error: err.message || 'Failed to close session' }, { status: 500 });
-    }
+  // Get the singleton browser service instance
+  const browserService = getBrowserService();
+  const currentServiceSessionInfo = browserService.getSessionInfo();
 
-    console.log('✅ Session cleanup completed successfully');
-
-    return json({
-      success: true,
-      message: 'Session closed successfully',
-      sessionId
+  try {
+    // First, attempt to delete via Browserbase API directly
+    const response = await fetch(`${BROWSERBASE_API_BASE}/sessions/${sessionId}`, {
+      method: 'DELETE',
+      headers: { 'X-BB-API-Key': BROWSERBASE_API_KEY }
     });
 
-  } catch (error) {
-    console.error('❌ Error in session cleanup:', error);
+    let apiDeletionSuccessful = false;
+    if (response.ok) {
+      console.log(`✅ Browserbase session ${sessionId} terminated successfully via API.`);
+      apiDeletionSuccessful = true;
+    } else if (response.status === 404) {
+      console.log(`☑️ Browserbase session ${sessionId} was already terminated or not found (404) via API. Considered success.`);
+      apiDeletionSuccessful = true; // Treat 404 as success for idempotency
+    } else {
+      const errorText = await response.text();
+      console.error(`❌ Failed to terminate Browserbase session ${sessionId} via API: ${response.status}`, errorText);
+      // Do not immediately return error; still try to clean up local service if it matches
+    }
 
-    return json({
-      success: false,
-      error: error.message || 'Failed to close session',
-      timestamp: Date.now()
-    }, { status: 500 });
+    // If the session ID matches the one managed by the local service instance, ensure its state is also cleaned.
+    if (currentServiceSessionInfo && currentServiceSessionInfo.sessionId === sessionId) {
+      console.log(`🧹 Session ${sessionId} matches current service instance. Ensuring local service cleanup.`);
+      await browserService.closeSession(); // This is now idempotent and handles Playwright cleanup
+    } else if (apiDeletionSuccessful) {
+        console.log(`ℹ️ Session ${sessionId} deleted via API did not match active service session (if any). No further local service cleanup needed for this ID.`);
+    }
+
+    if (apiDeletionSuccessful) {
+        return json({ success: true, message: `Session ${sessionId} cleanup processed. Status: ${response.ok ? 'Terminated' : 'Already_Gone'}` });
+    }
+    // If we reach here, API deletion failed with something other than 404
+    return json({ success: false, error: `Failed to terminate session ${sessionId} via API. Status: ${response.status}` }, { status: response.status || 500 });
+
+  } catch (error) {
+    console.error(`❌ Exception during Browserbase session ${sessionId} termination process:`, error);
+    // Fallback: ensure local service is cleaned if it was managing this session, even if API call failed before or during
+    if (currentServiceSessionInfo && currentServiceSessionInfo.sessionId === sessionId) {
+      console.warn(`🌪️ Exception occurred. Attempting fallback cleanup of local service for session ${sessionId}.`);
+      try {
+        await browserService.closeSession();
+      } catch (serviceCloseError) {
+        console.error(` Nested error during fallback service cleanup for ${sessionId}:`, serviceCloseError);
+      }
+    }
+    return json({ success: false, error: 'Exception during session termination: ' + error.message }, { status: 500 });
   }
 }
+
+// export async function GET({ url }) {
+//   // ... (existing GET handler)
+// }

@@ -97,8 +97,54 @@ The current server endpoint `src/routes/api/ai/edit-image/+server.ts` calls `ope
 
 This change ensures that we truly edit the user's drawing instead of generating an unrelated image, satisfying the OpenAI documentation requirements.
 
+## Enhanced Stagehand Observation Log Streaming and Summary Pills
 
+**Date:** 2025-05-29
 
+**Problem:**
+1. Detailed observation logs like "The search button located within the search section of the page" were missing from real-time pills despite being visible in terminal logs
+2. Final Stagehand Agent Response was flooding the chat with many individual action pills all at once
+
+**Solution Implemented:**
+
+### 1. Enhanced Backend Log Parsing (`/api/stagehand/+server.ts`)
+
+- **Improved `found elements` parsing**: Enhanced log parsing to extract detailed element descriptions from structured log data using regex to capture `"description": "..."` from elements arrays
+- **Added `observe` category handling**: New support for 'observe' category logs with instruction-based descriptions
+- **Enhanced pattern matching**: Better extraction of element IDs, timestamps, and structured data from complex Stagehand logs
+- **Real-time streaming**: All parsed observations now stream immediately as pills during execution
+
+### 2. Summary Pill Implementation (`+page.svelte`)
+
+**Frontend Changes:**
+- **New pill type**: Added `'summary'` to `EventLogEntry` type alongside 'reasoning' and 'action'
+- **Replaced bulk action pills**: Instead of generating many individual action pills from `actionsPerformed` array, creates single collapsible summary pill
+- **Collapsible UI component**: Uses `<details>/<summary>` HTML elements for expandable summary pill
+- **Consistent handling**: Applied to both streaming and fallback response modes
+
+**Summary Pill Features:**
+- **Closed by default**: Shows overview like "Stagehand completed 3 actions" without cluttering chat
+- **Expandable details**: Click to reveal full breakdown of actions, reasoning, and extracted data
+- **Structured display**: Numbered action list with status indicators (✓ Completed / ⏳ Pending)
+- **Rich content**: Shows action descriptions, reasoning (when available), and extracted data in formatted JSON
+- **Responsive design**: Proper styling with orange accent color (#FF6B35) to distinguish from other pill types
+
+### 3. Real-Time Observation Enhancement
+
+**Now Captures:**
+- Element discovery: "Found: The search button located within the search section of the page"
+- Selector extraction: "Getting element selector (ID: 31)"
+- Page analysis: "Page analysis completed in 1483ms"
+- Observation requests: "Looking for: click on the search button"
+- Accessibility tree data: "Analyzing page accessibility tree..."
+
+**Streaming Behavior:**
+- Real-time pills appear as Stagehand executes (observation logs)
+- Final summary pill appears at completion with all action details
+- No more overwhelming flood of individual action pills
+- Maintains user ability to see real-time progress while keeping final result organized
+
+**Result:** Users now see detailed real-time observation logs as they happen, plus a clean, collapsible summary of all actions that doesn't overwhelm the chat interface. The summary pill preserves all the detailed Stagehand response data while presenting it in an organized, user-friendly format.
 
 # Instructions / Plan
 
@@ -199,7 +245,136 @@ This change ensures that we truly edit the user's drawing instead of generating 
     *   Verify the pill smoothly slides to the correct navigation item when navigating between these pages.
     *   Verify the pill is hidden or appropriately handled if navigating to a URL not represented in the header navigation.
 
+## Real-Time Stagehand Log Streaming Implementation
 
+**Date:** 2025-05-29
+
+**Goal:** Stream Stagehand execution logs in real-time to display pills as the agent works, rather than waiting for completion.
+
+**Implementation Plan:**
+
+1. **Backend SSE Support (`/api/stagehand/+server.ts`)**:
+   - Add Server-Sent Events endpoint for streaming logs
+   - Capture Stagehand's console output in real-time
+   - Parse logs to extract category, reasoning, and action details
+   - Send formatted events to frontend immediately
+
+2. **Frontend EventSource (`+page.svelte`)**:
+   - Replace fetch with EventSource for real-time communication
+   - Handle incoming log events and add pills immediately
+   - Maintain existing pill styling and animation
+   - Handle completion and error states
+
+3. **Log Format Parsing**:
+   - Parse Stagehand logs with timestamps, categories, and action details
+   - Format into appropriate pill types (reasoning vs action)
+   - Stream pills in chronological order
+
+4. **Testing Requirements**:
+   - Verify pills appear in real-time during Stagehand execution
+   - Ensure proper error handling for disconnections
+   - Test on various command types (navigation, search, clicks, etc.)
+
+## Seamless Chat Integration for Stagehand Responses
+
+**Date:** 2025-05-29
+
+**Problem:** Stagehand responses were displaying as "[object Object]" instead of the actual message content, breaking the natural flow of the chat interface.
+
+**Solution Implemented:**
+
+1. **Message Extraction Logic**:
+   - Fixed streaming response processing to properly extract `finalData.message` as string content
+   - Added type checking and fallback handling for message content
+   - Ensured consistent behavior between streaming and fallback modes
+
+2. **Action Pills Generation**:
+   - Generate action pills from the `actionsPerformed` array returned by Stagehand
+   - Map Stagehand action types (goto, click, type, close) to user-friendly descriptions
+   - Include completion status indicators (✓ for completed, ⏳ for in-progress)
+   - Stream pills after the main message content for better UX
+
+3. **Content Flow Integration**:
+   - Stagehand summaries and responses now flow naturally as markdown-rendered chat messages
+   - Action sequence pills appear below the main response for detailed execution logs
+   - Preserved existing chat functionality while adding browser automation capabilities
+
+4. **Debug Improvements**:
+   - Added detailed logging to track message processing
+   - Better error handling for malformed responses
+   - Consistent handling between streaming and non-streaming modes
+
+**Result:** Browser automation responses now seamlessly integrate with the chat interface, showing AI summaries and analyses as natural conversation while providing detailed action logs as interactive pills.
+
+## Enhanced Real-Time Stagehand Log Streaming
+
+**Date:** 2025-05-29
+
+**Goal:** Surface all Stagehand execution logs that were previously only visible in backend terminal as real-time action pills in the frontend chat interface.
+
+**Problem:** While basic action pills were displaying, many detailed Stagehand logs (extraction, observation, init, etc.) were only visible in terminal output but not streaming to the frontend as pills.
+
+**Solution Implemented:**
+
+1. **Enhanced Log Pattern Matching**:
+   - Expanded `parseAndStreamLog` function to capture ALL Stagehand INFO logs, not just specific patterns
+   - Added support for categories: `init`, `extract`, `extraction`, `observation`, `action`
+   - Added parsing for additional fields: `sessionId`, `url`, `requestId`, `modelName`
+
+2. **Intelligent Log Categorization**:
+   - **Init logs**: Browser session creation, connection, startup
+   - **Extract logs**: Data extraction requests and processing
+   - **Extraction logs**: Accessibility tree analysis, content processing
+   - **Observation logs**: Page state analysis, element discovery
+   - **Action logs**: Browser interactions, navigation, clicks
+
+3. **Pill Type Determination**:
+   - **Reasoning pills** (blue): Init, extract, observation - preparatory steps
+   - **Action pills** (purple): Extraction completion, actions - execution steps
+   - Automatic detection based on log content and completion status
+
+4. **Enhanced Metadata**:
+   - Each pill now includes structured metadata (sessionId, url, requestId, etc.)
+   - Better error handling with fallback to raw log content
+   - Support for system logs (console messages with emojis)
+
+**Frontend Integration**:
+- No frontend changes needed - existing pill rendering system automatically handles the enhanced log stream
+- Pills appear in real-time as Stagehand processes commands
+- Maintains proper interleaving of reasoning and action steps
+
+**Result:** Users now see a comprehensive real-time view of everything Stagehand is doing, from session initialization through page analysis to action execution, with proper categorization and timing.
+
+## Browserbase Session Timeout Fix
+
+**Date:** 2025-05-29
+
+**Problem:** Browserbase sessions were timing out after approximately 5 minutes despite having `keepAlive: true` configured.
+
+**Root Cause:** According to [Browserbase documentation](https://docs.browserbase.com/guides/long-running-sessions), `keepAlive` and `timeout` serve different purposes:
+- **Keep Alive**: Allows reconnection to a session after disconnect
+- **Custom Timeout**: Extends session lifetime beyond the default project timeout
+
+Setting only `keepAlive: true` allows reconnection but doesn't prevent the session from hitting the default timeout period.
+
+**Solution Implemented:**
+
+1. **Direct Browserbase Service** (`/api/browserbase/+server.ts`):
+   - Added both `keepAlive: true` and `timeout: 3600` (1 hour) to session creation
+   - This prevents automatic termination while allowing reconnection after disconnects
+
+2. **Stagehand Integration** (`/api/stagehand/+server.ts`):
+   - Added `browserbaseSessionCreateParams` configuration to Stagehand initialization
+   - Included `projectId`, `keepAlive: true`, and `timeout: 3600`
+   - Ensures Stagehand's underlying Browserbase sessions also use extended timeouts
+
+**Technical Details:**
+- **Maximum session duration**: 6 hours (Browserbase limit)
+- **Recommended timeout**: 3600 seconds (1 hour) for most use cases
+- **Keep alive requirement**: Only available on paid Browserbase plans
+- **Best practice**: Explicitly close sessions when no longer needed to avoid unnecessary billing
+
+**Reference:** [Browserbase Long Running Sessions Guide](https://docs.browserbase.com/guides/long-running-sessions)
 
 # Fabric Canvas Plan
 
@@ -2823,3 +2998,121 @@ This approach enables natural, intuitive browser automation while maintaining pr
     *   This will ensure that the service instance clears its own knowledge of any existing session and attempts to terminate it with Browserbase *before* proceeding to request and configure a brand new session. This makes the initialization process more stateless from the service's perspective for each call.
 
 **Expected Outcome:** Each call to the `/api/browserbase` POST endpoint (triggered by `initializeBrowser` on the client) should now force the server-side service to start from a cleaner slate, preventing the re-issuance or carry-over of old session details and ensuring only one truly active session per client page.
+
+## Stagehand Computer Use Agent Integration
+
+**Date:** 2025-05-30
+
+**Goal:** Leverage Stagehand's Computer Use agent capabilities, using models from Anthropic (default) or OpenAI, to enhance browser automation by allowing the agent to interact with web pages based on visual understanding (screenshots) and coordinate-based actions.
+
+**Problem:** The current Stagehand integration uses standard LLM agents. Computer Use models are specifically trained for UI interaction by analyzing visual screen data, which can be more robust for complex UIs, iframes, and elements that are hard to target with traditional selectors.
+
+**Solution Outline:**
+
+1.  **Backend Modifications (`src/routes/api/stagehand/+server.ts`):
+    *   **Viewport Configuration**: Set a fixed viewport size (e.g., 1024x768 or 1440x900) in `browserbaseSessionCreateParams` when initializing Stagehand, as Computer Use agents often rely on X,Y coordinates.
+    *   **Agent Configuration**:
+        *   In `ensureValidSession`, when `globalStagehandSession.agent()` is called, pass parameters to specify the Computer Use provider and model.
+        *   Default to Anthropic: `provider: 'anthropic'`, `model: 'claude-3.5-sonnet-20240731'` (or latest Sonnet).
+        *   Ensure the correct API key (`ANTHROPIC_API_KEY` or `OPENAI_API_KEY`) is supplied via `options: { apiKey: ... }`.
+    *   **Stagehand Version**: Ensure Stagehand is at version 2.0 or higher, as Computer Use agents are a feature of Stagehand 2.0+.
+
+2.  **Frontend Modifications (`src/routes/(public)/chat/+page.svelte`) (Optional for initial implementation):
+    *   Consider adding a UI dropdown to select the agent type (Standard, Anthropic CU, OpenAI CU).
+    *   For now, the backend will default to Anthropic Computer Use.
+
+3.  **Testing:**
+    *   Test with commands that would benefit from visual understanding (e.g., "click the third icon in the sidebar", "find the section with the heading 'About Us' and scroll to it").
+    *   Verify error handling and response consistency.
+
+**References:**
+*   Stagehand Computer Use Docs: [https://docs.stagehand.dev/examples/computer_use](https://docs.stagehand.dev/examples/computer_use)
+*   Anthropic Computer Use Announcement: [https://www.anthropic.com/news/3-5-models-and-computer-use](https://www.anthropic.com/news/3-5-models-and-computer-use)
+
+This plan aims to make the browser automation more robust by leveraging specialized AI models for UI interaction.
+
+### Live Browser Viewport Loading State Refinement (`+page.svelte`)
+
+**Problem:** The `Browserbase.svelte` component in `+page.svelte` was getting stuck in a loading state, even when a `browserLiveViewUrl` was likely available.
+
+**Solution:**
+- **Refined `isBrowserLoading` Management:**
+    - Introduced a Svelte reactive statement (`$:`) to immediately set `isBrowserLoading = false` as soon as `browserLiveViewUrl` becomes available. This ensures the loader hides promptly.
+    - Modified `handleOmnibarSubmit` to only set `isBrowserLoading = true` if `browserLiveViewUrl` is not already populated. If a URL exists, the browser isn't strictly "loading" from scratch.
+    - Ensured `showBrowserViewport = true` is set during `handleOmnibarSubmit` to always attempt to display the browser panel when a command is active.
+- **Impact:** The browser viewport should now more accurately reflect its loading state, showing the loader primarily during initial session establishment or re-establishment if the live view URL is lost, and then display the iframe or screenshot once available.
+
+### Stagehand Computer Use (CU) Agent Integration and Logging
+
+**Problem:**
+1.  The `/v1/sessions/.../live-urls` API endpoint used to get the live view URL for Browserbase sessions was consistently failing with a 404, forcing a fallback to the `/debug` endpoint.
+2.  Logs from the Anthropic Computer Use (CU) agent, especially its `tool_use` actions, were not being parsed into sufficiently detailed and user-friendly "pills" for the chat interface, hindering observability.
+
+**Solution (`src/routes/api/stagehand/+server.ts`):**
+
+1.  **Live URL API Failure Logging:**
+    *   Added more prominent `console.warn` and `console.error` messages in the `getBrowserbaseLiveViewUrl` function. This will make it clear in the server logs if the primary `/live-urls` API fails and the system has to use the `/debug` endpoint as a fallback, or if both methods fail.
+
+2.  **Enhanced CU Agent Log Parsing for Pills:**
+    *   Significantly updated the `parseAndStreamLog` function.
+    *   It now specifically looks for the `tool_use` structure in logs, which is characteristic of the Anthropic CU agent's output (e.g., when it decides to click coordinates or press a key).
+    *   When a `tool_use` log with `name: "computer"` is found, the function extracts details from the `input` object (like `action`, `coordinate`, `text`, `url`, `query`).
+    *   This information is used to create more descriptive pill messages for the frontend, such as "CU: left_click at [x,y]", "CU: type 'some text'", or "CU: key 'Enter'".
+    *   Added specific formatting for common CU lifecycle messages like "CU: Starting execution..." and "CU: Analyzing screen..." to improve clarity.
+    *   Errors reported during action execution by the CU model (e.g., `Error executing action key: keyboard.press: Unknown key: "super"`) are now also formatted into error pills prefixed with "CU: Error -".
+
+**Clarification on Stagehand and Computer Use Models:**
+
+*   **Stagehand (`@browserbasehq/stagehand` library):** This is the core browser automation framework. It manages Browserbase sessions (cloud browsers), provides an interface to different AI agents, and translates agent decisions into executable Playwright commands or low-level browser interactions. It also handles capturing screenshots and DOM information to feed to the chosen agent.
+*   **Computer Use (CU) Agent (e.g., Claude via Anthropic provider):** This is a *specialized type of agent* that Stagehand is configured to use. When `globalStagehandSession.agent({ provider: 'anthropic', model: 'claude-3-7-sonnet-20250219', ... })` is called, Stagehand employs this CU-capable model.
+    *   The CU agent receives the user's natural language command and, crucially, **screenshots** of the current browser page from Stagehand.
+    *   It visually analyzes the screenshot and determines a sequence of low-level, often coordinate-based, actions (e.g., "left_click coordinate [x,y]", "type 'hello'", "key 'Enter'").
+    *   Stagehand then takes these precise instructions from the CU agent and executes them within the active Browserbase session.
+*   **Combined Usage:** You are using Stagehand *configured to employ* a Computer Use model. This is the intended modern approach. Stagehand orchestrates, and the CU model provides the (visual) intelligence for deciding the exact interaction steps. This is generally more robust for complex UIs than non-visual DOM interpretation.
+
+**Impact:**
+- Server logs will provide clearer information if the preferred live view URL endpoint is failing.
+- The chat interface will display more detailed and understandable real-time action pills from the Computer Use agent, improving visibility into its operations and decision-making process.
+
+### Browser Panel Loader Logic Fix (Chat)
+
+**Problem:**
+The live Browserbase session was not being displayed in the chat browser panel, with the loader stuck on. The loader should only show during Stagehand/Browserbase session initialization, and the live browser should always be visible after initialization.
+
+**Solution:**
+- Refined state management in `+page.svelte` so that `isBrowserLoading` is set to `false` as soon as `browserLiveViewUrl` is available.
+- Added a Svelte reactive statement to ensure the loader hides immediately when the live view URL is set.
+- In `Browserbase.svelte`, ensured the loader is only shown when `loading` is `true` and no `liveViewUrl` is present. The iframe is always shown if `liveViewUrl` is present.
+- Tested the UI to confirm the loader only appears during initialization, and the live browser session is always visible after.
+
+### Robust Session Termination to Prevent Exceeding Concurrent Limits
+
+**Problem:**
+Reloading the chat page (`/chat`) or opening multiple chat tabs can lead to exceeding Browserbase's maximum concurrent session limit. This happens because new sessions are often created before old ones (associated with the previous page state or closed tabs) are fully terminated.
+
+**Symptoms:**
+- Browserbase error: "You've exceeded your max concurrent sessions limit (limit 3, currently 3)."
+- Multiple "Running" sessions visible in the Browserbase dashboard despite only one active chat tab.
+
+**Solution Strategy:**
+
+1.  **Client-Side (`src/routes/(public)/chat/+page.svelte`):**
+    *   **Aggressive `onMount` Cleanup:**
+        *   On page load, check `sessionStorage` for a `browserSessionId`.
+        *   If found, **synchronously and immediately** call the backend DELETE endpoints for both `/api/stagehand` and `/api/browserbase` to terminate this specific session ID.
+        *   **Crucially, block the initialization of any new Stagehand session** (e.g., the default navigation to linkedin.com) until this cleanup call completes. A new flag like `isCleaningUpStaleSession` will manage this.
+        *   Remove the `browserSessionId` from `sessionStorage` only after the cleanup attempt.
+    *   **Strengthened `unload` / `beforeunload` Handlers:**
+        *   Continue using `navigator.sendBeacon` in `unload` for reliable background cleanup requests to both `/api/stagehand` and `/api/browserbase`.
+        *   The `beforeunload` event can also make `fetch` calls with `keepalive: true` as a primary attempt.
+        *   Ensure these requests always include the `sessionId` to be deleted.
+
+2.  **Backend (`src/routes/api/stagehand/+server.ts` & `src/routes/api/browserbase/+server.ts`):**
+    *   **Idempotent DELETE Endpoints:** Both `DELETE` handlers must be able to gracefully handle requests for sessions that might already be terminated (e.g., return success if not found or already deleted).
+    *   **Comprehensive Stagehand Cleanup:** The `DELETE` handler in `stagehand/+server.ts` must ensure that it not only closes its own Stagehand session object but also explicitly triggers the deletion of the associated Browserbase session (e.g., by calling the `/api/browserbase` DELETE endpoint or a shared utility function).
+
+3.  **Session ID Management:**
+    *   The `browserSessionId` from an active session should be consistently stored in `sessionStorage` by the client.
+    *   When the page is closed or reloaded, this stored ID is the target for cleanup.
+
+**Impact:** These changes will make session termination more immediate and reliable, significantly reducing the chances of hitting concurrent session limits and ensuring that only genuinely active chat tabs have running Browserbase sessions.
