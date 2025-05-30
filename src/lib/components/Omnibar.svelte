@@ -278,10 +278,11 @@
 </div>
 
 <style lang="scss">
+
   .follow-up-questions {
     display: flex;
     gap: 8px;
-    margin-bottom: -16px;
+    margin-bottom: -22px;
     max-width: 100%;
     width: 720px;
     padding: 24px;
@@ -317,10 +318,13 @@
       display: none;
     }
 
+
+    }
+
     /* When content overflows, switch to left-aligned for better scrolling */
-    &.has-overflow {
-      justify-content: flex-start;
-      padding: 0 32px;
+    :global(.has-overflow) {
+      justify-content: flex-start !important;
+      padding: 24px 12px !important;
 
       /* Adjust mask for scrolling content */
       mask: linear-gradient(
@@ -337,7 +341,6 @@
         black calc(100% - 48px),
         transparent 100%
       );
-    }
 
     @media screen and (max-width: 800px) {
       justify-content: flex-start;
@@ -384,11 +387,12 @@
   }
 
   .follow-up-pill {
-    background: #6355FF;
-    border: 1px solid rgba(255, 255, 255, 0.15);
+    background: white;
+    border: 1px solid rgba(#030025, 0.1);
     border-radius: 20px;
-    padding: 8px 14px;
-    color: rgba(255, 255, 255, 0.9);
+    padding: 10px 16px;
+    color: #030025;
+    text-shadow: -.4px 0 0 #030025;
     font-family: "Inter", sans-serif;
     font-size: 13px;
     font-weight: 500;
@@ -396,22 +400,21 @@
     transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
     text-align: center;
     line-height: 1.3;
-    backdrop-filter: blur(10px);
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    box-shadow: 0 8px 16px rgba(#030025, 0.1);
     white-space: nowrap;
     flex-shrink: 0;
+    backdrop-filter: blur(50px);
 
-    font-family: "ivypresto-headline", serif;
+    font-family: "Hedvig Letters Serif", "ivypresto-headline", serif;
 
-    font-size: 16px;
-    font-weight: 500;
-    letter-spacing: .4px;
+    font-size: 14px;
+    font-weight: 100;
+    letter-spacing: -.2px;
 
     &:hover:not(:disabled) {
-      background: rgba(255, 255, 255, 0.12);
-      border-color: rgba(255, 255, 255, 0.25);
       transform: translateY(-1px);
-      box-shadow: 0 6px 16px rgba(0, 0, 0, 0.2);
+      border: 1px solid rgba(#6355FF, .3);
+      box-shadow: 0 9px 16px rgba(#030025, 0.15);
     }
 
     &:active:not(:disabled) {

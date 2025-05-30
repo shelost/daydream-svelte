@@ -979,7 +979,14 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
 {#if isStartState}
   <div id="start-state-container" >
     <div class="welcome-header" in:fade={{ delay: 300, duration: 500 }}>
-      <img src="/stan-avatar.png" alt="Stanley" class="stan-avatar">
+      <video
+            muted
+            loop
+            preload="auto"
+            autoPlay
+            playsInline
+            src='stanley-3.mp4'
+         ></video>
       <h2> Stanley </h2>
     </div>
 
@@ -1190,6 +1197,19 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
       {/each}
     </div>
 
+
+
+    <video
+    muted
+    loop
+    preload="auto"
+    autoPlay
+    playsInline
+    src='stanley-5.mp4'
+    id='stanley-thinking'
+    in:fly={{ y: 20, duration: 300, delay:300 }}
+ ></video>
+
     <Omnibar
       settingType="text"
       bind:additionalContext={omnibarPrompt}
@@ -1209,6 +1229,12 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
 
 <style lang="scss">
 
+#stanley-thinking{
+  position: fixed;
+  bottom: 120px;
+  left: 40px;
+  height: 140px;
+}
 
   .spinner{
     filter: drop-shadow(-2px 4px 4px rgba(#030025, .15));
@@ -1264,13 +1290,9 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
     display: flex;
     --highlight: #6355FF;
 
-
-
   }
 
-  #chat-page{
-    width: 100%;
-  }
+
 
   #panel{
     display: flex;
@@ -1350,7 +1372,12 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
 
     img {
       height: 140px;
-      filter: drop-shadow(-8px 16px 24px rgba(#030025, 0.1));
+      // filter: drop-shadow(-8px 16px 24px rgba(#030025, 0.1));
+    }
+
+    video{
+      height: 200px;
+      filter: brightness(101%);
     }
 
     h2 {
@@ -1579,7 +1606,7 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
     overflow-y: auto;
     height: 100%;
     max-height: 100vh;
-    padding: 16px 24px 180px 24px;
+    padding: 16px 24px 200px 24px;
 
     max-width: 100%;
 
@@ -1614,7 +1641,7 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
 
 
     &.user {
-      margin: 12px auto;
+      margin: 32px auto 12px auto;
       .message-content-area{
         justify-content: flex-start;
         align-items: center;
@@ -1646,7 +1673,6 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
 
   .message-bubble {
     padding: 10px 15px;
-    border-radius: 18px;
     line-height: 1.6;
     font-size: 15px;
 
@@ -1665,15 +1691,19 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
 
 
     &.user-bubble {
-      background-color: rgba(black, .05);
+      background-color: rgba(#6355FF, .12);
       font-family: "ivypresto-headline", 'Newsreader', serif;
       text-shadow: -.4px 0 0 #030025;
       font-size: 16px;
       font-weight: 500;
       letter-spacing: .5px;
       position: relative;
-      padding: 12px 18px 14px 18px;
+      padding: 10px 16px 12px 16px;
+      border-radius: 14px;
       color: #030025;
+      margin-left: 12px;
+
+      box-shadow: inset -2px -4px 8px rgba(#6355FF, .05);
     }
 
 
@@ -1968,12 +1998,12 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
 
 
     :global(ul), :global(ol) {
-      padding-left: 1.5em;
+      margin: 12px 0;
+      padding-left: 18px;
     }
 
-
     :global(li) {
-      margin-bottom: 0.5em;
+      margin: 8px 0;
     }
 
 
