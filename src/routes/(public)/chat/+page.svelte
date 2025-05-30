@@ -800,6 +800,8 @@
 
   function parseLog(log: string) {
 
+    return log
+
     if (log.includes('Processing block')){
       const json = JSON.parse(log.substring(18))
       switch (json.type){
@@ -812,7 +814,6 @@
       }
     }
 
-    return log
   }
 
   $: {
@@ -854,7 +855,7 @@
     <div id="start-state-container">
     <div class="welcome-header" in:fade={{ delay: 300, duration: 500 }}>
         <img src="/opal.png" alt="Chat" class="stan-avatar">
-        <h2>Chat with Browser</h2>
+        <h2> Chat </h2>
     </div>
 
     <!-- Example Prompts Section -->
@@ -1116,6 +1117,8 @@
   </div>
 {/if}
 
+
+<div id = 'panel'>
   <!-- Live Browser Viewport (refactored) -->
   <Browserbase
     show={showBrowserViewport && (Boolean(browserLiveViewUrl) || Boolean(browserScreenshot) || isBrowserLoading || Boolean(browserSessionId))}
@@ -1128,6 +1131,11 @@
       showBrowserViewport = false;
     }}
   />
+  <div class = 'log'>
+
+  </div>
+</div>
+
 
 </div>
 
@@ -1138,7 +1146,7 @@
     border-radius: 50%;
     background: var(--highlight);
     display: grid;
-    box-shadow: inset -2px -2px 4px rgba(black, .2);
+    box-shadow: inset -2px -2px 4px rgba(black, .2), inset 2px 2px 4px rgba(white, .4);
     animation: l22-0 2s infinite linear;
   }
   .loader:before,
@@ -1164,10 +1172,34 @@
   #main {
     height: 100%;
     max-height: 100vh;
-    overflow: auto;
     position: relative;
     touch-action: pan-y pan-x;
     -webkit-overflow-scrolling: touch;
+
+    display: flex;
+
+  }
+
+  #panel{
+    display: flex;
+    flex-direction: column;
+    box-sizing: border-box;
+    padding: 32px;
+    gap: 16px;
+
+    .log{
+      background: rgba(black, .08);
+      flex: 1;
+      border-radius: 8px;
+      padding: 12px;
+    }
+  }
+
+  :global(.app){
+    position: fixed;
+    top: 0;
+    left: 0;
+
   }
 
   .global-refresh-button {
@@ -1429,23 +1461,6 @@
   }
 
 
-
-
-  /* Regular chat styles */
-  #image-chat-page { // Consider renaming ID to #text-chat-page if it causes confusion
-    display: flex;
-    flex-direction: column;
-    height: 100%;
-    max-height: 100vh;
-    width: 100%;
-    max-width: 100vw;
-    margin: auto;
-    overflow: hidden;
-    color: #f0f0f0;
-    box-sizing: border-box;
-  }
-
-
   .chat-header {
     padding: 8px 24px;
     background-color: rgba(black, 0);
@@ -1461,20 +1476,24 @@
     p { margin: 0; font-size: 12px; color: #aaa; }
   }
 
+  #chat-page{
+    width: 100%;
+    max-width: 100%;
+    padding: 0;
+    box-sizing: border-box;
+  }
 
   .chat-messages-container {
-    flex-grow: 1;
     overflow-y: auto;
     height: 100%;
     max-height: 100vh;
     padding: 16px 24px 180px 24px;
 
+    max-width: 100%;
 
     touch-action: pan-y;
     -webkit-overflow-scrolling: touch;
-    transform: translateZ(0);
     will-change: scroll-position;
-
 
     box-sizing: border-box;
     display: flex;
@@ -1484,7 +1503,6 @@
     scrollbar-width: thin;
     scrollbar-color: #444 #222;
 
-
     &::-webkit-scrollbar { width: 8px; }
     &::-webkit-scrollbar-track { background: #222; border-radius: 4px; }
     &::-webkit-scrollbar-thumb { background-color: #444; border-radius: 4px; border: 2px solid #222; }
@@ -1493,8 +1511,8 @@
 
   .message-wrapper {
     display: flex;
-    max-width: 85%;
-    width: 1000px;
+    width: 85%;
+    max-width: 1000px;
     box-sizing: border-box;
     flex-grow: 0;
     margin: 0 auto;

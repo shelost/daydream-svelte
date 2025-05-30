@@ -3027,7 +3027,7 @@ This approach enables natural, intuitive browser automation while maintaining pr
 
 **References:**
 *   Stagehand Computer Use Docs: [https://docs.stagehand.dev/examples/computer_use](https://docs.stagehand.dev/examples/computer_use)
-*   Anthropic Computer Use Announcement: [https://www.anthropic.com/news/3-5-models-and-computer-use](https://www.anthropic.com/news/3-5-models-and-computer-use)
+*   Anthropic Computer Use Announcement: [https://www.anthropic.com/news/3-5-models-and-computer_use](https://www.anthropic.com/news/3-5-models-and-computer_use)
 
 This plan aims to make the browser automation more robust by leveraging specialized AI models for UI interaction.
 
@@ -3116,3 +3116,54 @@ Reloading the chat page (`/chat`) or opening multiple chat tabs can lead to exce
     *   When the page is closed or reloaded, this stored ID is the target for cleanup.
 
 **Impact:** These changes will make session termination more immediate and reliable, significantly reducing the chances of hitting concurrent session limits and ensuring that only genuinely active chat tabs have running Browserbase sessions.
+
+## 2025-05-30 — Improve Stagehand CU Log Streaming
+
+### Problem
+While streaming Stagehand Computer-Use (CU) execution logs we currently lose critical data:
+* The callback that relays console messages to the front-end uses `logData.pillType` even though the object returned by `parseAndStreamLog` stores the field as `type`.
+* Only a truncated `description` is forwarded; the full JSON payload (`fullDetails`) is wrapped inside another object, making it difficult for the UI to access.
+* Very long `description` strings are forcibly truncated to 200 characters, causing loss of context (e.g. large `text` fields from Anthropic messages).
+
+### Solution Outline
+1. **Return Rich Pill Objects** from `parseAndStreamLog`:
+   * Preserve the entire original console arguments in `rawArgs`.
+   * Keep a `descriptionShort` (truncated) **and** a full `description` field.
+2. **Simplify the Streaming Callback** in the `POST` handler:
+   * Forward the pill object as-is: `sendEvent('pill', pillData)`.
+   * Remove incorrect remapping of `pillType → type`.
+3. **Remove Hard 200-char Truncation** by moving it to a dedicated `descriptionShort` field while leaving the full text untouched.
+4. **Update Front-End Expectations** (separate task) so that the UI can render either the short or full description and access the complete payload when the user expands the pill.
+
+### Why This Works
+* Guarantees that *all* data produced by Stagehand / Anthropic is serialised once and shipped to the UI — nothing is silently dropped.
+* Fixes the field-name mismatch so that pill type colours & icons display correctly.
+* Maintains backward compatibility by still providing a short description for compact pill rendering, while power-users can inspect the full JSON.
+
+### Tasks Checklist
+- [ ] Refactor `parseAndStreamLog` in `src/routes/api/stagehand/+server.ts` to:
+  - Add `rawArgs` and `descriptionShort` fields.
+  - Stop overwriting `description`.
+- [x] Update the log streaming callback inside the SSE `startLogCapture` block to emit the pill object directly.
+- [x] Remove the incorrect `pillType` access.
+- [ ] Verify server-side unit tests (or manual testing) to ensure full objects arrive in the browser.
+- [ ] (Follow-up) Adjust front-end pill component to use new fields.
+
+## 2025-06-01 — Implement Prompt Categorization for Agent, Browser, and Chat Tasks
+
+### Problem
+Currently, all user prompts in the chat interface are processed uniformly through the Stagehand API using a Computer Use (CU) agent for browser automation. This lacks flexibility, as not all tasks require complex agent capabilities; some are simple browser actions or pure chat interactions. This can lead to inefficient resource usage and suboptimal user experience.
+
+### Solution Outline
+1. **Manual Prefix Parsing**: In `src/routes/(public)/chat/+page.svelte`, parse user prompts based on prefixes to categorize tasks:
+   - `@` prefix for Agent tasks (complex browser automation via CU agent in `src/routes/api/stagehand/+server.ts`).
+   - `>` prefix for Browser tasks (simple browser actions using Stagehand's native `execute` feature).
+   - No prefix (or any other starting character) for Chat tasks (pure conversational tasks using standard LLM endpoints).
+2. **Routing Logic**: Implement logic to route requests to the appropriate endpoint:
+   - Agent tasks to `/api/stagehand` with full CU agent capabilities.
+   - Browser tasks to `/api/stagehand` with a parameter to indicate lightweight execution.
+   - Chat tasks to LLM endpoints like `/api/ai/anthropic`, `/api/ai/google`, or `/api/ai/gpt` based on the selected model.
+3. **Preserve UI and Functionality**: Ensure no changes to UI layout or styles, and maintain existing functionality like streaming and error handling across all task types.
+
+### Why This Solves the Problem
+This categorization allows for efficient task handling by matching the task complexity to the appropriate backend service. Agent tasks use the full CU model for complex interactions, Browser tasks use lightweight Stagehand actions for quick operations, and Chat tasks avoid browser overhead by using standard LLM APIs. Manual prefixing ensures clear user intent without complex natural language parsing at this stage.

@@ -1038,8 +1038,8 @@ function fallbackCommandParsing(userCommand: string): ParsedCommand {
       intent: 'find_linkedin_profile',
       platform: 'linkedin',
       actions: [
-        { type: 'navigate', url: 'https://linkedin.com', description: 'Navigate to LinkedIn' },
-        { type: 'search', query: personName, description: `Search for "${personName}"` },
+        { type: 'navigate', url: 'https://google..com', description: 'Navigate to LinkedIn' },
+        { type: 'search', query: personName, description: `Search for "${personName} linkedin"` },
         { type: 'click', target: 'first profile result', description: 'Click on the first profile result' }
       ],
       reasoning: `Fallback parsing: detected LinkedIn profile search for "${personName}"`

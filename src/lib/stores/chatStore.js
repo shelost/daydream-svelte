@@ -8,7 +8,7 @@ function createChatVisibilityStore() {
     // Get initial value from localStorage if we're in the browser
     const initialValue = browser
         ? JSON.parse(localStorage.getItem(CHAT_VISIBILITY_KEY) ?? 'true')
-        : true;
+        : false;
 
     const { subscribe, set, update } = writable(initialValue);
 

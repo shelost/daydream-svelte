@@ -16,7 +16,7 @@
   $: iframeUrl = liveViewUrl || null;
 </script>
 
-{#if show}
+{#if true}
   <div class="browser-viewport" in:fade={{ duration: 250 }}>
 
     <!-- Content area without custom header -->
@@ -85,9 +85,7 @@
 
   /* Clean viewport container without custom chrome */
   .browser-viewport {
-    position: absolute;
-    top: 70px;
-    right: 20px;
+    display: block;
     width: 360px;
     height: 260px;
     background: white;

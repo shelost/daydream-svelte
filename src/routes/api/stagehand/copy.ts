@@ -196,15 +196,6 @@ if (!LLM_API_KEY) {
   console.error(`❌ Missing ${LLM_PROVIDER.toUpperCase()} API Key for Stagehand route. Stagehand will not function correctly.`);
 }
 
-// ===== Unified Computer-Use (CU) Model Configuration =====
-// Change CU_PROVIDER / CU_MODEL (or set corresponding env vars) to switch providers globally.
-// Supported providers:
-//   "anthropic" → model "claude-3-7-sonnet-20250219"
-//   "openai"    → model "computer-use-preview"
-
-const CU_PROVIDER = 'openai'
-const CU_MODEL = CU_PROVIDER === 'openai' ? 'computer-use-preview' : 'claude-3-7-sonnet-20250219';
-
 // Function to check if current session is still valid
 async function isSessionValid(): Promise<boolean> {
   if (!globalStagehandSession || !globalSessionId) {
@@ -300,10 +291,10 @@ async function ensureValidSession(): Promise<{ sessionId: string; liveViewUrl: s
     if (globalStagehandSession && globalSessionId && globalLiveViewUrl) {
       console.log('✅ Using session created by parallel request');
       const agent = globalStagehandSession.agent({
-        provider: CU_PROVIDER,
-        model: CU_MODEL,
+        provider: 'anthropic', // Default to Anthropic for Computer Use
+        model: 'claude-3-7-sonnet-20250219', // Use the latest Sonnet, or a specific CU model
         options: {
-          apiKey: CU_PROVIDER === 'openai' ? OPENAI_API_KEY : ANTHROPIC_API_KEY,
+          apiKey: ANTHROPIC_API_KEY,
         },
         // instructions: "You are a helpful assistant that can use a web browser. Do not ask follow up questions, the user will trust your judgement." // Optional custom instructions
       });
@@ -323,10 +314,10 @@ async function ensureValidSession(): Promise<{ sessionId: string; liveViewUrl: s
       }
     }
     const agent = globalStagehandSession.agent({
-      provider: CU_PROVIDER,
-      model: CU_MODEL,
+      provider: 'anthropic',
+      model: 'claude-3-7-sonnet-20250219',
       options: {
-        apiKey: CU_PROVIDER === 'openai' ? OPENAI_API_KEY : ANTHROPIC_API_KEY,
+        apiKey: ANTHROPIC_API_KEY,
       },
     });
     return { sessionId: globalSessionId!, liveViewUrl: globalLiveViewUrl!, stagehandAgent: agent };
@@ -396,10 +387,10 @@ async function ensureValidSession(): Promise<{ sessionId: string; liveViewUrl: s
     console.log('🎯 Session stored globally for reuse');
 
     const agent = globalStagehandSession.agent({
-      provider: CU_PROVIDER,
-      model: CU_MODEL,
+      provider: 'anthropic',
+      model: 'claude-3-7-sonnet-20250219', // Or specific computer use model if listed by Stagehand/Anthropic for this
       options: {
-        apiKey: CU_PROVIDER === 'openai' ? OPENAI_API_KEY : ANTHROPIC_API_KEY,
+        apiKey: ANTHROPIC_API_KEY,
       },
     });
 
@@ -462,7 +453,7 @@ async function closeSession(sessionIdToClose?: string) {
 
 export async function POST({ request }) {
   const body = await request.json();
-  const { command, chatId, stream = false, agentProvider = CU_PROVIDER, agentModel = CU_MODEL, initUrl } = body; // Allow client to specify agent and initUrl
+  const { command, chatId, stream = false, agentProvider = 'anthropic', agentModel = 'claude-3-7-sonnet-20250219', initUrl } = body; // Allow client to specify agent and initUrl
 
   if (!command && !initUrl) {
     return json({ success: false, error: 'Either command or initUrl must be provided' }, { status: 400 });
