@@ -10,9 +10,12 @@
   let Prism: any = null; // Keep at top-level, initialize to null
   let PrismLoaded: boolean = false; // Keep at top-level
 
-  // Word animation configuration
-  const WORD_FADE_DURATION = 2500; // milliseconds for each word to fade in (increased for visibility)
-  const WORD_STAGGER_DELAY = 200; // milliseconds between each word animation start
+  interface AnimatedWord {
+    id: string;
+    text: string;
+    addedTime: number;
+    currentOpacity: number;
+  }
 
   interface Message {
     id: string;
@@ -22,6 +25,7 @@
     isStreaming?: boolean; // For assistant message, indicates text streaming
     modelUsed?: string; // For assistant message, which model generated the response
     error?: string; // For assistant message, if an error occurred
+    animatedWords?: AnimatedWord[];
     _lastProcessedContentLength?: number;
     _previousContent?: string; // Track previous content for DOM diffing
   }
@@ -139,94 +143,36 @@
     }, 2000);
   }
 
-  // Track animated words for each message to prevent re-animation
-  let animatedWordsMap = new Map();
+  // Function to apply smooth opacity animation to streaming content
+  function animateNewContent(container, previousContent, currentContent) {
+    if (!container || !currentContent || currentContent === previousContent) return;
 
-  // Apply word animation to new content in the markdown container
-  function applyWordAnimation(container, messageId) {
-    if (!container) return;
+    // Simple approach: add a CSS class that triggers smooth fade-in for new content
+    // This avoids DOM manipulation and uses optimized CSS animations
+    const previousLength = previousContent ? previousContent.length : 0;
+    const newContentLength = currentContent.length - previousLength;
 
-    // Get or create word count for this message
-    if (!animatedWordsMap.has(messageId)) {
-      animatedWordsMap.set(messageId, 0); // Track total word count instead of Set
-    }
+    if (newContentLength <= 0) return;
 
-    let currentWordCount = animatedWordsMap.get(messageId);
-    let globalWordIndex = 0;
+    // Add a temporary animation class to the entire container
+    container.classList.add('content-updating');
 
-    // Walk through all text nodes
-    const walker = document.createTreeWalker(
-      container,
-      NodeFilter.SHOW_TEXT,
-      {
-        acceptNode: (node) => {
-          // Skip empty text nodes
-          if (!node.textContent || node.textContent.trim() === '') {
-            return NodeFilter.FILTER_REJECT;
-          }
-          // Skip if parent is already an animated word
-          if (node.parentElement?.classList.contains('animated-word')) {
-            return NodeFilter.FILTER_REJECT;
-          }
-          return NodeFilter.FILTER_ACCEPT;
-        }
-      }
-    );
+    // Use requestAnimationFrame for smooth timing
+    requestAnimationFrame(() => {
+      container.classList.remove('content-updating');
+      container.classList.add('content-updated');
 
-    const textNodesToProcess = [];
-    let node;
-    while (node = walker.nextNode()) {
-      textNodesToProcess.push(node);
-    }
-
-    // Process each text node
-    textNodesToProcess.forEach((textNode) => {
-      const text = textNode.textContent;
-      const parent = textNode.parentNode;
-
-      // Split text into words
-      const words = text.split(/(\s+)/);
-      const fragment = document.createDocumentFragment();
-
-      words.forEach((word) => {
-        if (word.trim()) {
-          if (globalWordIndex >= currentWordCount) {
-            // New word - animate it
-            const span = document.createElement('span');
-            span.className = 'animated-word';
-            span.textContent = word;
-            span.style.opacity = '0'; // Start at opacity 0
-            // Calculate delay based on how many new words we've seen
-            const newWordIndex = globalWordIndex - currentWordCount;
-            span.style.animationDelay = `${newWordIndex * WORD_STAGGER_DELAY}ms`;
-            span.style.animationDuration = `${WORD_FADE_DURATION}ms`;
-            fragment.appendChild(span);
-          } else {
-            // Already animated word
-            const span = document.createElement('span');
-            span.className = 'animated-word animation-complete';
-            span.textContent = word;
-            fragment.appendChild(span);
-          }
-          globalWordIndex++;
-        } else {
-          // Preserve whitespace
-          fragment.appendChild(document.createTextNode(word));
-        }
-      });
-
-      // Replace the text node
-      parent.replaceChild(fragment, textNode);
+      // Clean up the animation class after animation completes
+      setTimeout(() => {
+        container.classList.remove('content-updated');
+      }, 150); // Short, smooth animation
     });
-
-    // Update the word count for this message
-    animatedWordsMap.set(messageId, globalWordIndex);
   }
 
-  // Create a mutation observer to detect new code blocks and text during streaming
+  // Create a mutation observer to detect new code blocks during streaming
   let messageObservers = new Map();
 
-  function setupStreamingContentObserver(container, messageId) {
+  function setupStreamingCodeHighlighter(container, messageId) {
     // Disconnect existing observer for this message if it exists
     if (messageObservers.has(messageId)) {
       messageObservers.get(messageId).disconnect();
@@ -234,14 +180,10 @@
 
     if (!container) return;
 
-    // Create a new mutation observer to watch for content changes
+    // Create a new mutation observer to watch for code blocks being added during streaming
     const observer = new MutationObserver((mutations) => {
-      let hasTextChanges = false;
-
       for (const mutation of mutations) {
         if (mutation.type === 'childList' || mutation.type === 'characterData') {
-          hasTextChanges = true;
-
           // Check if any new pre/code elements were added or modified
           const codeBlocks = container.querySelectorAll('pre code:not(.highlighted)');
           if (codeBlocks.length > 0) {
@@ -250,23 +192,6 @@
             });
           }
         }
-      }
-
-      // Apply word animations if there were text changes
-      if (hasTextChanges) {
-        // Apply animations multiple times to catch new content
-        // Initial application
-        applyWordAnimation(container, messageId);
-
-        // Apply again after a short delay to catch any async rendering
-        setTimeout(() => {
-          applyWordAnimation(container, messageId);
-        }, 10);
-
-        // And once more after DOM settles
-        requestAnimationFrame(() => {
-          applyWordAnimation(container, messageId);
-        });
       }
     });
 
@@ -579,7 +504,7 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
       // Set up a mutation observer for the streaming content
       const setupObserver = () => {
         if (markdownContainers[assistantMessageId]) {
-          setupStreamingContentObserver(markdownContainers[assistantMessageId], assistantMessageId);
+          setupStreamingCodeHighlighter(markdownContainers[assistantMessageId], assistantMessageId);
         } else {
           // If container isn't available yet, retry after a short delay
           setTimeout(setupObserver, 100);
@@ -710,25 +635,35 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
           assistantContent += processedChunk;
           messages = messages.map(msg => {
             if (msg.id === assistantMessageId && msg.isStreaming) {
+              const previousContent = msg._previousContent || '';
               let currentContent = msg.content || '';
               currentContent += processedChunk;
 
               return {
                 ...msg,
-                content: currentContent
+                content: currentContent,
+                _previousContent: previousContent
               };
             }
             return msg;
           });
 
-          // Immediately trigger animation for new content
-          await tick();
+          // Smooth visual feedback for new content - now more visible
           const container = markdownContainers[assistantMessageId];
           if (container) {
-            // Apply animation right after content update
+            // Add updating state
+            container.classList.add('content-updating');
+
+            // After a brief moment, transition to updated state
             setTimeout(() => {
-              applyWordAnimation(container, assistantMessageId);
-            }, 0);
+              container.classList.remove('content-updating');
+              container.classList.add('content-updated');
+
+              // Clean up the updated class after animation completes
+              setTimeout(() => {
+                container.classList.remove('content-updated');
+              }, 300); // Match animation duration
+            }, 150); // Visible updating state duration
           }
         }
       }
@@ -981,7 +916,7 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
         if (message.isStreaming) {
           // Ensure observer is set up if streaming starts/continues
           if (markdownContainers[message.id] && !messageObservers.has(message.id)) {
-            setupStreamingContentObserver(markdownContainers[message.id], message.id);
+            setupStreamingCodeHighlighter(markdownContainers[message.id], message.id);
           }
         } else if (!message.isStreaming && messageObservers.has(message.id)) {
           // Clean up observer when streaming ends
@@ -989,11 +924,9 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
           observer.disconnect();
           messageObservers.delete(message.id);
 
-          // Final highlighting and animation pass
+          // Final highlighting pass
           if (markdownContainers[message.id]) {
             highlightCodeBlocks(markdownContainers[message.id]);
-            // Apply final animation to any remaining words
-            applyWordAnimation(markdownContainers[message.id], message.id);
           }
         }
       }
@@ -1223,9 +1156,7 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
                   <Markdown content={message.content} on:rendered={() => {
                     highlightCodeBlocks(markdownContainers[message.id]);
                     if (message.isStreaming) {
-                      setupStreamingContentObserver(markdownContainers[message.id], message.id);
-                      // Apply word animations immediately after render
-                      applyWordAnimation(markdownContainers[message.id], message.id);
+                      setupStreamingCodeHighlighter(markdownContainers[message.id], message.id);
                     }
                   }} />
                   <!-- Cursor and thinking text container -->
@@ -2790,34 +2721,6 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
     background: rgba(white, 1);
   }
 
-  /* Word animation styles */
-  @keyframes wordFadeIn {
-    from {
-      opacity: 0;
-      transform: translateY(10px);
-      filter: blur(4px);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0);
-      filter: blur(0);
-    }
-  }
-
-  :global(.animated-word) {
-    display: inline;
-    /* Animation duration and delay are set via inline style using JavaScript variables */
-    animation-name: wordFadeIn;
-    animation-timing-function: cubic-bezier(0.25, 0.1, 0.25, 1);
-    animation-fill-mode: forwards;
-  }
-
-  :global(.animated-word.animation-complete) {
-    display: inline;
-    opacity: 1 !important;
-    animation: none;
-    transform: translateY(0);
-    filter: blur(0);
-  }
-
 </style>
+
+
