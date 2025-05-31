@@ -95,6 +95,7 @@
         display: flex;
         overflow: hidden;
         flex-grow: 0;
+        overscroll-behavior: none;
         background: rgb(29, 29, 32);
         background: var(--background-color);
         gap: 8px;
