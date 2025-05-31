@@ -679,7 +679,7 @@
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
     z-index: 10;
     margin: 0;
-    margin-bottom: -20px;
+    margin-bottom: -8px;
 
     &.visible {
       opacity: 1;
