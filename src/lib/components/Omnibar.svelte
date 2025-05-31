@@ -301,7 +301,7 @@
     margin-bottom: -22px;
     max-width: 100%;
     width: 720px;
-    padding: 12px;
+    padding: 24px 12px;
     overflow-x: auto;
     overflow-y: hidden;
     scrollbar-width: none; /* Firefox */
