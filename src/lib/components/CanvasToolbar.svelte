@@ -170,7 +170,7 @@
     gap: 8px;
     margin: 0;
     margin-top: 12px;
-    background: rgba(black, .35);
+    background: rgba(black, .8);
     border-radius: 12px;
   }
 

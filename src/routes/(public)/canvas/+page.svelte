@@ -887,20 +887,33 @@
     const containerStyle = window.getComputedStyle(container);
     const paddingHorizontal = parseFloat(containerStyle.paddingLeft) + parseFloat(containerStyle.paddingRight);
     const paddingVertical = parseFloat(containerStyle.paddingTop) + parseFloat(containerStyle.paddingBottom);
+
+    // Get the actual available space in the container
     const availableWidth = container.clientWidth - paddingHorizontal;
     const availableHeight = container.clientHeight - paddingVertical;
 
+    // Set internal dimensions based on aspect ratio
     let internalWidth, internalHeight;
-    if (selectedAspectRatio === '1:1') { internalWidth = 1024; internalHeight = 1024; }
-    else if (selectedAspectRatio === 'portrait') { internalWidth = 1792; internalHeight = 1024; }
-    else { internalWidth = 1024; internalHeight = 1792; } // landscape
+    if (selectedAspectRatio === '1:1') {
+      internalWidth = 1024;
+      internalHeight = 1024;
+    } else if (selectedAspectRatio === 'portrait') {
+      internalWidth = 1024;
+      internalHeight = 1792;
+    } else {
+      internalWidth = 1792;
+      internalHeight = 1024;
+    } // landscape
 
+    // Calculate the scale factor to fit the canvas within the available space
+    // while maintaining aspect ratio
     const widthRatio = availableWidth / internalWidth;
     const heightRatio = availableHeight / internalHeight;
-    const scaleFactor = Math.min(widthRatio, heightRatio, 1);
+    const scaleFactor = Math.min(widthRatio, heightRatio);
 
-    const newCanvasWidth = Math.min(internalWidth * scaleFactor, availableWidth);
-    const newCanvasHeight = Math.min(internalHeight * scaleFactor, availableHeight);
+    // Calculate the new displayed dimensions
+    const newCanvasWidth = internalWidth * scaleFactor;
+    const newCanvasHeight = internalHeight * scaleFactor;
 
     // Set internal dimensions for both canvases
     inputCanvas.width = internalWidth;
@@ -908,13 +921,17 @@
     fabricCanvasHTML.width = internalWidth;
     fabricCanvasHTML.height = internalHeight;
 
+    // Position the canvas in the center of the container
+    const marginLeft = Math.max(0, (availableWidth - newCanvasWidth) / 2);
+    const marginTop = Math.max(0, (availableHeight - newCanvasHeight) / 2);
+
     // Apply consistent styling to both canvases
     const canvasStyles = {
       width: `${Math.round(newCanvasWidth)}px`,
       height: `${Math.round(newCanvasHeight)}px`,
       position: 'absolute',
-      top: '0',
-      left: '0'
+      top: `${marginTop}px`,
+      left: `${marginLeft}px`
     };
 
     // Apply styles to perfect-freehand canvas
@@ -938,16 +955,22 @@
       // Ensure the CSS dimensions match as well
       fabricInstance.lowerCanvasEl.style.width = canvasStyles.width;
       fabricInstance.lowerCanvasEl.style.height = canvasStyles.height;
+      fabricInstance.lowerCanvasEl.style.top = canvasStyles.top;
+      fabricInstance.lowerCanvasEl.style.left = canvasStyles.left;
 
       if (fabricInstance.upperCanvasEl) {
         // Also set dimensions for the upper canvas (interaction layer)
         fabricInstance.upperCanvasEl.style.width = canvasStyles.width;
         fabricInstance.upperCanvasEl.style.height = canvasStyles.height;
         fabricInstance.upperCanvasEl.style.position = 'absolute';
-        fabricInstance.upperCanvasEl.style.top = '0';
-        fabricInstance.upperCanvasEl.style.left = '0';
+        fabricInstance.upperCanvasEl.style.top = canvasStyles.top;
+        fabricInstance.upperCanvasEl.style.left = canvasStyles.left;
+
         canvasContainer.style.width = canvasStyles.width;
         canvasContainer.style.height = canvasStyles.height;
+        canvasContainer.style.position = 'absolute';
+        canvasContainer.style.top = canvasStyles.top;
+        canvasContainer.style.left = canvasStyles.left;
       }
 
       fabricInstance.calcOffset();
@@ -971,7 +994,7 @@
     }, 100);
 
     console.log(
-      `Canvas resized. Display: ${Math.round(newCanvasWidth)}x${Math.round(newCanvasHeight)}, Internal: ${internalWidth}x${internalHeight}, Scale: ${canvasScale.toFixed(2)}`
+      `Canvas resized. Display: ${Math.round(newCanvasWidth)}x${Math.round(newCanvasHeight)}, Internal: ${internalWidth}x${internalHeight}, Scale: ${canvasScale.toFixed(2)}, Margins: ${marginLeft.toFixed(0)}px left, ${marginTop.toFixed(0)}px top`
     );
   }
 
@@ -4118,15 +4141,15 @@ Guidelines:
       padding: 8px 16px;
       height: 100%;
       position: relative;
+      width: 1400px;
+      max-width: 100%;
+      background: rgba(#030025, .05);
 
       .area{
         flex: 1;
         height: 100%;
         padding: 12px;
-        background: rgba(black, .1);
-        //box-shadow: -4px 16px 24px rgba(black, 0.25);
       }
-
 
       // New wrapper for toolbars
       .toolbars-wrapper {
@@ -4139,7 +4162,7 @@ Guidelines:
 
         // Toolbar styles
         .vertical-toolbar {
-          background: rgba(black, .35);
+          background: rgba(black, .8);
           border-radius: 12px;
           box-shadow: -4px 16px 24px rgba(black, 0.25);
           padding: 8px 4px; // Adjusted padding
@@ -4237,6 +4260,7 @@ Guidelines:
           position: relative;
           min-width: 300px;
           max-width: 800px; // Max width of the drawing area
+          box-shadow: -12px 32px 32px rgba(black, 0.1);
 
           // Adjust dimensions based on aspect ratio
           &.ratio-1-1 {
@@ -4310,6 +4334,7 @@ Guidelines:
         &.output-canvas {
           min-width: 300px;
           max-width: 800px;
+          box-shadow: -12px 32px 32px rgba(black, 0.1);
 
           // Adjust dimensions based on aspect ratio
           &.ratio-1-1 {
@@ -4339,7 +4364,6 @@ Guidelines:
             height: 100%; // Use 100% of wrapper
             border-radius: 4px;
             overflow: hidden; // Clip image if it overflows due to aspect ratio mismatch
-            box-shadow: -12px 32px 32px rgba(black, 0.3);
 
             &.output-image { // Class for the img tag itself if needed
               border-radius: 8px;
