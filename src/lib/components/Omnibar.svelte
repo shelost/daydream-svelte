@@ -326,6 +326,10 @@
       justify-content: flex-start !important;
       padding: 24px 12px !important;
 
+      @media screen and (max-width: 800px) {
+        padding: 10px 6px !important;
+      }
+
       /* Adjust mask for scrolling content */
       mask: linear-gradient(
         to right,
@@ -433,7 +437,7 @@
     width: 640px;
     max-width: 90vw;
     padding: 0;
-    position: absolute; /* This might need to be relative if Omnibar is placed by parent */
+    position: fixed; /* This might need to be relative if Omnibar is placed by parent */
     bottom: 12px;   /* Or controlled by parent's layout */
     left: calc(50% - 320px); /* Or controlled by parent's layout */
     display: flex;
@@ -443,6 +447,8 @@
     gap: 8px;
     z-index: 10; /* Ensure it's above other content if fixed */
     box-sizing: border-box;
+
+
 
     .omnibar-container{
       padding: 2px;
@@ -622,12 +628,18 @@
     }
   }
 
+
   @media screen and (max-width: 800px) {
+
     .omnibar{
-      width: 92vw;
+      position: fixed !important;
+      width: 94vw;
       max-width: 100vw;
-      left: calc(4vw - 12px);
-      bottom: 6px;
+      left: calc(3vw);
+      bottom: 3vw;
+
+      .follow-up-questions{
+      }
     }
   }
 

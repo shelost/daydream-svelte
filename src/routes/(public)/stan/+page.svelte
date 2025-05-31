@@ -2,6 +2,7 @@
   import { onMount, tick } from 'svelte';
   import { scale, fly, fade } from 'svelte/transition';
   import { cubicOut, elasticOut } from 'svelte/easing';
+  import { writable } from 'svelte/store';
   import Omnibar from '$lib/components/Omnibar.svelte'; // Import Omnibar
   import { Markdown } from 'svelte-rune-markdown'; // Add this line to import the Markdown component
   import { fetchAndLog } from '$lib/utils/fetchAndLog'; // Import fetchAndLog for API logging
@@ -13,16 +14,26 @@
   // Word animation configuration
   const WORD_ANIMATION_DURATION_MS = 500; // Duration for each word to fade in (milliseconds)
 
+  interface AnimatedWord {
+    id: string;
+    text: string;
+    addedTime: number;
+    currentOpacity: number;
+  }
+
   interface Message {
     id: string;
     role: 'user' | 'assistant' | 'system';
-    content: string; // Content is now always a string
-    isLoading?: boolean; // For assistant message, indicates waiting for response
-    isStreaming?: boolean; // For assistant message, indicates text streaming
-    modelUsed?: string; // For assistant message, which model generated the response
-    error?: string; // For assistant message, if an error occurred
+    content: string;
+    rawContent?: string;
+    isLoading?: boolean;
+    isStreaming?: boolean;
+    modelUsed?: string;
+    error?: string;
+    animatedWords?: AnimatedWord[]; // Track animated words
     _lastProcessedContentLength?: number;
-    _previousContent?: string; // Track previous content for DOM diffing
+    _previousContent?: string;
+    wasUserAtBottom?: boolean; // Add this flag
   }
 
   let messages: Message[] = [];
@@ -45,9 +56,12 @@
   const getModelLabel = (id: string) => modelLabels[id] || id;
 
   let chatContainer: HTMLElement;
-  let isInitialized = false; // Flag to prevent saving before loading
-  let isStartState = true; // Track if we're in the initial centered state
-  const SESSION_STORAGE_KEY = 'textChatMessages'; // Changed key for text chat
+  let isInitialized = false;
+  let isStartState = true;
+  let showScrollButton = false;
+  const shouldAutoScroll = writable(true); // Convert to writable store
+  let lastScrollTop = 0;
+  const SESSION_STORAGE_KEY = 'textChatMessages';
 
   const generateUniqueId = () => `_${Math.random().toString(36).substring(2, 11)}`;
 
@@ -55,10 +69,17 @@
   let pendingAnalysis = false;
 
   let markdownContainers = new Map();
+  let messageObservers: Map<string, MutationObserver> = new Map();
 
   const ANIMATION_DURATION = 3000; // 3 seconds for opacity transition
   const INITIAL_OPACITY = 0.5;
   const FINAL_OPACITY = 1.0;
+
+  // Animation constants
+  const WORD_FADE_DURATION = 800;
+  const WORD_STAGGER_DELAY = 100;
+  const INITIAL_WORD_OPACITY = 0.0;
+  const FINAL_WORD_OPACITY = 1.0;
 
   // Function to apply syntax highlighting to code blocks
   async function highlightCodeBlocks(element) {
@@ -143,28 +164,31 @@
 
   // Apply fade animation to new words in real-time
   function applyRealtimeWordAnimation(container: HTMLElement, messageId: string) {
-    if (!container || !PrismLoaded) return; // Also ensure Prism has loaded to avoid conflicts with its DOM changes
+    if (!container) return;
 
-    let messageState = animatedWordsMap.get(messageId);
-    if (!messageState) {
-      messageState = { processedWords: 0 };
-      animatedWordsMap.set(messageId, messageState);
-    }
+    // Find the message by id
+    const messageIndex = messages.findIndex((m) => m.id === messageId);
+    if (messageIndex === -1) return;
+    const message = messages[messageIndex];
 
-    let wordsInCurrentContainer = 0;
-    const newNodesToReplace = new Map(); // Store {originalNode: fragmentWithNewSpans}
+    if (!message.animatedWords) message.animatedWords = [];
+
+    const existingCount = message.animatedWords.length; // words already tracked
+    let globalIndex = 0; // will increment for every word encountered in DOM traversal
+
+    const newNodesToReplace = new Map<Node, DocumentFragment>();
+    const now = Date.now();
+    let newWordAdded = false; // track if we actually add new words
 
     const walker = document.createTreeWalker(
       container,
       NodeFilter.SHOW_TEXT,
       {
         acceptNode: (node) => {
-          // Skip if parent is already an animated span or part of a code block
           const parent = node.parentElement;
-          if (parent && (parent.classList.contains('streaming-word-fade-in') || parent.closest('pre code'))) {
+          if (parent && (parent.classList.contains('animated-word') || parent.closest('pre code'))) {
             return NodeFilter.FILTER_REJECT;
           }
-          // Skip empty text nodes
           if (!node.textContent || !node.textContent.trim()) {
             return NodeFilter.FILTER_REJECT;
           }
@@ -173,50 +197,99 @@
       }
     );
 
-    let node;
-    while (node = walker.nextNode()) {
+    let node: Node | null;
+    while ((node = walker.nextNode())) {
       const textContent = node.textContent || '';
-      // Split by word boundaries, keeping spaces and punctuation attached to words or as separate segments
       const segments = textContent.split(/(\s+)/);
       const fragment = document.createDocumentFragment();
-      let hasNewWordsInNode = false;
 
-      for (const segment of segments) {
-        if (segment.trim().length > 0) { // It's a word
-          wordsInCurrentContainer++;
-          if (wordsInCurrentContainer > messageState.processedWords) {
-            const span = document.createElement('span');
-            span.textContent = segment;
-            span.className = 'streaming-word-fade-in';
-            span.style.animationDuration = `${WORD_ANIMATION_DURATION_MS}ms`;
-            fragment.appendChild(span);
-            hasNewWordsInNode = true;
-          } else {
-            fragment.appendChild(document.createTextNode(segment));
-          }
-        } else { // It's whitespace
+      segments.forEach((segment) => {
+        if (segment.trim().length === 0) {
+          // whitespace
           fragment.appendChild(document.createTextNode(segment));
+          return;
         }
-      }
 
-      if (hasNewWordsInNode) {
+        globalIndex++;
+
+        let animatedWord = message.animatedWords[globalIndex - 1];
+        if (!animatedWord) {
+          // New word
+          animatedWord = {
+            id: `word-${messageId}-${globalIndex}`,
+            text: segment,
+            addedTime: now,
+            currentOpacity: 0,
+          };
+          message.animatedWords.push(animatedWord);
+          newWordAdded = true;
+        }
+
+        // Use existing span if it already exists to avoid flicker
+        let span = document.getElementById(animatedWord.id) as HTMLSpanElement | null;
+        if (!span) {
+          span = document.createElement('span');
+          span.id = animatedWord.id;
+          span.className = 'animated-word';
+        }
+        span.textContent = segment;
+        span.style.opacity = animatedWord.currentOpacity.toString();
+        fragment.appendChild(span);
+      });
+
+      // Only mark this text node for replacement if we actually added a new word
+      if (newWordAdded) {
         newNodesToReplace.set(node, fragment);
       }
     }
 
-    // Perform DOM replacements after iterating
-    newNodesToReplace.forEach((fragment, originalNode) => {
-      originalNode.parentNode?.replaceChild(fragment, originalNode);
+    // If no new words were added, skip DOM replacement to prevent flicker
+    if (!newWordAdded) return;
+
+    newNodesToReplace.forEach((frag, original) => {
+      original.parentNode?.replaceChild(frag, original);
     });
 
-    if (wordsInCurrentContainer > messageState.processedWords) {
-        messageState.processedWords = wordsInCurrentContainer;
-        animatedWordsMap.set(messageId, messageState);
+    // kick off animation loop if needed
+    if (message.isStreaming) {
+      animateWords(messageId);
     }
   }
 
-  // Create a mutation observer to detect new code blocks and text during streaming
-  let messageObservers = new Map();
+  function animateWords(messageId: string) {
+    const message = messages.find(m => m.id === messageId);
+    if (!message || !message.animatedWords || !message.isStreaming) return;
+
+    const now = Date.now();
+    let needsUpdate = false;
+
+    message.animatedWords.forEach(word => {
+      const age = now - word.addedTime;
+      if (age < WORD_ANIMATION_DURATION_MS) {
+        // Calculate new opacity based on age
+        word.currentOpacity = age / WORD_ANIMATION_DURATION_MS;
+        needsUpdate = true;
+
+        // Update DOM element
+        const element = document.getElementById(word.id);
+        if (element) {
+          element.style.opacity = word.currentOpacity.toString();
+        }
+      } else if (word.currentOpacity < 1) {
+        word.currentOpacity = 1;
+        needsUpdate = true;
+
+        const element = document.getElementById(word.id);
+        if (element) {
+          element.style.opacity = '1';
+        }
+      }
+    });
+
+    if (needsUpdate && message.isStreaming) {
+      requestAnimationFrame(() => animateWords(messageId));
+    }
+  }
 
   function setupStreamingContentObserver(container, messageId) {
     // Disconnect existing observer for this message if it exists
@@ -244,10 +317,18 @@
         }
       }
 
-      // Apply animation to new words
+      // Apply animation to new words without forcing scroll
       if (hasTextChanges) {
         highlightCodeBlocks(container); // Highlight first
         applyRealtimeWordAnimation(container, messageId); // Then animate
+
+        // Auto-scroll ONLY if enabled - this is critical
+        if ($shouldAutoScroll && chatContainer) {
+          // Use requestAnimationFrame for smoother scrolling
+          requestAnimationFrame(() => {
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+          });
+        }
       }
     });
 
@@ -269,11 +350,52 @@
     copyWithFeedback(button, content || '');
   }
 
+  // Update scrollToBottom to use shouldAutoScroll state
   async function scrollToBottom() {
-    await tick(); // Wait for DOM updates
-    if (chatContainer) {
-      chatContainer.scrollTop = chatContainer.scrollHeight;
+    await tick(); // Ensure DOM is updated before scrolling
+    if (chatContainer && $shouldAutoScroll) {
+      // Use requestAnimationFrame for smoother scrolling
+      requestAnimationFrame(() => {
+        // Use instant scroll during streaming for smoothness
+        if (messages.some(m => m.isStreaming)) {
+          //chatContainer.scrollTop = chatContainer.scrollHeight;
+          chatContainer.scrollTo({
+            //top: chatContainer.scrollHeight,
+           // behavior: 'smooth'
+          });
+        } else {
+          // Use smooth scroll for non-streaming updates (like initial load or manual button click)
+          chatContainer.scrollTo({
+            top: chatContainer.scrollHeight,
+            behavior: 'smooth'
+          });
+        }
+      });
     }
+  }
+
+  // Add scroll handler function
+  function handleScroll(event: Event) {
+    const target = event.target as HTMLElement;
+    const currentScrollTop = target.scrollTop;
+    const isScrollable = target.scrollHeight > target.clientHeight;
+    const scrollBottom = target.scrollHeight - target.scrollTop - target.clientHeight;
+
+    // Only detect manual scrolling during streaming to avoid disabling auto-scroll unnecessarily
+    if (messages.some(m => m.isStreaming)) {
+      // Check if user has manually scrolled by comparing with the last position
+      if (Math.abs(currentScrollTop - lastScrollTop) > 1) {
+        // Only disable auto-scroll if user is actually scrolling away from bottom
+        // This prevents auto-scroll from being disabled during normal content updates
+        if (scrollBottom > 20) {
+          console.log('User manually scrolled - disabling auto-scroll');
+          $shouldAutoScroll = false;
+        }
+      }
+    }
+
+    lastScrollTop = currentScrollTop;
+    showScrollButton = isScrollable && scrollBottom > 500;
   }
 
   function handleClearChat() {
@@ -374,6 +496,9 @@
     const currentPrompt = omnibarPrompt.trim();
     if (!currentPrompt || isOverallLoading) return;
 
+    // Reset auto-scroll state for new API call
+    $shouldAutoScroll = true;
+
     // Create new AbortController for this request
     currentAbortController = new AbortController();
 
@@ -384,7 +509,10 @@
     isOverallLoading = true;
     const userMessageId = generateUniqueId();
     messages = [...messages, { id: userMessageId, role: 'user', content: currentPrompt }];
-    omnibarPrompt = ''; // Clear Omnibar input
+    omnibarPrompt = '';
+
+    // Initial scroll to bottom when starting new response - ensure it's smooth
+    await scrollToBottom();
 
     const assistantMessageId = generateUniqueId();
     messages = [
@@ -393,14 +521,14 @@
         id: assistantMessageId,
         role: 'assistant',
         content: '',
-      isLoading: true,
+        isLoading: true,
         isStreaming: true,
         modelUsed: currentSelectedTextModel
       }
     ];
+
     // Initialize/reset processedWords count for the new assistant message
     animatedWordsMap.set(assistantMessageId, { processedWords: 0 });
-    // scrollToBottom(); // Will be handled by reactive messages update
 
     try {
       // Determine appropriate endpoint based on model prefix/provider
@@ -432,7 +560,7 @@
         }
 
         // Add a reminder of the model's identity
-        const modelIdentityGuide = `You are ${getModelLabel(currentSelectedTextModel)}, a helpful AI assistant created by Anthropic.
+        const modelIdentityGuide = `You are Stanley, a helpful AI Creator Asistant created by Stan. Stan is the All-in-one store for Creators, enabling individuals to build businesses online. You are extremely friendly and cute and helpful, so keep that in mind when responding.
 
 IMPORTANT: After your response, provide exactly 3 SHORT, relevant follow-up prompts that the USER might want to ask YOU to continue the conversation. Keep each question under 6 words when possible.
 
@@ -704,16 +832,12 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
             return msg;
           });
 
-          // Apply animations immediately to new content
-          await tick();
-          const container = markdownContainers[assistantMessageId];
-          if (container) {
-            // Small delay to ensure DOM has updated
-            // The MutationObserver will now handle this
-            // setTimeout(() => {
-            //   animateNewWords(container, messageId);
-            // }, 10);
-          }
+          // Auto-scroll during streaming if enabled
+          if ($shouldAutoScroll) {
+             await tick();
+             // Use instant scroll during streaming for smoothness
+             chatContainer.scrollTop = chatContainer.scrollHeight;
+           }
         }
       }
       messages = messages.map(msg => {
@@ -844,6 +968,9 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
   function handleFollowUpClick(question: string) {
     if (isOverallLoading) return;
 
+    // Reset auto-scroll state for follow-up questions
+    $shouldAutoScroll = true;
+
     omnibarPrompt = question;
     currentFollowUpQuestions = []; // Clear follow-up prompts
 
@@ -940,7 +1067,23 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
             highlightCodeBlocks(container);
           });
         }, 100);
+
+        // Add scroll event listener and do initial check
+        if (chatContainer) {
+          chatContainer.addEventListener('scroll', handleScroll);
+          // Initial check for scroll button visibility
+          const isScrollable = chatContainer.scrollHeight > chatContainer.clientHeight;
+          const scrollBottom = chatContainer.scrollHeight - chatContainer.scrollTop - chatContainer.clientHeight;
+          showScrollButton = isScrollable && scrollBottom > 500;
+        }
     }
+
+    return () => {
+      // Clean up scroll listener
+      if (chatContainer) {
+        chatContainer.removeEventListener('scroll', handleScroll);
+      }
+    };
   });
 
   $: {
@@ -953,7 +1096,16 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
                     return rest;
             });
             sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(messagesToSave));
-            scrollToBottom();
+
+            // Check if any message is currently streaming and auto-scroll is enabled
+            if ($shouldAutoScroll && messages.some(m => m.isStreaming)) {
+              // Use requestAnimationFrame for smoother scrolling and to avoid conflicting with other scroll operations
+              if (chatContainer) {
+                requestAnimationFrame(() => {
+                  chatContainer.scrollTop = chatContainer.scrollHeight;
+                });
+              }
+            }
         } catch (e) {
             console.error('Failed to save text chat history to sessionStorage:', e);
         }
@@ -976,30 +1128,18 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
           // Final highlighting pass
           if (markdownContainers[message.id]) {
             highlightCodeBlocks(markdownContainers[message.id]);
-            // Reset animated word count for this message (already handled by observer logic if stream ends)
-            // animatedWordsMap.delete(message.id);
           }
         }
       }
     }
   }
 
-  // --- Animated cursor SVG ---
-  // We'll use a pulsing purple dot for the AI streaming cursor
-  const AnimatedCursor = () => `
-    <span class="animated-cursor">
-      <svg width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
-        <circle cx="9" cy="9" r="6" fill="#6355FF">
-          <animate attributeName="r" values="6;8;6" dur="1s" repeatCount="indefinite" />
-          <animate attributeName="opacity" values="1;0.7;1" dur="1s" repeatCount="indefinite" />
-        </circle>
-      </svg>
-    </span>
-  `;
-
   // Handle example prompt clicks
   function handleExamplePrompt(promptText: string) {
     if (isOverallLoading) return;
+
+    // Reset auto-scroll state for example prompts
+    $shouldAutoScroll = true;
 
     omnibarPrompt = promptText;
     // Auto-submit the prompt
@@ -1014,6 +1154,11 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
 
 
 <div id = 'main' class = 'stan' in:scale={{ duration: 300, start: 0.95, opacity: 0, easing: cubicOut }}>
+  <!-- Auto-scroll status indicator -->
+  <div class="auto-scroll-status" class:active={$shouldAutoScroll}>
+    Auto-scroll: {$shouldAutoScroll ? 'ON' : 'OFF'}
+  </div>
+
   <button
     class="global-refresh-button"
     title="Clear Chat and History"
@@ -1046,6 +1191,7 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
       <!-- First carousel row - scrolls left to right -->
       <div class="carousel-container">
         <div class="carousel-track carousel-left-to-right">
+          <!-- Original cards -->
           <button
             class="prompt-card"
             on:click={() => handleExamplePrompt("What is a Stan Store?")}
@@ -1070,7 +1216,7 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
             <span class="prompt-text">How do I create a successful TikTok strategy?</span>
           </button>
 
-          <!-- Duplicate for seamless loop -->
+          <!-- Duplicate cards for seamless loop -->
           <button
             class="prompt-card"
             on:click={() => handleExamplePrompt("What is a Stan Store?")}
@@ -1102,8 +1248,9 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
       </div>
 
       <!-- Second carousel row - scrolls right to left -->
-      <div class="carousel-container second">
+      <div class="carousel-container">
         <div class="carousel-track carousel-right-to-left">
+          <!-- Original cards -->
           <button
             class="prompt-card"
             on:click={() => handleExamplePrompt("Create an outline for a 4-module course on UGC")}
@@ -1128,7 +1275,7 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
             <span class="prompt-text">What are the best practices for email marketing?</span>
           </button>
 
-          <!-- Duplicate for seamless loop -->
+          <!-- Duplicate cards for seamless loop -->
           <button
             class="prompt-card"
             on:click={() => handleExamplePrompt("Create an outline for a 4-module course on UGC")}
@@ -1177,7 +1324,12 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
   <div id="chat-page"  in:fade={{ duration: 300 }}> <!-- Re-evaluate if this ID should be more generic -->
 
 
-    <div class="chat-messages-container" bind:this={chatContainer} in:fade={{ duration: 250, delay: 100 }}>
+    <div
+      class="chat-messages-container"
+      bind:this={chatContainer}
+      on:scroll={handleScroll}
+      in:fade={{ duration: 250, delay: 100 }}
+    >
       {#each messages as message (message.id)}
         <div class="message-wrapper {message.role}" in:fly={{ y: message.role === 'user' ? 10 : -10, duration: 300, delay:150 }}>
           {#if message.role === 'user'}
@@ -1204,24 +1356,27 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
             <div class="message-content-area">
               <div class="message-bubble assistant-bubble" style={message.isStreaming ? `min-height: 32px; transition: min-height 0.3s;` : ''}>
                 <div class="markdown-container animated-text-container" bind:this={markdownContainers[message.id]}>
-                  <Markdown content={message.content} on:rendered={() => {
-                    highlightCodeBlocks(markdownContainers[message.id]);
-                    if (message.isStreaming) {
-                      setupStreamingContentObserver(markdownContainers[message.id], message.id);
-                      // Apply initial animation
-                      applyRealtimeWordAnimation(markdownContainers[message.id], message.id);
-                    }
-                  }} />
+                  <Markdown
+                    content={message.content}
+                    on:rendered={() => {
+                      highlightCodeBlocks(markdownContainers[message.id]);
+                      if (message.isStreaming) {
+                        setupStreamingContentObserver(markdownContainers[message.id], message.id);
+                        applyRealtimeWordAnimation(markdownContainers[message.id], message.id);
+                      }
+                    }}
+                  />
                   <!-- Cursor and thinking text container -->
                   <span class="cursor-and-thinking-container">
-                    <!-- Always render a cursor placeholder to prevent layout shift -->
-
-                    <!-- Thinking text next to cursor -->
                     {#if message.isLoading || message.isStreaming}
-                      <div class = 'spinner'>
-                        <div class = 'loader'></div>
+
+
+                      <div class="spinner">
+                        <div class="loader"></div>
                       </div>
                     {/if}
+
+
                   </span>
                 </div>
                 <div class="assistant-message-footer">
@@ -1250,18 +1405,37 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
       {/each}
     </div>
 
-
+    <!-- Add scroll to bottom button -->
+    {#if !isStartState}
+      <button
+        class="scroll-to-bottom-btn"
+        class:visible={showScrollButton}
+        on:click={() => {
+          // Re-enable auto-scroll when user clicks scroll-to-bottom
+          $shouldAutoScroll = true;
+          scrollToBottom();
+        }}
+        aria-label="Scroll to bottom"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="12" y1="5" x2="12" y2="19"></line>
+          <polyline points="19 12 12 19 5 12"></polyline>
+        </svg>
+      </button>
+    {/if}
 
     <video
-    muted
-    loop
-    preload="auto"
-    autoPlay
-    playsInline
-    src='stanley-5.mp4'
-    id='stanley-thinking'
-    in:fly={{ y: 20, duration: 300, delay:300 }}
- ></video>
+        muted
+        loop
+        preload="auto"
+        autoPlay
+        playsInline
+        src='stanley-5.mp4'
+        id='stanley-thinking'
+        in:fly={{ y: 20, duration: 300, delay:300 }}
+    ></video>
+
+
 
     <Omnibar
       settingType="text"
@@ -1284,9 +1458,13 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
 
 #stanley-thinking{
   position: fixed;
+  display: block;
   bottom: 120px;
   left: 40px;
   height: 140px;
+  @media screen and (max-width: 800px) {
+    display: none;
+  }
 }
 
   .spinner{
@@ -1450,7 +1628,7 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
     max-width: 720px;
     display: flex;
     flex-direction: column;
-    gap: 0px;
+    gap: 8px;
 
     .carousel-container {
       position: relative;
@@ -1458,22 +1636,31 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
       overflow: hidden;
       height: 60px;
       touch-action: pan-y;
+      margin: 0;
+      padding: 0;
+
+      &:nth-child(2) {
+        margin-top: -8px;
+      }
     }
 
     .carousel-track {
       display: flex;
-      flex-wrap: wrap;
-      gap: 16px;
-      padding: 4px 0;
+      gap: 12px;
+      padding: 0px 0;
       width: fit-content;
-      animation-duration: 40s;
+      animation-duration: 30s;
       animation-timing-function: linear;
       animation-iteration-count: infinite;
       will-change: transform;
       touch-action: pan-y;
 
       &.carousel-left-to-right {
-        //animation-name: scrollLeftToRight;
+        animation-name: scrollLeftToRight;
+      }
+
+      &.carousel-right-to-left {
+        animation-name: scrollRightToLeft;
       }
 
       &:hover {
@@ -1490,25 +1677,33 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
       }
     }
 
+    @keyframes scrollRightToLeft {
+      0% {
+        transform: translateX(0%);
+      }
+      100% {
+        transform: translateX(-50%);
+      }
+    }
+
     .carousel-gradient {
       position: absolute;
       top: 0;
       bottom: 0;
-      width: 80px;
+      width: 120px;
       pointer-events: none;
       z-index: 2;
 
       &.carousel-gradient-left {
         left: 0;
-       // background: linear-gradient(to right, rgba(white, 1) 0%, rgba(white, 0.8) 50%, rgba(white, 0) 100%);
+        background: linear-gradient(to right, rgba(255, 255, 255, 1) 0%, rgba(255, 255, 255, 0.8) 50%, rgba(255, 255, 255, 0) 100%);
       }
 
       &.carousel-gradient-right {
         right: 0;
-       // background: linear-gradient(to left, rgba(white, 1) 0%, rgba(white, 0.8) 50%, rgba(white, 0) 100%);
+        background: linear-gradient(to left, rgba(255, 255, 255, 1) 0%, rgba(255, 255, 255, 0.8) 50%, rgba(255, 255, 255, 0) 100%);
       }
     }
-
 
     .prompt-card {
       background: rgba(#030025, .05);
@@ -1516,30 +1711,30 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
       padding: 10px 18px;
       cursor: pointer;
       width: fit-content;
-      min-width: 100px; // Ensure consistent card sizes
+      min-width: 180px; // Ensure consistent card sizes
       transition: all 0.2s cubic-bezier(0.4,0,0.2,1);
       flex-shrink: 0; // Prevent cards from shrinking
       border: 1px solid rgba(#00106D, .1);
+      margin: 0;
+      height: 44px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
 
-
-      &:hover{
+      &:hover {
         background: rgba(#4a6bfd, .15);
-        //border-color: rgba(#6355FF, .2);
-        transform: translateY(-1px);
+        //transform: translateY(-1px);
       }
-
 
       &:active {
         transform: translateY(0);
       }
-
 
       &:disabled {
         opacity: 0.6;
         cursor: not-allowed;
         transform: none;
       }
-
 
       .prompt-text {
         font-family: "ivypresto-headline", sans-serif;
@@ -1550,12 +1745,10 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
         text-shadow: -.5px 0 0 #00106D;
         line-height: 140%;
         display: block;
-        text-align: left;
+        text-align: center;
+        white-space: nowrap;
       }
-
-
     }
-
 
     @media (max-width: 800px) {
       .carousel-track {
@@ -1563,39 +1756,35 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
         height: 100%;
       }
 
-
-      .carousel-container{
+      .carousel-container {
         height: 90px;
       }
-
 
       .carousel-gradient {
         width: 60px; // Smaller gradients on mobile
       }
 
-
       .prompt-card {
-        width: 160px;
+        width: 200px;
         padding: 12px 16px;
         margin: 0;
-
+        height: auto;
 
         .prompt-text {
           width: 100%;
           text-wrap: wrap;
+          white-space: normal;
           line-height: 120%;
         }
       }
     }
 
-
-    // Hide second row of prompts when screen height is less than 500px
+    // Hide second row of prompts when screen height is less than 720px
     @media (max-height: 720px) {
-      .carousel-container{
-        margin-bottom: 24px;
-      }
-      .second {
-        display: none;
+      .carousel-container {
+        &:nth-child(2) {
+          display: none;
+        }
       }
     }
   }
@@ -1699,6 +1888,16 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
         justify-content: flex-start;
         align-items: center;
         gap: 12px;
+      }
+
+      .message-copy-btn{
+       opacity: 0;
+      }
+
+      &:hover{
+        .message-copy-btn{
+          opacity: 1;
+        }
       }
     }
 
@@ -2775,62 +2974,93 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
   }
 
   /* Word animation styles */
-  @keyframes wordFadeIn {
-    from {
-      opacity: 0;
-      transform: translateY(10px);
-      filter: blur(4px);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0);
-      filter: blur(0);
-    }
-  }
-
   :global(.animated-word) {
     display: inline;
-    /* Animation duration and delay are set via inline style using JavaScript variables */
-    animation-name: wordFadeIn;
-    animation-timing-function: cubic-bezier(0.25, 0.1, 0.25, 1);
-    animation-fill-mode: forwards;
+    /* transition: opacity 50ms linear; */ /* REMOVE THIS LINE */
   }
 
-  :global(.animated-word.animation-complete) {
-    display: inline;
-    opacity: 1 !important;
-    animation: none;
-    transform: translateY(0);
-    filter: blur(0);
-  }
-
-  /* Word fade-in animation for streaming text */
-  :global(.streaming-word-fade-in) {
-    display: inline;
-    animation-name: fadeInWord;
-    animation-timing-function: cubic-bezier(0.25, 0.1, 0.25, 1);
-    animation-fill-mode: forwards;
-    /* animation-duration is set inline by JS */
-    opacity: 0; /* Start invisible */
-  }
-
-  @keyframes fadeInWord {
-    from {
-      opacity: 0;
-      transform: translateY(3px); /* Optional: slight upward movement */
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0);
-    }
-  }
-
-  /* Already animated words */
   :global(.word-animated) {
     display: inline;
     opacity: 1;
     transform: translateY(0);
-    filter: blur(0);
   }
 
+  /* Remove the old streaming-word-fade-in class since we're not using it anymore */
+
+  .scroll-to-bottom-btn {
+    position: fixed;
+    bottom: 120px;
+    right: 24px;
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    background: var(--highlight);
+    border: none;
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    opacity: 0;
+    transform: translateY(20px);
+    pointer-events: none;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    z-index: 1000;
+
+    &:hover {
+      background: #4938fb;
+      transform: translateY(-2px) scale(1.05);
+      box-shadow: 0 6px 16px rgba(0, 0, 0, 0.2);
+    }
+
+    &.visible {
+      opacity: 1;
+      transform: translateY(0);
+      pointer-events: auto;
+    }
+
+    svg {
+      width: 20px;
+      height: 20px;
+      transition: transform 0.2s ease;
+    }
+
+    &:hover svg {
+      transform: translateY(2px);
+    }
+
+    @media (max-width: 800px) {
+      bottom: 100px;
+      right: 16px;
+      width: 36px;
+      height: 36px;
+
+      svg {
+        width: 18px;
+        height: 18px;
+      }
+    }
+  }
+
+  .auto-scroll-status {
+    display: none;
+    position: fixed;
+    top: 16px;
+    right: 16px;
+    background-color: rgba(0, 0, 0, 0.6);
+    color: white;
+    padding: 6px 12px;
+    border-radius: 16px;
+    font-size: 12px;
+    font-weight: 500;
+    z-index: 1000;
+    pointer-events: none; // Don't interfere with clicks
+    transition: all 0.3s ease;
+
+    &.active {
+      background-color: var(--highlight);
+      box-shadow: 0 0 8px rgba(99, 85, 255, 0.5);
+    }
+  }
 </style>
