@@ -557,3 +557,33 @@ Draw the new, updated current stroke.
 Restore context state.
    Alternatively, render the live stroke on a separate, temporary transparent canvas positioned exactly over the Fabric canvas, and clear this temporary canvas entirely on each update. This might be cleaner. Let's try drawing on the upper-canvas first and clearing it.
  Coordinate Systems: Perfect-freehand points are relative to
+
+## Move Scroll-to-Bottom Button into Omnibar Component (2025-05-31)
+
+### Problem
+The floating "scroll-to-bottom" arrow button was defined inside `src/routes/(public)/stan/+page.svelte`.  This broke the desired encapsulation — the button visually belongs to the Omnibar and should travel with it.  Keeping the markup in the page file also meant any other parent that re-uses `<Omnibar>` would need to re-implement the same button logic.
+
+### Solution Outline
+1. **Propagate State Downward**
+   • Keep all scroll-tracking logic (`showScrollButton`, `handleScroll`, `$shouldAutoScroll`) in `+page.svelte`.
+   • Pass the current boolean together with a callback (`onScrollToBottom`) as props to `<Omnibar>`.
+2. **Render Inside Omnibar**
+   • Add two new props to `src/lib/components/Omnibar.svelte`:
+     `export let showScrollButton = false;`
+     `export let onScrollToBottom = () => {};`
+   • Insert the button markup just above the existing follow-up questions / omnibar UI.
+   • Copy the previous SCSS into Omnibar's `<style>` block so the button keeps its look & feel.
+3. **Clean Up Page File**
+   • Remove the old button markup and its now-duplicate style block from `+page.svelte`.
+   • Update the Omnibar instantiation to:
+     `showScrollButton={!isStartState && showScrollButton}`
+     `onScrollToBottom={() => { $shouldAutoScroll = true; scrollToBottom(); }}`
+
+### Why This Solves the Problem
+Placing the button inside the Omnibar component keeps related UI together, simplifies the page template, and allows any future pages using `<Omnibar>` to gain the feature automatically without duplicating code.
+
+### Checklist
+- [x] Export new props in `Omnibar.svelte`.
+- [x] Add button markup and SCSS inside Omnibar.
+- [x] Pass props from `+page.svelte` and remove old button block.
+- [x] Remove duplicate style rules from page file.

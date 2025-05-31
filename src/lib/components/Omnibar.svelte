@@ -13,6 +13,8 @@
   export let parentDisabled = false; // External conditions for disabling
   export let followUpQuestions: string[] = []; // Follow-up questions to display
   export let onFollowUpClick = (question: string) => {}; // Callback for follow-up clicks
+  export let showScrollButton: boolean = false;
+  export let onScrollToBottom: () => void = () => {};
 
   // Define model lists based on settingType - these would be passed as props in a real scenario
   // For now, we'll define a default for image.
@@ -191,6 +193,20 @@
 </script>
 
 <div class="omnibar light" in:fly={{ y: 50, duration: 400 }}>
+  {#if showScrollButton}
+    <button
+      class="scroll-to-bottom-btn visible"
+      on:click={onScrollToBottom}
+      aria-label="Scroll to bottom"
+      transition:fly={{ y: 10, duration: 200 }}
+    >
+      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="12" y1="5" x2="12" y2="19"></line>
+        <polyline points="19 12 12 19 5 12"></polyline>
+      </svg>
+    </button>
+  {/if}
+
   {#if followUpQuestions && followUpQuestions.length > 0}
     <div
       class="follow-up-questions"
@@ -285,7 +301,7 @@
     margin-bottom: -22px;
     max-width: 100%;
     width: 720px;
-    padding: 24px;
+    padding: 12px;
     overflow-x: auto;
     overflow-y: hidden;
     scrollbar-width: none; /* Firefox */
@@ -643,5 +659,62 @@
     }
   }
 
+  .scroll-to-bottom-btn {
+    width: 36px;
+    height: 36px;
+    border-radius: 20px;
+    padding: 0;
+
+    background: var(--highlight, red);
+    border: none;
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    opacity: 0;
+    transform: translateY(20px);
+    pointer-events: none;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    z-index: 10;
+    margin: 0;
+    margin-bottom: -20px;
+
+    &.visible {
+      opacity: 1;
+      transform: translateY(0);
+      pointer-events: auto;
+    }
+
+    &:hover {
+      background: #4938fb;
+      transform: scale(1.05);
+      box-shadow: 0 6px 16px rgba(0, 0, 0, 0.2);
+    }
+
+    svg {
+      width: 18px;
+      height: 18px;
+      transition: transform 0.2s ease;
+    }
+
+    &:hover svg {
+     // transform: translateY(2px);
+    }
+
+    @media (max-width: 800px) {
+      bottom: 100px;
+      right: 16px;
+      width: 36px;
+      height: 36px;
+      margin-bottom: -8px;
+
+      svg {
+        width: 18px;
+        height: 18px;
+      }
+    }
+  }
 
 </style>

@@ -87,9 +87,12 @@
     }
 
     .layout {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100vw;
+        height: 100vh;
         display: flex;
-        width: 100%;
-        height: 100%;
         overflow: hidden;
         flex-grow: 0;
         background: rgb(29, 29, 32);

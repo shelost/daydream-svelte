@@ -1405,24 +1405,7 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
       {/each}
     </div>
 
-    <!-- Add scroll to bottom button -->
-    {#if !isStartState}
-      <button
-        class="scroll-to-bottom-btn"
-        class:visible={showScrollButton}
-        on:click={() => {
-          // Re-enable auto-scroll when user clicks scroll-to-bottom
-          $shouldAutoScroll = true;
-          scrollToBottom();
-        }}
-        aria-label="Scroll to bottom"
-      >
-        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <line x1="12" y1="5" x2="12" y2="19"></line>
-          <polyline points="19 12 12 19 5 12"></polyline>
-        </svg>
-      </button>
-    {/if}
+    <!-- scroll-to-bottom button now rendered inside Omnibar component -->
 
     <video
         muted
@@ -1448,6 +1431,8 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
       followUpQuestions={currentFollowUpQuestions}
       onFollowUpClick={handleFollowUpClick}
       parentDisabled={false}
+      showScrollButton={!isStartState && showScrollButton}
+      onScrollToBottom={() => { $shouldAutoScroll = true; scrollToBottom(); }}
     />
 
   </div>
@@ -1630,6 +1615,10 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
     flex-direction: column;
     gap: 8px;
 
+    @media screen and (max-width: 800px) {
+      gap: 20px;
+    }
+
     .carousel-container {
       position: relative;
       width: 100%;
@@ -1706,7 +1695,7 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
     }
 
     .prompt-card {
-      background: rgba(#030025, .05);
+      background: rgba(#6355FF, .05);
       border-radius: 12px;
       padding: 10px 18px;
       cursor: pointer;
@@ -1765,7 +1754,7 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
       }
 
       .prompt-card {
-        width: 200px;
+        width: 120px;
         padding: 12px 16px;
         margin: 0;
         height: auto;
@@ -1774,6 +1763,7 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
           width: 100%;
           text-wrap: wrap;
           white-space: normal;
+          text-align: left;
           line-height: 120%;
         }
       }
@@ -2988,59 +2978,7 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
   /* Remove the old streaming-word-fade-in class since we're not using it anymore */
 
   .scroll-to-bottom-btn {
-    position: fixed;
-    bottom: 120px;
-    right: 24px;
-    width: 40px;
-    height: 40px;
-    border-radius: 50%;
-    background: var(--highlight);
-    border: none;
-    color: white;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    cursor: pointer;
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-    opacity: 0;
-    transform: translateY(20px);
-    pointer-events: none;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-    z-index: 1000;
-
-    &:hover {
-      background: #4938fb;
-      transform: translateY(-2px) scale(1.05);
-      box-shadow: 0 6px 16px rgba(0, 0, 0, 0.2);
-    }
-
-    &.visible {
-      opacity: 1;
-      transform: translateY(0);
-      pointer-events: auto;
-    }
-
-    svg {
-      width: 20px;
-      height: 20px;
-      transition: transform 0.2s ease;
-    }
-
-    &:hover svg {
-      transform: translateY(2px);
-    }
-
-    @media (max-width: 800px) {
-      bottom: 100px;
-      right: 16px;
-      width: 36px;
-      height: 36px;
-
-      svg {
-        width: 18px;
-        height: 18px;
-      }
-    }
+    /* Styles moved to Omnibar component */
   }
 
   .auto-scroll-status {
