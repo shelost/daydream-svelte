@@ -544,7 +544,7 @@
         font-size: 12px;
         font-weight: 500;
         letter-spacing: -.25px;
-        padding: 8px 32px 8px 10px;
+        padding: 8px 12px 8px 10px;
         border-radius: 24px;
         color: #030025;
         background: rgba(#030025, .05);
