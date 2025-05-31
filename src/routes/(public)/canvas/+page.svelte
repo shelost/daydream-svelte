@@ -138,7 +138,7 @@
   let strokeColor: string;
   let strokeSize: number;
   let strokeOpacity: number;
-  let canvasBackgroundColor: string = '#ffffff'; // Default background color
+  let canvasBackgroundColor: string = '#f8f8f8'; // Default background color
 
   let lastUserEditTime = 0;
   let pendingAnalysis = false;
@@ -277,15 +277,12 @@
         }
 
         fabricInstance = new fabric.Canvas(fabricCanvasHTML, {
-          backgroundColor: canvasBackgroundColor, // Use the white background color
+          backgroundColor: canvasBackgroundColor,
           renderOnAddRemove: true,
           width: fabricCanvasHTML.width,
           height: fabricCanvasHTML.height,
           preserveObjectStacking: true // Good for managing layers
         });
-
-        // Ensure the background is rendered immediately
-        fabricInstance.requestRenderAll();
 
         // Make sure Fabric's internal elements are correctly positioned
         if (fabricInstance.wrapperEl) {
@@ -296,20 +293,29 @@
           fabricInstance.wrapperEl.style.height = fabricCanvasHTML.style.height;
         }
 
-        // Set default control appearance for all objects
-        fabric.Object.prototype.set({
-          cornerStyle: 'circle',
-          cornerColor: 'white',
-          cornerStrokeColor: '#6355FF',
-          cornerStrokeWidth: 3,
-          cornerSize: 12,
-          padding: 0, // Increased padding for better selection handling
-          transparentCorners: false,
-          borderColor: '#6355FF',
-          borderScaleFactor: 1.5,
-          borderOpacityWhenMoving: .5,
-          touchCornerSize: 20,
-        });
+         // Set default control appearance for all objects
+         fabric.Object.prototype.set({
+            cornerStyle: 'circle',
+            cornerColor: 'white',
+            cornerStrokeColor: '#6355FF',
+            cornerStrokeWidth: 3,
+            cornerSize: 12,
+            padding: 0, // Increased padding for better selection handling
+            transparentCorners: false,
+            borderColor: '#6355FF',
+            borderScaleFactor: 1.5,
+            borderOpacityWhenMoving: .5,
+            touchCornerSize: 20,
+          });
+
+          /*
+          // Set selection appearance
+          canvas.selectionColor = 'rgba(20,0,255,0.05)';
+          canvas.selectionBorderColor = '#6355FF';
+          canvas.selectionLineWidth = 2;
+
+          canvas.hoverCursor = 'pointer';
+          */
 
         console.log('Fabric.js canvas initialized successfully');
         // Listen to path creation and erasing events to save state automatically
@@ -650,12 +656,6 @@
   async function initializeComponent() {
     if (inputCanvas) {
       inputCtx = inputCanvas.getContext('2d');
-
-      // Set white background for perfect-freehand canvas immediately
-      if (inputCtx) {
-        inputCtx.fillStyle = '#ffffff';
-        inputCtx.fillRect(0, 0, inputCanvas.width, inputCanvas.height);
-      }
     }
 
     // First, load Fabric.js
@@ -671,13 +671,6 @@
         fabricErrorMessage = null;
         // Set up initial canvas alignment and styles
         setupCanvasAlignment();
-
-        // Ensure white background is applied and visible
-        if (fabricInstance) {
-          fabricInstance.setBackgroundColor('#ffffff', fabricInstance.renderAll.bind(fabricInstance));
-          // Force an immediate render
-          fabricInstance.requestRenderAll();
-        }
       }
     } catch (err) {
       console.error('Error loading Fabric.js:', err);
@@ -686,11 +679,7 @@
 
     resizeCanvas(); // Initial resize and setup
 
-    if (inputCtx) {
-      // Set white background again after resize
-      inputCtx.fillStyle = '#ffffff';
-      inputCtx.fillRect(0, 0, inputCanvas.width, inputCanvas.height);
-
+      if (inputCtx) {
       renderStrokes(); // Initial render (likely empty perfect-freehand canvas)
       updateImageData(); // Use a centralized function to update imageData
     }
@@ -711,4588 +700,2444 @@
     }
   }
 
-  // Import Prettier for code formatting
-  import prettier from 'prettier/standalone';
-  import * as parserHtml from 'prettier/parser-html';
-  const htmlParser = parserHtml?.default || parserHtml;
+  // Function to ensure all canvases are properly aligned and styled
+  function setupCanvasAlignment() {
+    if (!fabricInstance || !inputCanvas) return;
 
-  // Shape type variable for binding to CanvasToolbar
-  let shapeType: string = 'rectangle';
+    // Get all canvas elements from fabric and ensure they're properly positioned
+    const lowerCanvasEl = fabricInstance.lowerCanvasEl;
+    const upperCanvasEl = fabricInstance.upperCanvasEl;
+    const wrapperEl = fabricInstance.wrapperEl;
 
-  // Session storage key for canvas data
-  const CANVAS_STORAGE_KEY = 'canvasDrawingData';
+    if (lowerCanvasEl && upperCanvasEl && wrapperEl) {
+      // Make sure wrapper has correct dimensions and positioning
+      Object.assign(wrapperEl.style, {
+        position: 'absolute',
+        top: '0',
+        left: '0',
+        width: '100%',
+        height: '100%',
+        overflow: 'visible'
+      });
 
-  // Forward declaration for fabric
-  let fabric: any;
+      // Set z-index for each canvas based on current tool
+      updateCanvasZIndex($selectedTool);
 
-  // Interface extension for Stroke type with hasPressure property
-  interface EnhancedStroke extends Stroke {
-    hasPressure?: boolean;
-    hasHardwarePressure?: boolean; // Flag for true hardware pressure support
-    isEraserStroke?: boolean; // Flag for eraser strokes
-  }
-
-  // Drawing content object with enhanced strokes
-  interface EnhancedDrawingContent {
-    strokes: EnhancedStroke[];
-    bounds?: {
-      width: number;
-      height: number;
-    };
-  }
-
-  // Analysis element type
-  interface AnalysisElement {
-    id: string;
-    name: string;
-    category?: string;
-    x: number;
-    y: number;
-    width?: number;
-    height?: number;
-    color: string;
-    isChild?: boolean;
-    parentId?: string;
-    children?: string[];
-    pressure?: number; // Add pressure property for visual effects
-    boundingBox?: {
-      minX: number;
-      minY: number;
-      maxX: number;
-      maxY: number;
-      width: number;
-      height: number;
-    };
-  }
-
-  // State variables
-  let inputCanvas: HTMLCanvasElement;
-  let fabricCanvasHTML: HTMLCanvasElement; // Renamed for clarity
-  let fabricInstance: any = null;
-  let inputCtx: CanvasRenderingContext2D | null = null;
-  let isDrawing = false;
-  let currentStroke: EnhancedStroke | null = null;
-  // Use the store values for reference but maintain local variables for reactivity
-  let strokeColor: string;
-  let strokeSize: number;
-  let strokeOpacity: number;
-  let canvasBackgroundColor: string = '#ffffff'; // Default background color
-
-  let lastUserEditTime = 0;
-  let pendingAnalysis = false;
-
-  // Subscribe to store changes
-  strokeOptions.subscribe(options => {
-    strokeColor = options.color;
-    strokeSize = options.size;
-    strokeOpacity = options.opacity;
-
-    // If pen tool is active and options change, update currentStroke if any
-    if ($selectedTool === 'pen' && currentStroke) {
-      currentStroke.color = strokeColor;
-      currentStroke.size = strokeSize;
-      currentStroke.opacity = strokeOpacity;
-      renderStrokes(); // Re-render temporary stroke
+      console.log('Canvas alignment complete');
     }
-    // If eraser tool is active, update EraserBrush width
-    if ($selectedTool === 'eraser' && fabricInstance && fabricInstance.isDrawingMode) {
-      fabricInstance.freeDrawingBrush.width = eraserSize; // Assuming eraserSize will be derived from strokeSize or a dedicated variable
+  }
+
+  // Function to update z-index based on selected tool
+  function updateCanvasZIndex(tool) {
+    if (!fabricInstance || !inputCanvas) return;
+
+    const upperCanvasEl = fabricInstance.upperCanvasEl;
+
+    if (upperCanvasEl) {
+      if (tool === 'pen' || tool === 'text' || tool === 'shape' || tool === 'image') {
+        // Overlay canvas on top for drawing or insertion
+        inputCanvas.style.zIndex = '1';
+        upperCanvasEl.style.zIndex = '0';
+        inputCanvas.style.pointerEvents = 'auto';
+        upperCanvasEl.style.pointerEvents = 'none';
+      } else {
+        // Fabric interaction layer on top for eraser/select
+        inputCanvas.style.zIndex = '0';
+        upperCanvasEl.style.zIndex = '1';
+        inputCanvas.style.pointerEvents = 'none';
+        upperCanvasEl.style.pointerEvents = 'auto';
+      }
     }
-  });
+  }
 
-  let imageData: string | null = null;
-  let pointTimes: number[] = []; // Track time for velocity-based pressure
-  let errorMessage: string | null = null;
-  let fabricErrorMessage: string | null = null; // Add specific fabric error message
-  let sketchAnalysis = "Draw something to see AI's interpretation";
-  let isAnalyzing = false;
-  let strokeRecognition = "Draw something to see shapes recognized";
-  let isRecognizingStrokes = false;
-  let additionalContext = "";
-  let analysisElements: any[] = [];
-  let canvasScale = 1; // Scale factor for canvas display relative to internal resolution
+  // Update z-index whenever the tool changes
+  $: if (browser && fabricInstance) {
+    updateCanvasZIndex($selectedTool);
+  }
 
-  // Define imageModels for Omnibar
-  const imageGenerationModels = [
-    { value: 'gpt-image-1', label: 'GPT-Image-1' },
-    { value: 'gpt-4o', label: 'GPT-4o' },
-    { value: 'flux-canny-pro', label: 'Flux Canny Pro' },
-    { value: 'controlnet-scribble', label: 'ControlNet Scribble' },
-    { value: 'stable-diffusion', label: 'Stable Diffusion' },
-    { value: 'latent-consistency', label: 'Latent Consistency' }
-  ];
-
-  // Reactive variable for Omnibar's parentDisabled prop
-  $: parentOmnibarDisabled = $isGenerating || ((!fabricInstance || fabricInstance.getObjects().length === 0) && !additionalContext.trim());
-
-  // Drawing content with enhanced strokes - This might become less central with Fabric.js
-  let drawingContent: EnhancedDrawingContent = {
-    strokes: [], // This will no longer store rendered strokes, Fabric.js does.
-    bounds: { width: 800, height: 600 }
-  };
-
-  // Canvas dimensions
-  let canvasWidth = 800;
-  let canvasHeight = 600;
-
-
-  // Variables for tracking user edits and analysis state
-  let isResizeEvent = false;
-  let renderDebounceTimeout: ReturnType<typeof setTimeout> | null = null; // Declare the missing variable
-  let isArtificialEvent = false; // Flag for programmatically triggered events
-
-  // For Fabric.js canvas
-  let fabricLoaded = false;
-  let fabricLoadAttempts = 0;
-  const MAX_FABRIC_LOAD_ATTEMPTS = 3;
-
-  // Function to dynamically load Fabric.js with retry logic
-  function loadFabricScript(): Promise<void> {
-    return new Promise((resolve, reject) => {
-      // Skip if already loaded
-      if (typeof fabric !== 'undefined') {
-        console.log('Fabric.js already loaded');
-        fabricLoaded = true;
-        fabricErrorMessage = null; // Clear any previous errors
-        return resolve();
+  // Centralize image data updates to handle fabric availability
+  function updateImageData() {
+    try {
+      if (fabricInstance) {
+        imageData = fabricInstance.toDataURL({ format: 'png' });
+      } else if (inputCanvas) { // Fallback if fabricInstance not ready
+        imageData = inputCanvas.toDataURL('image/png');
       }
-
-      // Track attempts to prevent infinite retry loops
-      fabricLoadAttempts++;
-      if (fabricLoadAttempts > MAX_FABRIC_LOAD_ATTEMPTS) {
-        const error = 'Failed to load Fabric.js after multiple attempts';
-        fabricErrorMessage = error;
-        return reject(new Error(error));
-      }
-
-      console.log(`Loading fabric.js (attempt ${fabricLoadAttempts})`);
-
-      const script = document.createElement('script');
-      script.src = '/js/fabric.js';
-      script.async = true;
-
-      script.onload = () => {
-        console.log('Fabric.js loaded successfully');
-        fabricLoaded = true;
-        fabric = window['fabric']; // Assign to our variable
-        fabricErrorMessage = null; // Clear any previous errors
-        resolve();
-      };
-
-      script.onerror = () => {
-        console.error('Failed to load Fabric.js');
-        if (fabricLoadAttempts >= MAX_FABRIC_LOAD_ATTEMPTS) {
-          fabricErrorMessage = 'Failed to load the drawing engine. Please check your internet connection and refresh the page.';
-          reject(new Error('Max retry attempts reached'));
-        } else {
-          // Retry on failure with a delay
-          setTimeout(() => {
-            loadFabricScript().then(resolve).catch(reject);
-          }, 500);
+    } catch (error) {
+      console.error('Error updating image data:', error);
+      // Fallback if toDataURL fails
+      if (inputCanvas) {
+        try {
+          imageData = inputCanvas.toDataURL('image/png');
+        } catch (e) {
+          console.error('Could not get image data from any canvas');
         }
-      };
-
-      document.head.appendChild(script);
-    });
+      }
+    }
   }
 
-  // Initialize Fabric.js canvas
-  async function initializeFabricCanvas() {
-    if (!fabricCanvasHTML) {
-      console.error('Fabric canvas element not yet available');
-      return false;
-    }
+  // Function to save canvas state to sessionStorage
+  function saveCanvasState() {
+    if (!browser || !fabricInstance) return;
 
     try {
-      if (!fabricLoaded) {
-        await loadFabricScript();
-      }
-
-      if (typeof fabric !== 'undefined') {
-        // Clean up any existing instance to prevent duplicates
-        if (fabricInstance) {
-          fabricInstance.dispose();
-        }
-
-        fabricInstance = new fabric.Canvas(fabricCanvasHTML, {
-          backgroundColor: canvasBackgroundColor, // Use the white background color
-          renderOnAddRemove: true,
-          width: fabricCanvasHTML.width,
-          height: fabricCanvasHTML.height,
-          preserveObjectStacking: true // Good for managing layers
-        });
-
-        // Ensure the background is rendered immediately
-        fabricInstance.requestRenderAll();
-
-        // Make sure Fabric's internal elements are correctly positioned
-        if (fabricInstance.wrapperEl) {
-          fabricInstance.wrapperEl.style.position = 'absolute';
-          fabricInstance.wrapperEl.style.top = '0';
-          fabricInstance.wrapperEl.style.left = '0';
-          fabricInstance.wrapperEl.style.width = fabricCanvasHTML.style.width;
-          fabricInstance.wrapperEl.style.height = fabricCanvasHTML.style.height;
-        }
-
-        // Set default control appearance for all objects
-        fabric.Object.prototype.set({
-          cornerStyle: 'circle',
-          cornerColor: 'white',
-          cornerStrokeColor: '#6355FF',
-          cornerStrokeWidth: 3,
-          cornerSize: 12,
-          padding: 0, // Increased padding for better selection handling
-          transparentCorners: false,
-          borderColor: '#6355FF',
-          borderScaleFactor: 1.5,
-          borderOpacityWhenMoving: .5,
-          touchCornerSize: 20,
-        });
-
-        console.log('Fabric.js canvas initialized successfully');
-        // Listen to path creation and erasing events to save state automatically
-        fabricInstance.on('path:created', () => {
-          saveCanvasState();
-          recordHistory();
-        });
-        if (fabricInstance.on) {
-          fabricInstance.on('erasing:end', (opt) => {
-            // Auto-remove nearly empty paths to avoid leftovers
-            const targets = opt?.targets || [];
-            let removedSomething = false;
-            targets.forEach((obj: any) => {
-              if (obj && obj.type === 'path') {
-                const bb = obj.getBoundingRect();
-                const area = bb.width * bb.height;
-                if (area < 25 || (obj.path && obj.path.length < 10)) {
-                  fabricInstance.remove(obj);
-                  removedSomething = true;
-                }
-              }
-            });
-            saveCanvasState();
-            if (removedSomething) {
-              recordHistory();
-            }
-          });
-        }
-
-        // Replace the existing 'object:modified' handler for more specific logic
-        fabricInstance.off('object:modified'); // Remove previous one if any from prior steps
-        fabricInstance.on('object:modified', (e) => {
-          const target = e.target;
-          if (!target) return;
-
-          let propertyChanged = false;
-          if (target.type === 'rect') {
-            if (target.scaleX !== 1 || target.scaleY !== 1) {
-              const newWidth = target.width * target.scaleX;
-              const newHeight = target.height * target.scaleY;
-              target.set({
-                width: newWidth,
-                height: newHeight,
-                scaleX: 1,
-                scaleY: 1
-              });
-              target.setCoords();
-              propertyChanged = true;
-            }
-          }
-          // Add other type-specific modifications here if needed in the future
-
-          // Common post-modification logic
-          if (propertyChanged) {
-            fabricInstance.requestRenderAll(); // Render immediately if we changed properties
-          } else {
-            fabricInstance.renderAll(); // Standard render if no specific property change by this handler
-          }
-
-          setTimeout(() => {
-            saveCanvasState();
-            updateImageData(); // Ensure preview is updated
-            recordHistory();
-            // Update reactive proxies if the active object was the one modified
-            if (activeFabricObject && activeFabricObject === target) {
-                if (activeFabricObject.type === 'rect' || activeFabricObject.type === 'circle' || activeFabricObject.type === 'triangle') {
-                    selectedShapeFillProxy = activeFabricObject.fill || '#cccccc';
-                    selectedShapeStrokeProxy = activeFabricObject.stroke || '#000000';
-                    selectedShapeStrokeWidthProxy = activeFabricObject.strokeWidth === undefined ? 0 : activeFabricObject.strokeWidth;
-                }
-            }
-          }, 0);
-        });
-
-        // Listen for selection events to update activeFabricObject
-        fabricInstance.on('selection:created', (e) => {
-          if (e.selected && e.selected.length > 0) activeFabricObject = e.selected[0];
-          else activeFabricObject = null;
-        });
-        fabricInstance.on('selection:updated', (e) => {
-          if (e.selected && e.selected.length > 0) activeFabricObject = e.selected[0];
-          else activeFabricObject = null;
-        });
-        fabricInstance.on('selection:cleared', () => {
-          activeFabricObject = null;
-        });
-
-        // NEW: Also listen for additions & removals for history purposes
-        fabricInstance.on('object:added', () => {
-          // Object addition already triggers a render in Fabric
-          setTimeout(() => {
-            recordHistory();
-          }, 0);
-        });
-
-        fabricInstance.on('object:removed', () => {
-          // Ensure immediate render
-          fabricInstance.renderAll();
-
-          setTimeout(() => {
-            recordHistory();
-          }, 0);
-        });
-
-        // Handle live scaling to adjust width/height instead of scale
-        fabricInstance.on('object:scaling', (e) => {
-          const target = e.target;
-          if (!target) return;
-
-          // We only want this for basic shapes drawn via shape tool (rect, ellipse (radius), triangle)
-          if (target.type === 'rect') {
-            target.noScaleCache = false;
-            const newWidth = target.width * target.scaleX;
-            const newHeight = target.height * target.scaleY;
-            target.set({
-              width: newWidth,
-              height: newHeight,
-              scaleX: 1,
-              scaleY: 1
-            });
-            target.setCoords();
-            fabricInstance.requestRenderAll();
-          } else if (target.type === 'triangle') {
-            target.noScaleCache = false;
-            const newWidth = target.width * target.scaleX;
-            const newHeight = target.height * target.scaleY;
-            target.set({ width: newWidth, height: newHeight, scaleX: 1, scaleY: 1 });
-            target.setCoords();
-            fabricInstance.requestRenderAll();
-          } else if (target.type === 'ellipse') { // Changed from 'circle' to 'ellipse'
-            target.noScaleCache = false;
-            // For ellipse, adjust rx and ry based on scaleX and scaleY respectively
-            const newRx = target.rx * target.scaleX;
-            const newRy = target.ry * target.scaleY;
-            target.set({ rx: newRx, ry: newRy, scaleX: 1, scaleY: 1 });
-            target.setCoords();
-            fabricInstance.requestRenderAll();
-          }
-        });
-
-        // Add Alt/Option + Drag to Duplicate functionality
-        fabricInstance.on('mouse:down', function(opt) {
-          if (opt.e.altKey && opt.target && opt.target.selectable) {
-            // Store original values
-            const originalObj = opt.target;
-            const originalLeft = originalObj.left;
-            const originalTop = originalObj.top;
-
-            // Get current pointer position
-            const pointer = fabricInstance.getPointer(opt.e);
-
-            // Prevent default to avoid original object movement
-            opt.e.preventDefault();
-            opt.e.stopPropagation();
-
-            // Clear any existing selection
-            fabricInstance.discardActiveObject();
-
-            // Clone original object
-            originalObj.clone(function(cloned) {
-              // Position at exact same coordinates
-              cloned.set({
-                left: originalLeft,
-                top: originalTop,
-                evented: true
-              });
-
-              // Add to canvas
-              fabricInstance.add(cloned);
-
-              // Set as active object (important for controls)
-              fabricInstance.setActiveObject(cloned);
-              cloned.setCoords();
-
-              // Calculate offset from object center to cursor position
-              const offsetX = pointer.x - originalLeft;
-              const offsetY = pointer.y - originalTop;
-
-              // Create a transform object to simulate dragging state
-              fabricInstance._currentTransform = {
-                target: cloned,
-                action: 'drag',
-                corner: 0,
-                scaleX: cloned.scaleX,
-                scaleY: cloned.scaleY,
-                skewX: cloned.skewX,
-                skewY: cloned.skewY,
-                offsetX: offsetX,
-                offsetY: offsetY,
-                originX: cloned.originX,
-                originY: cloned.originY,
-                ex: pointer.x,
-                ey: pointer.y,
-                left: cloned.left,
-                top: cloned.top,
-                theta: cloned.angle * Math.PI / 180,
-                width: cloned.width * cloned.scaleX,
-                height: cloned.height * cloned.scaleY,
-                mouseXSign: 1,
-                mouseYSign: 1,
-                actionHandler: fabricInstance._getActionFromCorner.bind(fabricInstance, cloned, 0, opt.e) || fabricInstance._actionHandler
-              };
-
-              // Set the action handler for dragging
-              fabricInstance._currentTransform.actionHandler = function(eventData, transform, x, y) {
-                const target = transform.target;
-                const newLeft = x - transform.offsetX;
-                const newTop = y - transform.offsetY;
-
-                target.set({
-                  left: newLeft,
-                  top: newTop
-                });
-
-                return true;
-              };
-
-              // Ensure original stays in place
-              originalObj.set({
-                left: originalLeft,
-                top: originalTop
-              });
-              originalObj.setCoords();
-
-              // Set canvas state to indicate we're transforming
-              fabricInstance._isCurrentlyDrawing = true;
-
-              // Save canvas state after the operation completes
-              saveCanvasState();
-
-              // Force canvas to render
-              fabricInstance.requestRenderAll();
-            });
-
-            // Prevent event propagation
-            return false;
-          }
-        });
-
-        // Enhanced mouse:move handler to handle our custom transform
-        fabricInstance.on('mouse:move', function(opt) {
-          if (fabricInstance._currentTransform && fabricInstance._currentTransform.action === 'drag') {
-            const pointer = fabricInstance.getPointer(opt.e);
-            const transform = fabricInstance._currentTransform;
-
-            if (transform.actionHandler) {
-              transform.actionHandler(opt.e, transform, pointer.x, pointer.y);
-              transform.target.setCoords();
-              fabricInstance.requestRenderAll();
-            }
-          }
-        });
-
-        // Enhanced mouse:up handler to complete the transform
-        fabricInstance.on('mouse:up', function(opt) {
-          if (fabricInstance._currentTransform) {
-            const target = fabricInstance._currentTransform.target;
-
-            // Clear the transform state
-            fabricInstance._currentTransform = null;
-            fabricInstance._isCurrentlyDrawing = false;
-
-            // Ensure the object remains active and visible
-            if (target) {
-              fabricInstance.setActiveObject(target);
-              target.setCoords();
-              target.fire('modified');
-              fabricInstance.fire('object:modified', { target: target });
-              fabricInstance.requestRenderAll();
-            }
-          }
-        });
-
-        // Ensure selection is preserved after mouse:up
-        fabricInstance.on('mouse:up', function(opt) {
-          // If an object was being transformed, make sure it stays active
-          if (fabricInstance._currentTransform && fabricInstance._currentTransform.target) {
-            const target = fabricInstance._currentTransform.target;
-            fabricInstance.setActiveObject(target);
-            target.setCoords();
-            fabricInstance.requestRenderAll();
-          }
-        });
-
-        return true;
-      } else {
-        console.error('Fabric.js still not available after loading attempt');
-        return false;
-      }
-    } catch (err) {
-      console.error('Error initializing Fabric canvas:', err);
-      return false;
+      // Get JSON representation of canvas
+      const canvasData = fabricInstance.toJSON();
+      // Save to sessionStorage
+      sessionStorage.setItem(CANVAS_STORAGE_KEY, JSON.stringify(canvasData));
+      console.log('Canvas state saved to sessionStorage');
+    } catch (error) {
+      console.error('Error saving canvas state:', error);
     }
   }
 
-  // Function to build the prompt for GPT-Image-1 (Ignoring AI, but keeping for structure)
-  function buildGptImagePrompt() {
-    let prompt = `Complete this drawing. DO NOT change the original image sketch at all; simply add onto the existing drawing EXACTLY as it is. CRITICAL STRUCTURE PRESERVATION: You MUST treat this sketch as an EXACT STRUCTURAL TEMPLATE. `;
-    const contentGuide = sketchAnalysis !== "Draw something to see AI's interpretation" ? sketchAnalysis : "A user's drawing.";
-    prompt += `CONTENT DESCRIPTION: ${contentGuide}\n\n`;
-    if (additionalContext) {
-      prompt += `USER'S CONTEXT: "${additionalContext}"\n\n`;
+  // Function to load canvas state from sessionStorage
+  function loadCanvasState() {
+    if (!browser) {
+      console.log("Not in browser, skipping loadCanvasState");
+      return false;
     }
-    if (analysisElements.length > 0) {
-      const structuralGuide = `Based on analysis, the drawing contains ${analysisElements.length} main elements. Element positions and basic relationships are implied by the sketch.`;
-      prompt += `STRUCTURAL GUIDE: ${structuralGuide}\n\n`;
+    if (!fabricInstance) {
+      console.error('Fabric instance not available when trying to load canvas state.');
+      return false;
     }
-    const compositionGuide = `Focus on the arrangement within the ${selectedAspectRatio} frame.`;
-    prompt += `COMPOSITION GUIDE: ${compositionGuide}\n\n`;
-    if (strokeRecognition && strokeRecognition !== "Draw something to see shapes recognized") {
-      prompt += `RECOGNIZED SHAPES: ${strokeRecognition}\n\n`;
+
+    console.log('Attempting to load canvas state from sessionStorage...');
+    try {
+      const savedData = sessionStorage.getItem(CANVAS_STORAGE_KEY);
+      if (savedData) {
+        console.log('Found saved data in sessionStorage.');
+        // Parse the saved data
+        const canvasData = JSON.parse(savedData);
+        // Load the canvas with the saved data
+        fabricInstance.loadFromJSON(canvasData, () => {
+          fabricInstance.renderAll();
+          console.log('Canvas state loaded and rendered successfully from sessionStorage.');
+          updateImageData(); // Ensure preview is updated immediately
+        });
+        return true;
+      }
+      console.log('No saved canvas data found in sessionStorage.');
+    } catch (error) {
+      console.error('Error loading canvas state:', error);
     }
-    prompt += `FINAL INSTRUCTIONS: Create a DIRECT, FRONT-FACING VIEW that maintains the EXACT same composition as the sketch. NEVER distort or reposition any element. Color and texture can be added, but the structural skeleton must remain identical to the original sketch.`;
-    return prompt.length > 4000 ? prompt.substring(0, 3997) + '...' : prompt;
+    return false;
+  }
+
+  onMount(() => {
+    console.log('Canvas component mounting...');
+    // Start initialization process
+    initializeComponent().then(() => {
+      console.log('initializeComponent finished.');
+      // After initialization, try to load saved state
+      if (fabricInstance) {
+        console.log('Fabric instance is available. Calling loadCanvasState.');
+        const loaded = loadCanvasState();
+        if (loaded) {
+          console.log('Successfully initiated loading of canvas state.');
+        } else {
+          console.log('Failed to initiate loading or no saved canvas state found.');
+        }
+
+        // Setup ResizeObserver to detect container size changes
+        if (inputCanvas && inputCanvas.parentElement && 'ResizeObserver' in window) {
+          resizeObserver = new ResizeObserver((entries) => {
+            // Don't use debounce here - resize immediately
+            resizeCanvas();
+          });
+
+          // Observe the parent container for size changes
+          resizeObserver.observe(inputCanvas.parentElement);
+          console.log('ResizeObserver initialized for canvas container');
+        }
+      } else {
+        console.error("Fabric instance NOT available after component initialization. CANNOT load state.");
+      }
+    }).catch(err => {
+      console.error("Error during initializeComponent promise chain:", err);
+    });
+
+    // Add event listeners
+    window.addEventListener('resize', mobileCheck);
+    window.addEventListener('keydown', handleGlobalKeyDown);
+
+    // Note: beforeNavigate and window.addEventListener('beforeunload', saveCanvasState)
+    // are set up in the top-level script block.
+    // The 'beforeunload' listener will be cleaned up in the new consolidated onDestroy.
+
+    // Return cleanup function for onMount is not strictly needed here as onDestroy handles it.
+  });
+
+  function initializeCanvas() {
+    console.log('Initializing canvas');
+    resizeCanvas();
+
+      if (inputCtx) {
+        inputCtx.lineCap = 'round';
+        inputCtx.lineJoin = 'round';
+        inputCtx.strokeStyle = strokeColor;
+        inputCtx.lineWidth = strokeSize;
+      }
+    if (fabricInstance) {
+      imageData = fabricInstance.toDataURL({ format: 'png' });
+    } else if (inputCanvas) {
+      imageData = inputCanvas.toDataURL('image/png');
+    }
+  }
+
+  function getHeightFromAspectRatio(width, aspectRatio) {
+    if (aspectRatio === '1:1') return width;
+    if (aspectRatio === 'portrait') return width * (1024 / 1792);
+    if (aspectRatio === 'landscape') return width * (1792 / 1024);
+    return width;
+  }
+
+  function resizeCanvas() {
+    if (!inputCanvas || !inputCanvas.parentElement || !fabricCanvasHTML) return;
+
+    lastResizeTime = Date.now();
+    isResizeEvent = true;
+
+    const container = inputCanvas.parentElement;
+    const containerStyle = window.getComputedStyle(container);
+    const paddingHorizontal = parseFloat(containerStyle.paddingLeft) + parseFloat(containerStyle.paddingRight);
+    const paddingVertical = parseFloat(containerStyle.paddingTop) + parseFloat(containerStyle.paddingBottom);
+
+    // Get the actual available space in the container
+    const availableWidth = container.clientWidth - paddingHorizontal;
+    const availableHeight = container.clientHeight - paddingVertical;
+
+    // Set internal dimensions based on aspect ratio
+    let internalWidth, internalHeight;
+    if (selectedAspectRatio === '1:1') {
+      internalWidth = 1024;
+      internalHeight = 1024;
+    } else if (selectedAspectRatio === 'portrait') {
+      internalWidth = 1024;
+      internalHeight = 1792;
+    } else {
+      internalWidth = 1792;
+      internalHeight = 1024;
+    } // landscape
+
+    // Calculate the scale factor to fit the canvas within the available space
+    // while maintaining aspect ratio
+    const widthRatio = availableWidth / internalWidth;
+    const heightRatio = availableHeight / internalHeight;
+    const scaleFactor = Math.min(widthRatio, heightRatio);
+
+    // Calculate the new displayed dimensions
+    const newCanvasWidth = internalWidth * scaleFactor;
+    const newCanvasHeight = internalHeight * scaleFactor;
+
+    // Set internal dimensions for both canvases
+    inputCanvas.width = internalWidth;
+    inputCanvas.height = internalHeight;
+    fabricCanvasHTML.width = internalWidth;
+    fabricCanvasHTML.height = internalHeight;
+
+    // Position the canvas in the center of the container
+    const marginLeft = Math.max(0, (availableWidth - newCanvasWidth) / 2);
+    const marginTop = Math.max(0, (availableHeight - newCanvasHeight) / 2);
+
+    // Apply consistent styling to both canvases
+    const canvasStyles = {
+      width: `${Math.round(newCanvasWidth)}px`,
+      height: `${Math.round(newCanvasHeight)}px`,
+      position: 'absolute',
+      top: `${marginTop}px`,
+      left: `${marginLeft}px`
+    };
+
+    // Apply styles to perfect-freehand canvas
+    Object.assign(inputCanvas.style, canvasStyles);
+
+    // Apply styles to fabric canvas element
+    Object.assign(fabricCanvasHTML.style, canvasStyles);
+
+    canvasScale = scaleFactor;
+    canvasWidth = internalWidth;
+    canvasHeight = internalHeight;
+
+    let canvasContainer = document.getElementsByClassName('canvas-container')[0];
+    // Ensure canvasContainer is an HTMLElement before accessing style
+    if (fabricInstance && canvasContainer instanceof HTMLElement) {
+      // Important: Need to set both element dimensions and fabric dimensions
+      fabricInstance.setWidth(internalWidth);
+      fabricInstance.setHeight(internalHeight);
+      fabricInstance.setDimensions({ width: internalWidth, height: internalHeight });
+
+      // Ensure the CSS dimensions match as well
+      fabricInstance.lowerCanvasEl.style.width = canvasStyles.width;
+      fabricInstance.lowerCanvasEl.style.height = canvasStyles.height;
+      fabricInstance.lowerCanvasEl.style.top = canvasStyles.top;
+      fabricInstance.lowerCanvasEl.style.left = canvasStyles.left;
+
+      if (fabricInstance.upperCanvasEl) {
+        // Also set dimensions for the upper canvas (interaction layer)
+        fabricInstance.upperCanvasEl.style.width = canvasStyles.width;
+        fabricInstance.upperCanvasEl.style.height = canvasStyles.height;
+        fabricInstance.upperCanvasEl.style.position = 'absolute';
+        fabricInstance.upperCanvasEl.style.top = canvasStyles.top;
+        fabricInstance.upperCanvasEl.style.left = canvasStyles.left;
+
+        canvasContainer.style.width = canvasStyles.width;
+        canvasContainer.style.height = canvasStyles.height;
+        canvasContainer.style.position = 'absolute';
+        canvasContainer.style.top = canvasStyles.top;
+        canvasContainer.style.left = canvasStyles.left;
+      }
+
+      fabricInstance.calcOffset();
+      fabricInstance.requestRenderAll();
+    }
+
+    drawingContent.bounds = { width: internalWidth, height: internalHeight };
+
+    // Immediately render without debounce for resize events
+    console.log('Rendering strokes immediately after resize');
+    renderStrokes();
+    updateImageData();
+
+    // Update the output canvas if it exists
+    if (fabricOutputInstance && selectedFormat === 'svg') {
+      resizeOutputCanvas();
+    }
+
+    setTimeout(() => { isResizeEvent = false; }, 50);
+
+    console.log(
+      `Canvas resized. Display: ${Math.round(newCanvasWidth)}x${Math.round(newCanvasHeight)}, Internal: ${internalWidth}x${internalHeight}, Scale: ${canvasScale.toFixed(2)}, Margins: ${marginLeft.toFixed(0)}px left, ${marginTop.toFixed(0)}px top`
+    );
   }
 
   $: {
-    const newPrompt = buildGptImagePrompt();
-    gptImagePrompt.set(newPrompt);
-  }
-
-  function isRealUserEdit(): boolean {
-    if (isResizeEvent) return false;
-    if ($isGenerating || isArtificialEvent) return false;
-    if (isAnalyzing || isRecognizingStrokes) return false;
-    lastUserEditTime = Date.now();
-    pendingAnalysis = true;
-    return true;
-  }
-
-  $: strokeCount = fabricInstance?.getObjects()?.length || 0; // Updated to use Fabric.js objects
-
-  let pathBuilderLookup = {};
-  let browser = typeof window !== 'undefined';
-  let lastResizeTime = 0;
-
-  // Separate initialization function
-  async function initializeComponent() {
-    if (inputCanvas) {
-      inputCtx = inputCanvas.getContext('2d');
-
-      // Set white background for perfect-freehand canvas immediately
-      if (inputCtx) {
-        inputCtx.fillStyle = '#ffffff';
-        inputCtx.fillRect(0, 0, inputCanvas.width, inputCanvas.height);
-      }
-    }
-
-    // First, load Fabric.js
-    try {
-      await loadFabricScript();
-      // Then initialize the canvas
-      const success = await initializeFabricCanvas();
-      if (!success) {
-        console.error('Failed to initialize Fabric canvas after script loaded');
-        fabricErrorMessage = 'Could not initialize drawing tools. Please try refreshing the page.';
-      } else {
-        // Successfully initialized
-        fabricErrorMessage = null;
-        // Set up initial canvas alignment and styles
-        setupCanvasAlignment();
-
-        // Ensure white background is applied and visible
+    if (browser && inputCanvas && fabricCanvasHTML) {
+      if ($selectedTool === 'pen' || $selectedTool === 'text' || $selectedTool === 'shape') {
+        // For drawing or object insertion modes, use the overlay canvas for pointer events
+        inputCanvas.style.pointerEvents = 'auto';
+        inputCanvas.style.zIndex = '1'; // Ensure drawing canvas is on top
         if (fabricInstance) {
-          fabricInstance.setBackgroundColor('#ffffff', fabricInstance.renderAll.bind(fabricInstance));
-          // Force an immediate render
-          fabricInstance.requestRenderAll();
+          fabricInstance.isDrawingMode = false;
+          if (fabricInstance.upperCanvasEl) {
+            fabricInstance.upperCanvasEl.style.pointerEvents = 'none';
+          }
         }
-      }
-    } catch (err) {
-      console.error('Error loading Fabric.js:', err);
-      fabricErrorMessage = 'Error loading drawing tools. Please check your connection and try refreshing.';
-    }
-
-    resizeCanvas(); // Initial resize and setup
-
-    if (inputCtx) {
-      // Set white background again after resize
-      inputCtx.fillStyle = '#ffffff';
-      inputCtx.fillRect(0, 0, inputCanvas.width, inputCanvas.height);
-
-      renderStrokes(); // Initial render (likely empty perfect-freehand canvas)
-      updateImageData(); // Use a centralized function to update imageData
-    }
-
-    console.log('Component mounted');
-    mobileCheck();
-
-    // Push initial baseline snapshot after component ready & state loaded
-    if (fabricInstance) {
-      try {
-        undoStack.length = 0;
-        redoStack.length = 0;
-        const baseline = JSON.stringify(fabricInstance.toJSON());
-        undoStack.push(baseline);
-      } catch (err) {
-        console.error('Unable to set initial history baseline', err);
-      }
-    }
-  }
-
-  // Import Prettier for code formatting
-  import prettier from 'prettier/standalone';
-  import * as parserHtml from 'prettier/parser-html';
-  const htmlParser = parserHtml?.default || parserHtml;
-
-  // Shape type variable for binding to CanvasToolbar
-  let shapeType: string = 'rectangle';
-
-  // Session storage key for canvas data
-  const CANVAS_STORAGE_KEY = 'canvasDrawingData';
-
-  // Forward declaration for fabric
-  let fabric: any;
-
-  // Interface extension for Stroke type with hasPressure property
-  interface EnhancedStroke extends Stroke {
-    hasPressure?: boolean;
-    hasHardwarePressure?: boolean; // Flag for true hardware pressure support
-    isEraserStroke?: boolean; // Flag for eraser strokes
-  }
-
-  // Drawing content object with enhanced strokes
-  interface EnhancedDrawingContent {
-    strokes: EnhancedStroke[];
-    bounds?: {
-      width: number;
-      height: number;
-    };
-  }
-
-  // Analysis element type
-  interface AnalysisElement {
-    id: string;
-    name: string;
-    category?: string;
-    x: number;
-    y: number;
-    width?: number;
-    height?: number;
-    color: string;
-    isChild?: boolean;
-    parentId?: string;
-    children?: string[];
-    pressure?: number; // Add pressure property for visual effects
-    boundingBox?: {
-      minX: number;
-      minY: number;
-      maxX: number;
-      maxY: number;
-      width: number;
-      height: number;
-    };
-  }
-
-  // State variables
-  let inputCanvas: HTMLCanvasElement;
-  let fabricCanvasHTML: HTMLCanvasElement; // Renamed for clarity
-  let fabricInstance: any = null;
-  let inputCtx: CanvasRenderingContext2D | null = null;
-  let isDrawing = false;
-  let currentStroke: EnhancedStroke | null = null;
-  // Use the store values for reference but maintain local variables for reactivity
-  let strokeColor: string;
-  let strokeSize: number;
-  let strokeOpacity: number;
-  let canvasBackgroundColor: string = '#ffffff'; // Default background color
-
-  let lastUserEditTime = 0;
-  let pendingAnalysis = false;
-
-  // Subscribe to store changes
-  strokeOptions.subscribe(options => {
-    strokeColor = options.color;
-    strokeSize = options.size;
-    strokeOpacity = options.opacity;
-
-    // If pen tool is active and options change, update currentStroke if any
-    if ($selectedTool === 'pen' && currentStroke) {
-      currentStroke.color = strokeColor;
-      currentStroke.size = strokeSize;
-      currentStroke.opacity = strokeOpacity;
-      renderStrokes(); // Re-render temporary stroke
-    }
-    // If eraser tool is active, update EraserBrush width
-    if ($selectedTool === 'eraser' && fabricInstance && fabricInstance.isDrawingMode) {
-      fabricInstance.freeDrawingBrush.width = eraserSize; // Assuming eraserSize will be derived from strokeSize or a dedicated variable
-    }
-  });
-
-  let imageData: string | null = null;
-  let pointTimes: number[] = []; // Track time for velocity-based pressure
-  let errorMessage: string | null = null;
-  let fabricErrorMessage: string | null = null; // Add specific fabric error message
-  let sketchAnalysis = "Draw something to see AI's interpretation";
-  let isAnalyzing = false;
-  let strokeRecognition = "Draw something to see shapes recognized";
-  let isRecognizingStrokes = false;
-  let additionalContext = "";
-  let analysisElements: any[] = [];
-  let canvasScale = 1; // Scale factor for canvas display relative to internal resolution
-
-  // Define imageModels for Omnibar
-  const imageGenerationModels = [
-    { value: 'gpt-image-1', label: 'GPT-Image-1' },
-    { value: 'gpt-4o', label: 'GPT-4o' },
-    { value: 'flux-canny-pro', label: 'Flux Canny Pro' },
-    { value: 'controlnet-scribble', label: 'ControlNet Scribble' },
-    { value: 'stable-diffusion', label: 'Stable Diffusion' },
-    { value: 'latent-consistency', label: 'Latent Consistency' }
-  ];
-
-  // Reactive variable for Omnibar's parentDisabled prop
-  $: parentOmnibarDisabled = $isGenerating || ((!fabricInstance || fabricInstance.getObjects().length === 0) && !additionalContext.trim());
-
-  // Drawing content with enhanced strokes - This might become less central with Fabric.js
-  let drawingContent: EnhancedDrawingContent = {
-    strokes: [], // This will no longer store rendered strokes, Fabric.js does.
-    bounds: { width: 800, height: 600 }
-  };
-
-  // Canvas dimensions
-  let canvasWidth = 800;
-  let canvasHeight = 600;
-
-
-  // Variables for tracking user edits and analysis state
-  let isResizeEvent = false;
-  let renderDebounceTimeout: ReturnType<typeof setTimeout> | null = null; // Declare the missing variable
-  let isArtificialEvent = false; // Flag for programmatically triggered events
-
-  // For Fabric.js canvas
-  let fabricLoaded = false;
-  let fabricLoadAttempts = 0;
-  const MAX_FABRIC_LOAD_ATTEMPTS = 3;
-
-  // Function to dynamically load Fabric.js with retry logic
-  function loadFabricScript(): Promise<void> {
-    return new Promise((resolve, reject) => {
-      // Skip if already loaded
-      if (typeof fabric !== 'undefined') {
-        console.log('Fabric.js already loaded');
-        fabricLoaded = true;
-        fabricErrorMessage = null; // Clear any previous errors
-        return resolve();
-      }
-
-      // Track attempts to prevent infinite retry loops
-      fabricLoadAttempts++;
-      if (fabricLoadAttempts > MAX_FABRIC_LOAD_ATTEMPTS) {
-        const error = 'Failed to load Fabric.js after multiple attempts';
-        fabricErrorMessage = error;
-        return reject(new Error(error));
-      }
-
-      console.log(`Loading fabric.js (attempt ${fabricLoadAttempts})`);
-
-      const script = document.createElement('script');
-      script.src = '/js/fabric.js';
-      script.async = true;
-
-      script.onload = () => {
-        console.log('Fabric.js loaded successfully');
-        fabricLoaded = true;
-        fabric = window['fabric']; // Assign to our variable
-        fabricErrorMessage = null; // Clear any previous errors
-        resolve();
-      };
-
-      script.onerror = () => {
-        console.error('Failed to load Fabric.js');
-        if (fabricLoadAttempts >= MAX_FABRIC_LOAD_ATTEMPTS) {
-          fabricErrorMessage = 'Failed to load the drawing engine. Please check your internet connection and refresh the page.';
-          reject(new Error('Max retry attempts reached'));
-        } else {
-          // Retry on failure with a delay
-          setTimeout(() => {
-            loadFabricScript().then(resolve).catch(reject);
-          }, 500);
-        }
-      };
-
-      document.head.appendChild(script);
-    });
-  }
-
-  // Initialize Fabric.js canvas
-  async function initializeFabricCanvas() {
-    if (!fabricCanvasHTML) {
-      console.error('Fabric canvas element not yet available');
-      return false;
-    }
-
-    try {
-      if (!fabricLoaded) {
-        await loadFabricScript();
-      }
-
-      if (typeof fabric !== 'undefined') {
-        // Clean up any existing instance to prevent duplicates
+      } else if ($selectedTool === 'eraser') {
+        // Eraser mode handled by Fabric.js
+        inputCanvas.style.pointerEvents = 'none';
         if (fabricInstance) {
-          fabricInstance.dispose();
+          fabricInstance.isDrawingMode = true;
+          if (fabricInstance.upperCanvasEl) {
+            fabricInstance.upperCanvasEl.style.pointerEvents = 'auto';
+            fabricInstance.upperCanvasEl.style.zIndex = '2';
+          }
+
+          if (!fabricInstance.freeDrawingBrush || !(fabricInstance.freeDrawingBrush instanceof fabric.EraserBrush)) {
+             if (fabric.EraserBrush) {
+                fabricInstance.freeDrawingBrush = new fabric.EraserBrush(fabricInstance);
+             } else {
+                console.error("fabric.EraserBrush is not available. Ensure custom build is correct.");
+             }
+          }
+          if (fabricInstance.freeDrawingBrush) {
+            fabricInstance.freeDrawingBrush.width = eraserSize;
+          }
         }
-
-        fabricInstance = new fabric.Canvas(fabricCanvasHTML, {
-          backgroundColor: canvasBackgroundColor, // Use the white background color
-          renderOnAddRemove: true,
-          width: fabricCanvasHTML.width,
-          height: fabricCanvasHTML.height,
-          preserveObjectStacking: true // Good for managing layers
-        });
-
-        // Ensure the background is rendered immediately
-        fabricInstance.requestRenderAll();
-
-        // Make sure Fabric's internal elements are correctly positioned
-        if (fabricInstance.wrapperEl) {
-          fabricInstance.wrapperEl.style.position = 'absolute';
-          fabricInstance.wrapperEl.style.top = '0';
-          fabricInstance.wrapperEl.style.left = '0';
-          fabricInstance.wrapperEl.style.width = fabricCanvasHTML.style.width;
-          fabricInstance.wrapperEl.style.height = fabricCanvasHTML.style.height;
+      } else if ($selectedTool === 'select') {
+        // Selection mode
+        inputCanvas.style.pointerEvents = 'none';
+        if (fabricInstance) {
+          fabricInstance.isDrawingMode = false;
+          if (fabricInstance.upperCanvasEl) {
+            fabricInstance.upperCanvasEl.style.pointerEvents = 'auto';
+            fabricInstance.upperCanvasEl.style.zIndex = '2';
+          }
         }
-
-        // Set default control appearance for all objects
-        fabric.Object.prototype.set({
-          cornerStyle: 'circle',
-          cornerColor: 'white',
-          cornerStrokeColor: '#6355FF',
-          cornerStrokeWidth: 3,
-          cornerSize: 12,
-          padding: 0, // Increased padding for better selection handling
-          transparentCorners: false,
-          borderColor: '#6355FF',
-          borderScaleFactor: 1.5,
-          borderOpacityWhenMoving: .5,
-          touchCornerSize: 20,
-        });
-
-        console.log('Fabric.js canvas initialized successfully');
-        // Listen to path creation and erasing events to save state automatically
-        fabricInstance.on('path:created', () => {
-          saveCanvasState();
-          recordHistory();
-        });
-        if (fabricInstance.on) {
-          fabricInstance.on('erasing:end', (opt) => {
-            // Auto-remove nearly empty paths to avoid leftovers
-            const targets = opt?.targets || [];
-            let removedSomething = false;
-            targets.forEach((obj: any) => {
-              if (obj && obj.type === 'path') {
-                const bb = obj.getBoundingRect();
-                const area = bb.width * bb.height;
-                if (area < 25 || (obj.path && obj.path.length < 10)) {
-                  fabricInstance.remove(obj);
-                  removedSomething = true;
-                }
-              }
-            });
-            saveCanvasState();
-            if (removedSomething) {
-              recordHistory();
-            }
-          });
-        }
-
-        // Replace the existing 'object:modified' handler for more specific logic
-        fabricInstance.off('object:modified'); // Remove previous one if any from prior steps
-        fabricInstance.on('object:modified', (e) => {
-          const target = e.target;
-          if (!target) return;
-
-          let propertyChanged = false;
-          if (target.type === 'rect') {
-            if (target.scaleX !== 1 || target.scaleY !== 1) {
-              const newWidth = target.width * target.scaleX;
-              const newHeight = target.height * target.scaleY;
-              target.set({
-                width: newWidth,
-                height: newHeight,
-                scaleX: 1,
-                scaleY: 1
-              });
-              target.setCoords();
-              propertyChanged = true;
-            }
-          }
-          // Add other type-specific modifications here if needed in the future
-
-          // Common post-modification logic
-          if (propertyChanged) {
-            fabricInstance.requestRenderAll(); // Render immediately if we changed properties
-          } else {
-            fabricInstance.renderAll(); // Standard render if no specific property change by this handler
-          }
-
-          setTimeout(() => {
-            saveCanvasState();
-            updateImageData(); // Ensure preview is updated
-            recordHistory();
-            // Update reactive proxies if the active object was the one modified
-            if (activeFabricObject && activeFabricObject === target) {
-                if (activeFabricObject.type === 'rect' || activeFabricObject.type === 'circle' || activeFabricObject.type === 'triangle') {
-                    selectedShapeFillProxy = activeFabricObject.fill || '#cccccc';
-                    selectedShapeStrokeProxy = activeFabricObject.stroke || '#000000';
-                    selectedShapeStrokeWidthProxy = activeFabricObject.strokeWidth === undefined ? 0 : activeFabricObject.strokeWidth;
-                }
-            }
-          }, 0);
-        });
-
-        // Listen for selection events to update activeFabricObject
-        fabricInstance.on('selection:created', (e) => {
-          if (e.selected && e.selected.length > 0) activeFabricObject = e.selected[0];
-          else activeFabricObject = null;
-        });
-        fabricInstance.on('selection:updated', (e) => {
-          if (e.selected && e.selected.length > 0) activeFabricObject = e.selected[0];
-          else activeFabricObject = null;
-        });
-        fabricInstance.on('selection:cleared', () => {
-          activeFabricObject = null;
-        });
-
-        // NEW: Also listen for additions & removals for history purposes
-        fabricInstance.on('object:added', () => {
-          // Object addition already triggers a render in Fabric
-          setTimeout(() => {
-            recordHistory();
-          }, 0);
-        });
-
-        fabricInstance.on('object:removed', () => {
-          // Ensure immediate render
-          fabricInstance.renderAll();
-
-          setTimeout(() => {
-            recordHistory();
-          }, 0);
-        });
-
-        // Handle live scaling to adjust width/height instead of scale
-        fabricInstance.on('object:scaling', (e) => {
-          const target = e.target;
-          if (!target) return;
-
-          // We only want this for basic shapes drawn via shape tool (rect, ellipse (radius), triangle)
-          if (target.type === 'rect') {
-            target.noScaleCache = false;
-            const newWidth = target.width * target.scaleX;
-            const newHeight = target.height * target.scaleY;
-            target.set({
-              width: newWidth,
-              height: newHeight,
-              scaleX: 1,
-              scaleY: 1
-            });
-            target.setCoords();
-            fabricInstance.requestRenderAll();
-          } else if (target.type === 'triangle') {
-            target.noScaleCache = false;
-            const newWidth = target.width * target.scaleX;
-            const newHeight = target.height * target.scaleY;
-            target.set({ width: newWidth, height: newHeight, scaleX: 1, scaleY: 1 });
-            target.setCoords();
-            fabricInstance.requestRenderAll();
-          } else if (target.type === 'ellipse') { // Changed from 'circle' to 'ellipse'
-            target.noScaleCache = false;
-            // For ellipse, adjust rx and ry based on scaleX and scaleY respectively
-            const newRx = target.rx * target.scaleX;
-            const newRy = target.ry * target.scaleY;
-            target.set({ rx: newRx, ry: newRy, scaleX: 1, scaleY: 1 });
-            target.setCoords();
-            fabricInstance.requestRenderAll();
-          }
-        });
-
-        // Add Alt/Option + Drag to Duplicate functionality
-        fabricInstance.on('mouse:down', function(opt) {
-          if (opt.e.altKey && opt.target && opt.target.selectable) {
-            // Store original values
-            const originalObj = opt.target;
-            const originalLeft = originalObj.left;
-            const originalTop = originalObj.top;
-
-            // Get current pointer position
-            const pointer = fabricInstance.getPointer(opt.e);
-
-            // Prevent default to avoid original object movement
-            opt.e.preventDefault();
-            opt.e.stopPropagation();
-
-            // Clear any existing selection
-            fabricInstance.discardActiveObject();
-
-            // Clone original object
-            originalObj.clone(function(cloned) {
-              // Position at exact same coordinates
-              cloned.set({
-                left: originalLeft,
-                top: originalTop,
-                evented: true
-              });
-
-              // Add to canvas
-              fabricInstance.add(cloned);
-
-              // Set as active object (important for controls)
-              fabricInstance.setActiveObject(cloned);
-              cloned.setCoords();
-
-              // Calculate offset from object center to cursor position
-              const offsetX = pointer.x - originalLeft;
-              const offsetY = pointer.y - originalTop;
-
-              // Create a transform object to simulate dragging state
-              fabricInstance._currentTransform = {
-                target: cloned,
-                action: 'drag',
-                corner: 0,
-                scaleX: cloned.scaleX,
-                scaleY: cloned.scaleY,
-                skewX: cloned.skewX,
-                skewY: cloned.skewY,
-                offsetX: offsetX,
-                offsetY: offsetY,
-                originX: cloned.originX,
-                originY: cloned.originY,
-                ex: pointer.x,
-                ey: pointer.y,
-                left: cloned.left,
-                top: cloned.top,
-                theta: cloned.angle * Math.PI / 180,
-                width: cloned.width * cloned.scaleX,
-                height: cloned.height * cloned.scaleY,
-                mouseXSign: 1,
-                mouseYSign: 1,
-                actionHandler: fabricInstance._getActionFromCorner.bind(fabricInstance, cloned, 0, opt.e) || fabricInstance._actionHandler
-              };
-
-              // Set the action handler for dragging
-              fabricInstance._currentTransform.actionHandler = function(eventData, transform, x, y) {
-                const target = transform.target;
-                const newLeft = x - transform.offsetX;
-                const newTop = y - transform.offsetY;
-
-                target.set({
-                  left: newLeft,
-                  top: newTop
-                });
-
-                return true;
-              };
-
-              // Ensure original stays in place
-              originalObj.set({
-                left: originalLeft,
-                top: originalTop
-              });
-              originalObj.setCoords();
-
-              // Set canvas state to indicate we're transforming
-              fabricInstance._isCurrentlyDrawing = true;
-
-              // Save canvas state after the operation completes
-              saveCanvasState();
-
-              // Force canvas to render
-              fabricInstance.requestRenderAll();
-            });
-
-            // Prevent event propagation
-            return false;
-          }
-        });
-
-        // Enhanced mouse:move handler to handle our custom transform
-        fabricInstance.on('mouse:move', function(opt) {
-          if (fabricInstance._currentTransform && fabricInstance._currentTransform.action === 'drag') {
-            const pointer = fabricInstance.getPointer(opt.e);
-            const transform = fabricInstance._currentTransform;
-
-            if (transform.actionHandler) {
-              transform.actionHandler(opt.e, transform, pointer.x, pointer.y);
-              transform.target.setCoords();
-              fabricInstance.requestRenderAll();
-            }
-          }
-        });
-
-        // Enhanced mouse:up handler to complete the transform
-        fabricInstance.on('mouse:up', function(opt) {
-          if (fabricInstance._currentTransform) {
-            const target = fabricInstance._currentTransform.target;
-
-            // Clear the transform state
-            fabricInstance._currentTransform = null;
-            fabricInstance._isCurrentlyDrawing = false;
-
-            // Ensure the object remains active and visible
-            if (target) {
-              fabricInstance.setActiveObject(target);
-              target.setCoords();
-              target.fire('modified');
-              fabricInstance.fire('object:modified', { target: target });
-              fabricInstance.requestRenderAll();
-            }
-          }
-        });
-
-        // Ensure selection is preserved after mouse:up
-        fabricInstance.on('mouse:up', function(opt) {
-          // If an object was being transformed, make sure it stays active
-          if (fabricInstance._currentTransform && fabricInstance._currentTransform.target) {
-            const target = fabricInstance._currentTransform.target;
-            fabricInstance.setActiveObject(target);
-            target.setCoords();
-            fabricInstance.requestRenderAll();
-          }
-        });
-
-        return true;
-      } else {
-        console.error('Fabric.js still not available after loading attempt');
-        return false;
       }
-    } catch (err) {
-      console.error('Error initializing Fabric canvas:', err);
-      return false;
     }
-  }
-
-  // Function to build the prompt for GPT-Image-1 (Ignoring AI, but keeping for structure)
-  function buildGptImagePrompt() {
-    let prompt = `Complete this drawing. DO NOT change the original image sketch at all; simply add onto the existing drawing EXACTLY as it is. CRITICAL STRUCTURE PRESERVATION: You MUST treat this sketch as an EXACT STRUCTURAL TEMPLATE. `;
-    const contentGuide = sketchAnalysis !== "Draw something to see AI's interpretation" ? sketchAnalysis : "A user's drawing.";
-    prompt += `CONTENT DESCRIPTION: ${contentGuide}\n\n`;
-    if (additionalContext) {
-      prompt += `USER'S CONTEXT: "${additionalContext}"\n\n`;
-    }
-    if (analysisElements.length > 0) {
-      const structuralGuide = `Based on analysis, the drawing contains ${analysisElements.length} main elements. Element positions and basic relationships are implied by the sketch.`;
-      prompt += `STRUCTURAL GUIDE: ${structuralGuide}\n\n`;
-    }
-    const compositionGuide = `Focus on the arrangement within the ${selectedAspectRatio} frame.`;
-    prompt += `COMPOSITION GUIDE: ${compositionGuide}\n\n`;
-    if (strokeRecognition && strokeRecognition !== "Draw something to see shapes recognized") {
-      prompt += `RECOGNIZED SHAPES: ${strokeRecognition}\n\n`;
-    }
-    prompt += `FINAL INSTRUCTIONS: Create a DIRECT, FRONT-FACING VIEW that maintains the EXACT same composition as the sketch. NEVER distort or reposition any element. Color and texture can be added, but the structural skeleton must remain identical to the original sketch.`;
-    return prompt.length > 4000 ? prompt.substring(0, 3997) + '...' : prompt;
   }
 
   $: {
-    const newPrompt = buildGptImagePrompt();
-    gptImagePrompt.set(newPrompt);
-  }
-
-  function isRealUserEdit(): boolean {
-    if (isResizeEvent) return false;
-    if ($isGenerating || isArtificialEvent) return false;
-    if (isAnalyzing || isRecognizingStrokes) return false;
-    lastUserEditTime = Date.now();
-    pendingAnalysis = true;
-    return true;
-  }
-
-  $: strokeCount = fabricInstance?.getObjects()?.length || 0; // Updated to use Fabric.js objects
-
-  let pathBuilderLookup = {};
-  let browser = typeof window !== 'undefined';
-  let lastResizeTime = 0;
-
-  // Separate initialization function
-  async function initializeComponent() {
-    if (inputCanvas) {
-      inputCtx = inputCanvas.getContext('2d');
-
-      // Set white background for perfect-freehand canvas immediately
-      if (inputCtx) {
-        inputCtx.fillStyle = '#ffffff';
-        inputCtx.fillRect(0, 0, inputCanvas.width, inputCanvas.height);
+    // This reactive block for drawingContent.strokes might be less relevant now
+    // as Fabric manages its own objects. Kept for potential AI logic (which is ignored here).
+    if (drawingContent.strokes && drawingContent.strokes.length > 0) {
+      if (isRealUserEdit()) {
+        console.log('User edit detected, scheduling analysis (AI part ignored)');
       }
     }
-
-    // First, load Fabric.js
-    try {
-      await loadFabricScript();
-      // Then initialize the canvas
-      const success = await initializeFabricCanvas();
-      if (!success) {
-        console.error('Failed to initialize Fabric canvas after script loaded');
-        fabricErrorMessage = 'Could not initialize drawing tools. Please try refreshing the page.';
-      } else {
-        // Successfully initialized
-        fabricErrorMessage = null;
-        // Set up initial canvas alignment and styles
-        setupCanvasAlignment();
-
-        // Ensure white background is applied and visible
-        if (fabricInstance) {
-          fabricInstance.setBackgroundColor('#ffffff', fabricInstance.renderAll.bind(fabricInstance));
-          // Force an immediate render
-          fabricInstance.requestRenderAll();
-        }
-      }
-    } catch (err) {
-      console.error('Error loading Fabric.js:', err);
-      fabricErrorMessage = 'Error loading drawing tools. Please check your connection and try refreshing.';
-    }
-
-    resizeCanvas(); // Initial resize and setup
-
-    if (inputCtx) {
-      // Set white background again after resize
-      inputCtx.fillStyle = '#ffffff';
-      inputCtx.fillRect(0, 0, inputCanvas.width, inputCanvas.height);
-
-      renderStrokes(); // Initial render (likely empty perfect-freehand canvas)
-      updateImageData(); // Use a centralized function to update imageData
-    }
-
-    console.log('Component mounted');
-    mobileCheck();
-
-    // Push initial baseline snapshot after component ready & state loaded
-    if (fabricInstance) {
-      try {
-        undoStack.length = 0;
-        redoStack.length = 0;
-        const baseline = JSON.stringify(fabricInstance.toJSON());
-        undoStack.push(baseline);
-      } catch (err) {
-        console.error('Unable to set initial history baseline', err);
-      }
-    }
-  }
-
-  // Import Prettier for code formatting
-  import prettier from 'prettier/standalone';
-  import * as parserHtml from 'prettier/parser-html';
-  const htmlParser = parserHtml?.default || parserHtml;
-
-  // Shape type variable for binding to CanvasToolbar
-  let shapeType: string = 'rectangle';
-
-  // Session storage key for canvas data
-  const CANVAS_STORAGE_KEY = 'canvasDrawingData';
-
-  // Forward declaration for fabric
-  let fabric: any;
-
-  // Interface extension for Stroke type with hasPressure property
-  interface EnhancedStroke extends Stroke {
-    hasPressure?: boolean;
-    hasHardwarePressure?: boolean; // Flag for true hardware pressure support
-    isEraserStroke?: boolean; // Flag for eraser strokes
-  }
-
-  // Drawing content object with enhanced strokes
-  interface EnhancedDrawingContent {
-    strokes: EnhancedStroke[];
-    bounds?: {
-      width: number;
-      height: number;
-    };
-  }
-
-  // Analysis element type
-  interface AnalysisElement {
-    id: string;
-    name: string;
-    category?: string;
-    x: number;
-    y: number;
-    width?: number;
-    height?: number;
-    color: string;
-    isChild?: boolean;
-    parentId?: string;
-    children?: string[];
-    pressure?: number; // Add pressure property for visual effects
-    boundingBox?: {
-      minX: number;
-      minY: number;
-      maxX: number;
-      maxY: number;
-      width: number;
-      height: number;
-    };
-  }
-
-  // State variables
-  let inputCanvas: HTMLCanvasElement;
-  let fabricCanvasHTML: HTMLCanvasElement; // Renamed for clarity
-  let fabricInstance: any = null;
-  let inputCtx: CanvasRenderingContext2D | null = null;
-  let isDrawing = false;
-  let currentStroke: EnhancedStroke | null = null;
-  // Use the store values for reference but maintain local variables for reactivity
-  let strokeColor: string;
-  let strokeSize: number;
-  let strokeOpacity: number;
-  let canvasBackgroundColor: string = '#ffffff'; // Default background color
-
-  let lastUserEditTime = 0;
-  let pendingAnalysis = false;
-
-  // Subscribe to store changes
-  strokeOptions.subscribe(options => {
-    strokeColor = options.color;
-    strokeSize = options.size;
-    strokeOpacity = options.opacity;
-
-    // If pen tool is active and options change, update currentStroke if any
-    if ($selectedTool === 'pen' && currentStroke) {
-      currentStroke.color = strokeColor;
-      currentStroke.size = strokeSize;
-      currentStroke.opacity = strokeOpacity;
-      renderStrokes(); // Re-render temporary stroke
-    }
-    // If eraser tool is active, update EraserBrush width
-    if ($selectedTool === 'eraser' && fabricInstance && fabricInstance.isDrawingMode) {
-      fabricInstance.freeDrawingBrush.width = eraserSize; // Assuming eraserSize will be derived from strokeSize or a dedicated variable
-    }
-  });
-
-  let imageData: string | null = null;
-  let pointTimes: number[] = []; // Track time for velocity-based pressure
-  let errorMessage: string | null = null;
-  let fabricErrorMessage: string | null = null; // Add specific fabric error message
-  let sketchAnalysis = "Draw something to see AI's interpretation";
-  let isAnalyzing = false;
-  let strokeRecognition = "Draw something to see shapes recognized";
-  let isRecognizingStrokes = false;
-  let additionalContext = "";
-  let analysisElements: any[] = [];
-  let canvasScale = 1; // Scale factor for canvas display relative to internal resolution
-
-  // Define imageModels for Omnibar
-  const imageGenerationModels = [
-    { value: 'gpt-image-1', label: 'GPT-Image-1' },
-    { value: 'gpt-4o', label: 'GPT-4o' },
-    { value: 'flux-canny-pro', label: 'Flux Canny Pro' },
-    { value: 'controlnet-scribble', label: 'ControlNet Scribble' },
-    { value: 'stable-diffusion', label: 'Stable Diffusion' },
-    { value: 'latent-consistency', label: 'Latent Consistency' }
-  ];
-
-  // Reactive variable for Omnibar's parentDisabled prop
-  $: parentOmnibarDisabled = $isGenerating || ((!fabricInstance || fabricInstance.getObjects().length === 0) && !additionalContext.trim());
-
-  // Drawing content with enhanced strokes - This might become less central with Fabric.js
-  let drawingContent: EnhancedDrawingContent = {
-    strokes: [], // This will no longer store rendered strokes, Fabric.js does.
-    bounds: { width: 800, height: 600 }
-  };
-
-  // Canvas dimensions
-  let canvasWidth = 800;
-  let canvasHeight = 600;
-
-
-  // Variables for tracking user edits and analysis state
-  let isResizeEvent = false;
-  let renderDebounceTimeout: ReturnType<typeof setTimeout> | null = null; // Declare the missing variable
-  let isArtificialEvent = false; // Flag for programmatically triggered events
-
-  // For Fabric.js canvas
-  let fabricLoaded = false;
-  let fabricLoadAttempts = 0;
-  const MAX_FABRIC_LOAD_ATTEMPTS = 3;
-
-  // Function to dynamically load Fabric.js with retry logic
-  function loadFabricScript(): Promise<void> {
-    return new Promise((resolve, reject) => {
-      // Skip if already loaded
-      if (typeof fabric !== 'undefined') {
-        console.log('Fabric.js already loaded');
-        fabricLoaded = true;
-        fabricErrorMessage = null; // Clear any previous errors
-        return resolve();
-      }
-
-      // Track attempts to prevent infinite retry loops
-      fabricLoadAttempts++;
-      if (fabricLoadAttempts > MAX_FABRIC_LOAD_ATTEMPTS) {
-        const error = 'Failed to load Fabric.js after multiple attempts';
-        fabricErrorMessage = error;
-        return reject(new Error(error));
-      }
-
-      console.log(`Loading fabric.js (attempt ${fabricLoadAttempts})`);
-
-      const script = document.createElement('script');
-      script.src = '/js/fabric.js';
-      script.async = true;
-
-      script.onload = () => {
-        console.log('Fabric.js loaded successfully');
-        fabricLoaded = true;
-        fabric = window['fabric']; // Assign to our variable
-        fabricErrorMessage = null; // Clear any previous errors
-        resolve();
-      };
-
-      script.onerror = () => {
-        console.error('Failed to load Fabric.js');
-        if (fabricLoadAttempts >= MAX_FABRIC_LOAD_ATTEMPTS) {
-          fabricErrorMessage = 'Failed to load the drawing engine. Please check your internet connection and refresh the page.';
-          reject(new Error('Max retry attempts reached'));
-        } else {
-          // Retry on failure with a delay
-          setTimeout(() => {
-            loadFabricScript().then(resolve).catch(reject);
-          }, 500);
-        }
-      };
-
-      document.head.appendChild(script);
-    });
-  }
-
-  // Initialize Fabric.js canvas
-  async function initializeFabricCanvas() {
-    if (!fabricCanvasHTML) {
-      console.error('Fabric canvas element not yet available');
-      return false;
-    }
-
-    try {
-      if (!fabricLoaded) {
-        await loadFabricScript();
-      }
-
-      if (typeof fabric !== 'undefined') {
-        // Clean up any existing instance to prevent duplicates
-        if (fabricInstance) {
-          fabricInstance.dispose();
-        }
-
-        fabricInstance = new fabric.Canvas(fabricCanvasHTML, {
-          backgroundColor: canvasBackgroundColor, // Use the white background color
-          renderOnAddRemove: true,
-          width: fabricCanvasHTML.width,
-          height: fabricCanvasHTML.height,
-          preserveObjectStacking: true // Good for managing layers
-        });
-
-        // Ensure the background is rendered immediately
-        fabricInstance.requestRenderAll();
-
-        // Make sure Fabric's internal elements are correctly positioned
-        if (fabricInstance.wrapperEl) {
-          fabricInstance.wrapperEl.style.position = 'absolute';
-          fabricInstance.wrapperEl.style.top = '0';
-          fabricInstance.wrapperEl.style.left = '0';
-          fabricInstance.wrapperEl.style.width = fabricCanvasHTML.style.width;
-          fabricInstance.wrapperEl.style.height = fabricCanvasHTML.style.height;
-        }
-
-        // Set default control appearance for all objects
-        fabric.Object.prototype.set({
-          cornerStyle: 'circle',
-          cornerColor: 'white',
-          cornerStrokeColor: '#6355FF',
-          cornerStrokeWidth: 3,
-          cornerSize: 12,
-          padding: 0, // Increased padding for better selection handling
-          transparentCorners: false,
-          borderColor: '#6355FF',
-          borderScaleFactor: 1.5,
-          borderOpacityWhenMoving: .5,
-          touchCornerSize: 20,
-        });
-
-        console.log('Fabric.js canvas initialized successfully');
-        // Listen to path creation and erasing events to save state automatically
-        fabricInstance.on('path:created', () => {
-          saveCanvasState();
-          recordHistory();
-        });
-        if (fabricInstance.on) {
-          fabricInstance.on('erasing:end', (opt) => {
-            // Auto-remove nearly empty paths to avoid leftovers
-            const targets = opt?.targets || [];
-            let removedSomething = false;
-            targets.forEach((obj: any) => {
-              if (obj && obj.type === 'path') {
-                const bb = obj.getBoundingRect();
-                const area = bb.width * bb.height;
-                if (area < 25 || (obj.path && obj.path.length < 10)) {
-                  fabricInstance.remove(obj);
-                  removedSomething = true;
-                }
-              }
-            });
-            saveCanvasState();
-            if (removedSomething) {
-              recordHistory();
-            }
-          });
-        }
-
-        // Replace the existing 'object:modified' handler for more specific logic
-        fabricInstance.off('object:modified'); // Remove previous one if any from prior steps
-        fabricInstance.on('object:modified', (e) => {
-          const target = e.target;
-          if (!target) return;
-
-          let propertyChanged = false;
-          if (target.type === 'rect') {
-            if (target.scaleX !== 1 || target.scaleY !== 1) {
-              const newWidth = target.width * target.scaleX;
-              const newHeight = target.height * target.scaleY;
-              target.set({
-                width: newWidth,
-                height: newHeight,
-                scaleX: 1,
-                scaleY: 1
-              });
-              target.setCoords();
-              propertyChanged = true;
-            }
-          }
-          // Add other type-specific modifications here if needed in the future
-
-          // Common post-modification logic
-          if (propertyChanged) {
-            fabricInstance.requestRenderAll(); // Render immediately if we changed properties
-          } else {
-            fabricInstance.renderAll(); // Standard render if no specific property change by this handler
-          }
-
-          setTimeout(() => {
-            saveCanvasState();
-            updateImageData(); // Ensure preview is updated
-            recordHistory();
-            // Update reactive proxies if the active object was the one modified
-            if (activeFabricObject && activeFabricObject === target) {
-                if (activeFabricObject.type === 'rect' || activeFabricObject.type === 'circle' || activeFabricObject.type === 'triangle') {
-                    selectedShapeFillProxy = activeFabricObject.fill || '#cccccc';
-                    selectedShapeStrokeProxy = activeFabricObject.stroke || '#000000';
-                    selectedShapeStrokeWidthProxy = activeFabricObject.strokeWidth === undefined ? 0 : activeFabricObject.strokeWidth;
-                }
-            }
-          }, 0);
-        });
-
-        // Listen for selection events to update activeFabricObject
-        fabricInstance.on('selection:created', (e) => {
-          if (e.selected && e.selected.length > 0) activeFabricObject = e.selected[0];
-          else activeFabricObject = null;
-        });
-        fabricInstance.on('selection:updated', (e) => {
-          if (e.selected && e.selected.length > 0) activeFabricObject = e.selected[0];
-          else activeFabricObject = null;
-        });
-        fabricInstance.on('selection:cleared', () => {
-          activeFabricObject = null;
-        });
-
-        // NEW: Also listen for additions & removals for history purposes
-        fabricInstance.on('object:added', () => {
-          // Object addition already triggers a render in Fabric
-          setTimeout(() => {
-            recordHistory();
-          }, 0);
-        });
-
-        fabricInstance.on('object:removed', () => {
-          // Ensure immediate render
-          fabricInstance.renderAll();
-
-          setTimeout(() => {
-            recordHistory();
-          }, 0);
-        });
-
-        // Handle live scaling to adjust width/height instead of scale
-        fabricInstance.on('object:scaling', (e) => {
-          const target = e.target;
-          if (!target) return;
-
-          // We only want this for basic shapes drawn via shape tool (rect, ellipse (radius), triangle)
-          if (target.type === 'rect') {
-            target.noScaleCache = false;
-            const newWidth = target.width * target.scaleX;
-            const newHeight = target.height * target.scaleY;
-            target.set({
-              width: newWidth,
-              height: newHeight,
-              scaleX: 1,
-              scaleY: 1
-            });
-            target.setCoords();
-            fabricInstance.requestRenderAll();
-          } else if (target.type === 'triangle') {
-            target.noScaleCache = false;
-            const newWidth = target.width * target.scaleX;
-            const newHeight = target.height * target.scaleY;
-            target.set({ width: newWidth, height: newHeight, scaleX: 1, scaleY: 1 });
-            target.setCoords();
-            fabricInstance.requestRenderAll();
-          } else if (target.type === 'ellipse') { // Changed from 'circle' to 'ellipse'
-            target.noScaleCache = false;
-            // For ellipse, adjust rx and ry based on scaleX and scaleY respectively
-            const newRx = target.rx * target.scaleX;
-            const newRy = target.ry * target.scaleY;
-            target.set({ rx: newRx, ry: newRy, scaleX: 1, scaleY: 1 });
-            target.setCoords();
-            fabricInstance.requestRenderAll();
-          }
-        });
-
-        // Add Alt/Option + Drag to Duplicate functionality
-        fabricInstance.on('mouse:down', function(opt) {
-          if (opt.e.altKey && opt.target && opt.target.selectable) {
-            // Store original values
-            const originalObj = opt.target;
-            const originalLeft = originalObj.left;
-            const originalTop = originalObj.top;
-
-            // Get current pointer position
-            const pointer = fabricInstance.getPointer(opt.e);
-
-            // Prevent default to avoid original object movement
-            opt.e.preventDefault();
-            opt.e.stopPropagation();
-
-            // Clear any existing selection
-            fabricInstance.discardActiveObject();
-
-            // Clone original object
-            originalObj.clone(function(cloned) {
-              // Position at exact same coordinates
-              cloned.set({
-                left: originalLeft,
-                top: originalTop,
-                evented: true
-              });
-
-              // Add to canvas
-              fabricInstance.add(cloned);
-
-              // Set as active object (important for controls)
-              fabricInstance.setActiveObject(cloned);
-              cloned.setCoords();
-
-              // Calculate offset from object center to cursor position
-              const offsetX = pointer.x - originalLeft;
-              const offsetY = pointer.y - originalTop;
-
-              // Create a transform object to simulate dragging state
-              fabricInstance._currentTransform = {
-                target: cloned,
-                action: 'drag',
-                corner: 0,
-                scaleX: cloned.scaleX,
-                scaleY: cloned.scaleY,
-                skewX: cloned.skewX,
-                skewY: cloned.skewY,
-                offsetX: offsetX,
-                offsetY: offsetY,
-                originX: cloned.originX,
-                originY: cloned.originY,
-                ex: pointer.x,
-                ey: pointer.y,
-                left: cloned.left,
-                top: cloned.top,
-                theta: cloned.angle * Math.PI / 180,
-                width: cloned.width * cloned.scaleX,
-                height: cloned.height * cloned.scaleY,
-                mouseXSign: 1,
-                mouseYSign: 1,
-                actionHandler: fabricInstance._getActionFromCorner.bind(fabricInstance, cloned, 0, opt.e) || fabricInstance._actionHandler
-              };
-
-              // Set the action handler for dragging
-              fabricInstance._currentTransform.actionHandler = function(eventData, transform, x, y) {
-                const target = transform.target;
-                const newLeft = x - transform.offsetX;
-                const newTop = y - transform.offsetY;
-
-                target.set({
-                  left: newLeft,
-                  top: newTop
-                });
-
-                return true;
-              };
-
-              // Ensure original stays in place
-              originalObj.set({
-                left: originalLeft,
-                top: originalTop
-              });
-              originalObj.setCoords();
-
-              // Set canvas state to indicate we're transforming
-              fabricInstance._isCurrentlyDrawing = true;
-
-              // Save canvas state after the operation completes
-              saveCanvasState();
-
-              // Force canvas to render
-              fabricInstance.requestRenderAll();
-            });
-
-            // Prevent event propagation
-            return false;
-          }
-        });
-
-        // Enhanced mouse:move handler to handle our custom transform
-        fabricInstance.on('mouse:move', function(opt) {
-          if (fabricInstance._currentTransform && fabricInstance._currentTransform.action === 'drag') {
-            const pointer = fabricInstance.getPointer(opt.e);
-            const transform = fabricInstance._currentTransform;
-
-            if (transform.actionHandler) {
-              transform.actionHandler(opt.e, transform, pointer.x, pointer.y);
-              transform.target.setCoords();
-              fabricInstance.requestRenderAll();
-            }
-          }
-        });
-
-        // Enhanced mouse:up handler to complete the transform
-        fabricInstance.on('mouse:up', function(opt) {
-          if (fabricInstance._currentTransform) {
-            const target = fabricInstance._currentTransform.target;
-
-            // Clear the transform state
-            fabricInstance._currentTransform = null;
-            fabricInstance._isCurrentlyDrawing = false;
-
-            // Ensure the object remains active and visible
-            if (target) {
-              fabricInstance.setActiveObject(target);
-              target.setCoords();
-              target.fire('modified');
-              fabricInstance.fire('object:modified', { target: target });
-              fabricInstance.requestRenderAll();
-            }
-          }
-        });
-
-        // Ensure selection is preserved after mouse:up
-        fabricInstance.on('mouse:up', function(opt) {
-          // If an object was being transformed, make sure it stays active
-          if (fabricInstance._currentTransform && fabricInstance._currentTransform.target) {
-            const target = fabricInstance._currentTransform.target;
-            fabricInstance.setActiveObject(target);
-            target.setCoords();
-            fabricInstance.requestRenderAll();
-          }
-        });
-
-        return true;
-      } else {
-        console.error('Fabric.js still not available after loading attempt');
-        return false;
-      }
-    } catch (err) {
-      console.error('Error initializing Fabric canvas:', err);
-      return false;
-    }
-  }
-
-  // Function to build the prompt for GPT-Image-1 (Ignoring AI, but keeping for structure)
-  function buildGptImagePrompt() {
-    let prompt = `Complete this drawing. DO NOT change the original image sketch at all; simply add onto the existing drawing EXACTLY as it is. CRITICAL STRUCTURE PRESERVATION: You MUST treat this sketch as an EXACT STRUCTURAL TEMPLATE. `;
-    const contentGuide = sketchAnalysis !== "Draw something to see AI's interpretation" ? sketchAnalysis : "A user's drawing.";
-    prompt += `CONTENT DESCRIPTION: ${contentGuide}\n\n`;
-    if (additionalContext) {
-      prompt += `USER'S CONTEXT: "${additionalContext}"\n\n`;
-    }
-    if (analysisElements.length > 0) {
-      const structuralGuide = `Based on analysis, the drawing contains ${analysisElements.length} main elements. Element positions and basic relationships are implied by the sketch.`;
-      prompt += `STRUCTURAL GUIDE: ${structuralGuide}\n\n`;
-    }
-    const compositionGuide = `Focus on the arrangement within the ${selectedAspectRatio} frame.`;
-    prompt += `COMPOSITION GUIDE: ${compositionGuide}\n\n`;
-    if (strokeRecognition && strokeRecognition !== "Draw something to see shapes recognized") {
-      prompt += `RECOGNIZED SHAPES: ${strokeRecognition}\n\n`;
-    }
-    prompt += `FINAL INSTRUCTIONS: Create a DIRECT, FRONT-FACING VIEW that maintains the EXACT same composition as the sketch. NEVER distort or reposition any element. Color and texture can be added, but the structural skeleton must remain identical to the original sketch.`;
-    return prompt.length > 4000 ? prompt.substring(0, 3997) + '...' : prompt;
   }
 
   $: {
-    const newPrompt = buildGptImagePrompt();
-    gptImagePrompt.set(newPrompt);
+    if (browser && selectedAspectRatio) {
+      resizeCanvas();
+    }
   }
 
-  function isRealUserEdit(): boolean {
-    if (isResizeEvent) return false;
-    if ($isGenerating || isArtificialEvent) return false;
-    if (isAnalyzing || isRecognizingStrokes) return false;
+  // --- Unified Event Handlers ---
+  function onPointerDown(e: PointerEvent) {
+    if (e.button !== 0) return;
+    if ($selectedTool === 'pen') {
+        startPenStroke(e);
+    } else if ($selectedTool === 'text') {
+        addTextObject(e);
+    } else if ($selectedTool === 'shape') {
+        addShapeObject(e);
+    } else if ($selectedTool === 'image') {
+        activateImageUpload();
+    }
+  }
+
+  function onPointerMove(e: PointerEvent) {
+    if ($selectedTool === 'pen') {
+        continuePenStroke(e);
+    }
+  }
+
+  function onPointerUp(e: PointerEvent) {
+    if ($selectedTool === 'pen') {
+        endPenStroke(e);
+    }
+  }
+
+  // --- Tool Specific Functions ---
+
+  // PEN TOOL
+  function startPenStroke(e: PointerEvent) {
+    isDrawing = true;
+    console.log(`Pen Draw Started. Pointer type: ${e.pointerType}, Pressure: ${e.pressure}`);
+
+    const point = getPointerPosition(e);
+    const timestamp = Date.now();
+    pointTimes = [timestamp];
+    const hasHardwarePressure = e.pointerType === 'pen' && e.pressure > 0 && e.pressure !== 0.5;
+
+    let currentOptionsValues;
+    strokeOptions.subscribe(options => { currentOptionsValues = options; })();
+
+    currentStroke = {
+      tool: 'pen',
+      points: [point],
+      color: currentOptionsValues.color,
+      size: currentOptionsValues.size,
+      opacity: currentOptionsValues.opacity,
+      hasHardwarePressure: hasHardwarePressure
+    };
+    inputCanvas.setPointerCapture(e.pointerId);
+  }
+
+  function continuePenStroke(e: PointerEvent) {
+    if (!isDrawing || !currentStroke || !inputCtx) return;
+    const point = getPointerPosition(e);
+    const timestamp = Date.now();
+    pointTimes.push(timestamp);
+
+    if (!currentStroke.hasHardwarePressure || (e.pointerType === 'pen' && e.pressure === 0.5)) {
+       if (currentStroke.points.length > 1) {
+        const calculatedPressure = calculatePressureFromVelocity(
+          currentStroke.points, currentStroke.points.length - 1, 0.2, true, pointTimes
+        );
+        point.pressure = calculatedPressure;
+      } else {
+        point.pressure = 0.5;
+      }
+    }
+    currentStroke.points.push(point);
+    renderStrokes();
+  }
+
+  function endPenStroke(e: PointerEvent) {
+    if (!isDrawing || !currentStroke) return;
+    console.log('Pen Draw Ended');
+
+    // Check if Fabric.js is available
+    if (!fabricInstance) {
+      console.error('Cannot complete stroke - Fabric.js instance not available');
+      if (!fabricErrorMessage) {
+        fabricErrorMessage = 'Drawing engine not initialized. Please refresh the page.';
+      }
+      // Still end the stroke cleanly even if we can't add it to Fabric
+    currentStroke = null;
+    isDrawing = false;
+      if (e.pointerId) {
+        try {
+    inputCanvas.releasePointerCapture(e.pointerId);
+        } catch (err) {
+          console.error('Error releasing pointer capture:', err);
+        }
+      }
+      renderStrokes(); // Clear the temporary stroke from inputCanvas
+      return;
+    }
+
+    if (currentStroke.points.length > 1) {
+      let currentOptionsValues;
+      strokeOptions.subscribe(options => { currentOptionsValues = options; })();
+
+      const freehandStrokeOptions = {
+        size: currentStroke.size,
+        thinning: currentOptionsValues.thinning,
+        smoothing: currentOptionsValues.smoothing,
+        streamline: currentOptionsValues.streamline,
+        easing: currentOptionsValues.easing,
+        simulatePressure: !currentStroke.hasHardwarePressure,
+        last: true,
+        start: currentOptionsValues.start,
+        end: currentOptionsValues.end,
+      };
+
+      const enhancedPoints = currentStroke.points.map(p => [p.x, p.y, p.pressure || 0.5]);
+      const strokePath = getStroke(enhancedPoints, freehandStrokeOptions);
+      const svgPathData = getSvgPathFromStroke(strokePath);
+
+      if (svgPathData) {
+        try {
+          const fabricPath = new fabric.Path(svgPathData, {
+            fill: currentStroke.color,
+            strokeWidth: 0,
+            opacity: currentStroke.opacity,
+            selectable: true,
+            evented: true,
+          });
+          fabricInstance.add(fabricPath);
+        } catch (err) {
+          console.error('Error creating fabric path:', err);
+          if (!fabricErrorMessage) {
+            fabricErrorMessage = 'Error adding stroke to canvas. Please refresh the page.';
+          }
+        }
+      }
+    }
+
+    currentStroke = null;
+    isDrawing = false;
+    if (e.pointerId) {
+      try {
+    inputCanvas.releasePointerCapture(e.pointerId);
+      } catch (err) {
+        console.error('Error releasing pointer capture:', err);
+      }
+    }
+    renderStrokes(); // Clear the temporary stroke from inputCanvas
+
     lastUserEditTime = Date.now();
     pendingAnalysis = true;
-    return true;
+    updateImageData(); // Use the centralized function
+    saveCanvasState(); // Persist state
   }
 
-  $: strokeCount = fabricInstance?.getObjects()?.length || 0; // Updated to use Fabric.js objects
+  // ERASER TOOL
+  let eraserSize = 20;
+  // Note: $selectedTool reactive block handles setting fabricInstance.isDrawingMode and EraserBrush.
+  // start/continue/endEraserStroke are not strictly needed for Fabric's internal drawing,
+  // but can be used for logging or triggering other actions if necessary.
 
-  let pathBuilderLookup = {};
-  let browser = typeof window !== 'undefined';
-  let lastResizeTime = 0;
+  function startEraserStroke(e: PointerEvent) {
+    console.log('Eraser Tool Active - Fabric.js handles drawing');
+  }
 
-  // Separate initialization function
-  async function initializeComponent() {
-    if (inputCanvas) {
-      inputCtx = inputCanvas.getContext('2d');
+  function continueEraserStroke(e: PointerEvent) {
+    // Fabric.js handles this
+  }
 
-      // Set white background for perfect-freehand canvas immediately
-      if (inputCtx) {
-        inputCtx.fillStyle = '#ffffff';
-        inputCtx.fillRect(0, 0, inputCanvas.width, inputCanvas.height);
+  function endEraserStroke(e: PointerEvent) {
+    console.log('Eraser stroke ended on Fabric.js canvas');
+    lastUserEditTime = Date.now();
+    pendingAnalysis = true;
+    updateImageData(); // Use centralized function
+    saveCanvasState();
+  }
+
+  // SELECT TOOL
+  // Note: $selectedTool reactive block handles setting fabricInstance.isDrawingMode = false.
+  // Fabric.js handles selection internally.
+  function startSelection(e: PointerEvent) {
+    console.log('Select Tool Active - Fabric.js handles selection');
+  }
+
+  function continueSelection(e: PointerEvent) {
+    // Fabric.js handles this
+  }
+
+  function endSelection(e: PointerEvent) {
+    console.log('Selection operation ended on Fabric.js canvas');
+    updateImageData(); // Use centralized function
+    saveCanvasState();
+  }
+
+  function getPointerPosition(e: PointerEvent): StrokePoint {
+    if (!inputCanvas) return { x: 0, y: 0, pressure: 0.5 };
+    const rect = inputCanvas.getBoundingClientRect();
+    const scaleX = inputCanvas.width / rect.width; // Use internal resolution for coords
+    const scaleY = inputCanvas.height / rect.height;
+    return {
+      x: (e.clientX - rect.left) * scaleX,
+      y: (e.clientY - rect.top) * scaleY,
+      pressure: e.pressure
+    };
+  }
+
+  function renderStrokes() {
+    if (!inputCtx || !inputCanvas) return;
+    inputCtx.clearRect(0, 0, inputCanvas.width, inputCanvas.height);
+
+    if (currentStroke && currentStroke.points.length > 1 && $selectedTool === 'pen') { // Only render for pen tool
+      let currentOptionsValues;
+      strokeOptions.subscribe(options => { currentOptionsValues = options; })();
+
+      const options = {
+        size: currentStroke.size,
+        thinning: currentOptionsValues.thinning,
+        smoothing: currentOptionsValues.smoothing,
+        streamline: currentOptionsValues.streamline,
+        easing: currentOptionsValues.easing,
+        simulatePressure: !(currentStroke as EnhancedStroke).hasHardwarePressure,
+        last: false, // Temporary stroke is never "last" in the context of the final path
+        start: currentOptionsValues.start,
+        end: currentOptionsValues.end,
+      };
+
+      const enhancedPoints = currentStroke.points.map(p => [p.x, p.y, p.pressure || 0.5]);
+      const freehandStroke = getStroke(enhancedPoints, options);
+      const pathData = getSvgPathFromStroke(freehandStroke);
+
+      if (pathData) {
+      const path = new Path2D(pathData);
+        inputCtx.fillStyle = currentStroke.color;
+        inputCtx.globalAlpha = currentStroke.opacity;
+        inputCtx.fill(path);
+        inputCtx.globalAlpha = 1;
       }
     }
+  }
 
-    // First, load Fabric.js
-    try {
-      await loadFabricScript();
-      // Then initialize the canvas
-      const success = await initializeFabricCanvas();
-      if (!success) {
-        console.error('Failed to initialize Fabric canvas after script loaded');
-        fabricErrorMessage = 'Could not initialize drawing tools. Please try refreshing the page.';
-      } else {
-        // Successfully initialized
-        fabricErrorMessage = null;
-        // Set up initial canvas alignment and styles
-        setupCanvasAlignment();
-
-        // Ensure white background is applied and visible
-        if (fabricInstance) {
-          fabricInstance.setBackgroundColor('#ffffff', fabricInstance.renderAll.bind(fabricInstance));
-          // Force an immediate render
-          fabricInstance.requestRenderAll();
-        }
-      }
-    } catch (err) {
-      console.error('Error loading Fabric.js:', err);
-      fabricErrorMessage = 'Error loading drawing tools. Please check your connection and try refreshing.';
-    }
-
-    resizeCanvas(); // Initial resize and setup
-
-    if (inputCtx) {
-      // Set white background again after resize
-      inputCtx.fillStyle = '#ffffff';
-      inputCtx.fillRect(0, 0, inputCanvas.width, inputCanvas.height);
-
-      renderStrokes(); // Initial render (likely empty perfect-freehand canvas)
-      updateImageData(); // Use a centralized function to update imageData
-    }
-
-    console.log('Component mounted');
-    mobileCheck();
-
-    // Push initial baseline snapshot after component ready & state loaded
+  function clearCanvas() {
     if (fabricInstance) {
+      // Set background to white (not light gray)
+      canvasBackgroundColor = '#ffffff';
+
+      // Clear all objects from the canvas
+      fabricInstance.clear();
+
+      // Set the background color to white and immediately render
+      fabricInstance.setBackgroundColor('#ffffff', fabricInstance.renderAll.bind(fabricInstance));
+
+      // Force an immediate render to ensure the change is visible
+      fabricInstance.requestRenderAll();
+
+      updateImageData(); // Use centralized function
+
+      // Also clear the sessionStorage data
+      if (browser) {
+        sessionStorage.removeItem(CANVAS_STORAGE_KEY);
+        console.log('Canvas storage cleared');
+      }
+    } else if (inputCtx && inputCanvas) {
+      // For the perfect-freehand canvas
+      inputCtx.clearRect(0, 0, inputCanvas.width, inputCanvas.height);
+      inputCtx.fillStyle = '#ffffff'; // Pure white background
+      inputCtx.fillRect(0, 0, inputCanvas.width, inputCanvas.height);
+      updateImageData(); // Use centralized function
+
+      // Also clear the sessionStorage data
+      if (browser) {
+        sessionStorage.removeItem(CANVAS_STORAGE_KEY);
+        console.log('Canvas storage cleared');
+      }
+    }
+
+    // Reset any generated images
+    generatedImageUrl.set(null);
+    generatedByModel.set(null);
+
+    // Record this clear operation in the history
+    if (fabricInstance) {
+      recordHistory();
+    }
+  }
+
+  // First, create a dedicated function for building SVG-specific prompts
+  function buildSvgPrompt() {
+    let prompt = `Create an SVG vector image based on this sketch. IMPORTANT: Your response MUST be valid SVG code only, starting with <svg> tag and ending with </svg>. DO NOT include any explanation, markdown formatting, or code blocks - ONLY the raw SVG code.
+
+The SVG should exactly match the structure and layout of the input sketch. Preserve all proportions, positions, and the general design, but add appropriate vector styling, colors, and refinements.
+
+`;
+
+    if (additionalContext) {
+      prompt += `Context: ${additionalContext}\n\n`;
+    }
+
+    prompt += `Technical requirements:
+- Use standard SVG format with xmlns="http://www.w3.org/2000/svg" attribute
+- Include appropriate viewBox attribute
+- Use vector elements like <path>, <rect>, <circle>, etc.
+- Add appropriate fill colors and stroke styles
+- Ensure the SVG is properly structured and valid
+
+Again, return ONLY the SVG code with no additional text.`;
+
+    return prompt;
+  }
+
+  // Now update the SVG generation portion of the generateImage function
+  async function generateImage() {
+    // ... inside generateImage(), replace the SVG branch logic
+    if (selectedFormat === 'svg') {
+      const hasSketch = fabricInstance && fabricInstance.getObjects().length > 0;
+      const hasText   = additionalContext.trim().length > 0;
+
+      if (!hasSketch && !hasText) {
+        errorMessage = "Please draw something or provide context first!";
+        setTimeout(() => { errorMessage = null; }, 3000);
+        return;
+      }
+
+      // Only capture image data (PNG) when we actually have visible sketch content
+      let imageForPayload: string | null = null;
+      if (hasSketch) {
+        updateImageData();
+        imageForPayload = imageData;
+      }
+
+      isGenerating.set(true);
+      errorMessage = null;
+
       try {
-        undoStack.length = 0;
-        redoStack.length = 0;
-        const baseline = JSON.stringify(fabricInstance.toJSON());
-        undoStack.push(baseline);
-      } catch (err) {
-        console.error('Unable to set initial history baseline', err);
-      }
-    }
-  }
+        const svgPrompt = buildDynamicSvgPrompt(hasSketch, additionalContext);
 
-  // Import Prettier for code formatting
-  import prettier from 'prettier/standalone';
-  import * as parserHtml from 'prettier/parser-html';
-  const htmlParser = parserHtml?.default || parserHtml;
+        const svgRes = await fetchAndLog('/api/ai/generate-svg', { // <-- USE fetchAndLog
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            imageData: imageForPayload, // may be null when no sketch
+            prompt: svgPrompt,
+            additionalContext,
+            model: $selectedModel // forced to gpt-4o elsewhere when SVG selected
+          })
+        });
 
-  // Shape type variable for binding to CanvasToolbar
-  let shapeType: string = 'rectangle';
-
-  // Session storage key for canvas data
-  const CANVAS_STORAGE_KEY = 'canvasDrawingData';
-
-  // Forward declaration for fabric
-  let fabric: any;
-
-  // Interface extension for Stroke type with hasPressure property
-  interface EnhancedStroke extends Stroke {
-    hasPressure?: boolean;
-    hasHardwarePressure?: boolean; // Flag for true hardware pressure support
-    isEraserStroke?: boolean; // Flag for eraser strokes
-  }
-
-  // Drawing content object with enhanced strokes
-  interface EnhancedDrawingContent {
-    strokes: EnhancedStroke[];
-    bounds?: {
-      width: number;
-      height: number;
-    };
-  }
-
-  // Analysis element type
-  interface AnalysisElement {
-    id: string;
-    name: string;
-    category?: string;
-    x: number;
-    y: number;
-    width?: number;
-    height?: number;
-    color: string;
-    isChild?: boolean;
-    parentId?: string;
-    children?: string[];
-    pressure?: number; // Add pressure property for visual effects
-    boundingBox?: {
-      minX: number;
-      minY: number;
-      maxX: number;
-      maxY: number;
-      width: number;
-      height: number;
-    };
-  }
-
-  // State variables
-  let inputCanvas: HTMLCanvasElement;
-  let fabricCanvasHTML: HTMLCanvasElement; // Renamed for clarity
-  let fabricInstance: any = null;
-  let inputCtx: CanvasRenderingContext2D | null = null;
-  let isDrawing = false;
-  let currentStroke: EnhancedStroke | null = null;
-  // Use the store values for reference but maintain local variables for reactivity
-  let strokeColor: string;
-  let strokeSize: number;
-  let strokeOpacity: number;
-  let canvasBackgroundColor: string = '#ffffff'; // Default background color
-
-  let lastUserEditTime = 0;
-  let pendingAnalysis = false;
-
-  // Subscribe to store changes
-  strokeOptions.subscribe(options => {
-    strokeColor = options.color;
-    strokeSize = options.size;
-    strokeOpacity = options.opacity;
-
-    // If pen tool is active and options change, update currentStroke if any
-    if ($selectedTool === 'pen' && currentStroke) {
-      currentStroke.color = strokeColor;
-      currentStroke.size = strokeSize;
-      currentStroke.opacity = strokeOpacity;
-      renderStrokes(); // Re-render temporary stroke
-    }
-    // If eraser tool is active, update EraserBrush width
-    if ($selectedTool === 'eraser' && fabricInstance && fabricInstance.isDrawingMode) {
-      fabricInstance.freeDrawingBrush.width = eraserSize; // Assuming eraserSize will be derived from strokeSize or a dedicated variable
-    }
-  });
-
-  let imageData: string | null = null;
-  let pointTimes: number[] = []; // Track time for velocity-based pressure
-  let errorMessage: string | null = null;
-  let fabricErrorMessage: string | null = null; // Add specific fabric error message
-  let sketchAnalysis = "Draw something to see AI's interpretation";
-  let isAnalyzing = false;
-  let strokeRecognition = "Draw something to see shapes recognized";
-  let isRecognizingStrokes = false;
-  let additionalContext = "";
-  let analysisElements: any[] = [];
-  let canvasScale = 1; // Scale factor for canvas display relative to internal resolution
-
-  // Define imageModels for Omnibar
-  const imageGenerationModels = [
-    { value: 'gpt-image-1', label: 'GPT-Image-1' },
-    { value: 'gpt-4o', label: 'GPT-4o' },
-    { value: 'flux-canny-pro', label: 'Flux Canny Pro' },
-    { value: 'controlnet-scribble', label: 'ControlNet Scribble' },
-    { value: 'stable-diffusion', label: 'Stable Diffusion' },
-    { value: 'latent-consistency', label: 'Latent Consistency' }
-  ];
-
-  // Reactive variable for Omnibar's parentDisabled prop
-  $: parentOmnibarDisabled = $isGenerating || ((!fabricInstance || fabricInstance.getObjects().length === 0) && !additionalContext.trim());
-
-  // Drawing content with enhanced strokes - This might become less central with Fabric.js
-  let drawingContent: EnhancedDrawingContent = {
-    strokes: [], // This will no longer store rendered strokes, Fabric.js does.
-    bounds: { width: 800, height: 600 }
-  };
-
-  // Canvas dimensions
-  let canvasWidth = 800;
-  let canvasHeight = 600;
-
-
-  // Variables for tracking user edits and analysis state
-  let isResizeEvent = false;
-  let renderDebounceTimeout: ReturnType<typeof setTimeout> | null = null; // Declare the missing variable
-  let isArtificialEvent = false; // Flag for programmatically triggered events
-
-  // For Fabric.js canvas
-  let fabricLoaded = false;
-  let fabricLoadAttempts = 0;
-  const MAX_FABRIC_LOAD_ATTEMPTS = 3;
-
-  // Function to dynamically load Fabric.js with retry logic
-  function loadFabricScript(): Promise<void> {
-    return new Promise((resolve, reject) => {
-      // Skip if already loaded
-      if (typeof fabric !== 'undefined') {
-        console.log('Fabric.js already loaded');
-        fabricLoaded = true;
-        fabricErrorMessage = null; // Clear any previous errors
-        return resolve();
-      }
-
-      // Track attempts to prevent infinite retry loops
-      fabricLoadAttempts++;
-      if (fabricLoadAttempts > MAX_FABRIC_LOAD_ATTEMPTS) {
-        const error = 'Failed to load Fabric.js after multiple attempts';
-        fabricErrorMessage = error;
-        return reject(new Error(error));
-      }
-
-      console.log(`Loading fabric.js (attempt ${fabricLoadAttempts})`);
-
-      const script = document.createElement('script');
-      script.src = '/js/fabric.js';
-      script.async = true;
-
-      script.onload = () => {
-        console.log('Fabric.js loaded successfully');
-        fabricLoaded = true;
-        fabric = window['fabric']; // Assign to our variable
-        fabricErrorMessage = null; // Clear any previous errors
-        resolve();
-      };
-
-      script.onerror = () => {
-        console.error('Failed to load Fabric.js');
-        if (fabricLoadAttempts >= MAX_FABRIC_LOAD_ATTEMPTS) {
-          fabricErrorMessage = 'Failed to load the drawing engine. Please check your internet connection and refresh the page.';
-          reject(new Error('Max retry attempts reached'));
-        } else {
-          // Retry on failure with a delay
-          setTimeout(() => {
-            loadFabricScript().then(resolve).catch(reject);
-          }, 500);
+        if (!svgRes.ok) {
+          const errTxt = await svgRes.text();
+          throw new Error(errTxt || 'Failed to generate SVG');
         }
-      };
 
-      document.head.appendChild(script);
-    });
-  }
+        const data = await svgRes.json();
+        if (data.svgCode) {
+          const svgCode = extractValidSvg(data.svgCode) || data.svgCode;
+          if (!svgCode.startsWith('<svg')) {
+            throw new Error('Could not extract valid SVG from response');
+          }
 
-  // Initialize Fabric.js canvas
-  async function initializeFabricCanvas() {
-    if (!fabricCanvasHTML) {
-      console.error('Fabric canvas element not yet available');
-      return false;
+          generatedSvgCode = svgCode;
+          outputView = 'svg';
+          await renderSvgToOutputCanvas(generatedSvgCode);
+        } else {
+          throw new Error('No SVG returned by server');
+        }
+      } catch (err) {
+        console.error('SVG generation error:', err);
+        errorMessage = err instanceof Error ? err.message : 'Unknown SVG generation error';
+      } finally {
+        isGenerating.set(false);
+      }
+      return; // Skip raster generation flow
     }
+
+    const objectCount = fabricInstance ? fabricInstance.getObjects().length : 0;
+    if (objectCount === 0 && (!drawingContent.strokes || drawingContent.strokes.length === 0) && !additionalContext.trim()) {
+      errorMessage = "Please draw something or provide context first!";
+      setTimeout(() => { errorMessage = null; }, 3000);
+      return;
+    }
+
+    // Capture latest snapshot for preview and for API payloads
+    updateImageData();
+
+    // Add debugging to verify we're capturing canvas data properly
+    console.log('Canvas image data captured:', {
+      hasImageData: !!imageData,
+      imageDataLength: imageData ? imageData.length : 0,
+      fabricObjects: fabricInstance ? fabricInstance.getObjects().length : 0,
+      canvasSize: { width: canvasWidth, height: canvasHeight }
+    });
+
+    // Verify imageData is valid
+    if (!imageData || !imageData.startsWith('data:image/')) {
+      console.error('Invalid or missing canvas image data:', imageData ? imageData.substring(0, 50) + '...' : 'null');
+      errorMessage = "Failed to capture canvas image data. Please ensure you have drawn something on the canvas.";
+      setTimeout(() => { errorMessage = null; }, 3000);
+      isGenerating.set(false);
+      isEditing.set(false);
+      return;
+    }
+
+    isGenerating.set(true);
+    isEditing.set(true);
+    errorMessage = null;
+
+    // Reset previous results
+    generatedImageUrl.set(null);
+    generatedByModel.set(null);
+    editedImageUrl.set(null);
+    editedByModel.set(null);
+
+    // Ensure aspect-ratio meta is in sync so the preview box sizes correctly
+    generatedImageAspectRatio = selectedAspectRatio;
+
+    // Deep-copy drawingContent to avoid mutating reactive object during async ops
+    const drawingContentCopy = JSON.parse(JSON.stringify(drawingContent));
+
+    const currentPrompt = $gptImagePrompt;
+    const currentEditPrompt = $gptEditPrompt;
+
+    const structureData = {
+      aspectRatio: selectedAspectRatio,
+      canvasWidth,
+      canvasHeight,
+      viewportWidth: window.innerWidth,
+      viewportHeight: window.innerHeight,
+      pixelRatio: window.devicePixelRatio || 1
+    };
+
+    const basePayload = {
+      drawingContent: drawingContentCopy,
+      imageData,
+      additionalContext,
+      aspectRatio: selectedAspectRatio,
+      sketchAnalysis,
+      strokeRecognition,
+      structureData,
+      detectedObjects: analysisElements
+    };
+
+    const generatePayload = {
+      ...basePayload,
+      prompt: currentPrompt,
+      originalPrompt: currentPrompt
+    };
+
+    const editPayload = {
+      ...basePayload,
+      prompt: currentEditPrompt,
+      originalPrompt: currentPrompt // keep track of original
+    };
 
     try {
-      if (!fabricLoaded) {
-        await loadFabricScript();
-      }
-
-      if (typeof fabric !== 'undefined') {
-        // Clean up any existing instance to prevent duplicates
-        if (fabricInstance) {
-          fabricInstance.dispose();
-        }
-
-        fabricInstance = new fabric.Canvas(fabricCanvasHTML, {
-          backgroundColor: canvasBackgroundColor, // Use the white background color
-          renderOnAddRemove: true,
-          width: fabricCanvasHTML.width,
-          height: fabricCanvasHTML.height,
-          preserveObjectStacking: true // Good for managing layers
+      if ($selectedModel === 'gpt-image-1') {
+        // Use fetch with streaming response for edit-image
+        const editResponse = fetch('/api/ai/edit-image', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(editPayload)
         });
 
-        // Ensure the background is rendered immediately
-        fabricInstance.requestRenderAll();
-
-        // Make sure Fabric's internal elements are correctly positioned
-        if (fabricInstance.wrapperEl) {
-          fabricInstance.wrapperEl.style.position = 'absolute';
-          fabricInstance.wrapperEl.style.top = '0';
-          fabricInstance.wrapperEl.style.left = '0';
-          fabricInstance.wrapperEl.style.width = fabricCanvasHTML.style.width;
-          fabricInstance.wrapperEl.style.height = fabricCanvasHTML.style.height;
-        }
-
-        // Set default control appearance for all objects
-        fabric.Object.prototype.set({
-          cornerStyle: 'circle',
-          cornerColor: 'white',
-          cornerStrokeColor: '#6355FF',
-          cornerStrokeWidth: 3,
-          cornerSize: 12,
-          padding: 0, // Increased padding for better selection handling
-          transparentCorners: false,
-          borderColor: '#6355FF',
-          borderScaleFactor: 1.5,
-          borderOpacityWhenMoving: .5,
-          touchCornerSize: 20,
+        // Run standard generation in parallel
+        const standardResponse = fetch('/api/ai/generate-image', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(generatePayload)
         });
 
-        console.log('Fabric.js canvas initialized successfully');
-        // Listen to path creation and erasing events to save state automatically
-        fabricInstance.on('path:created', () => {
-          saveCanvasState();
-          recordHistory();
-        });
-        if (fabricInstance.on) {
-          fabricInstance.on('erasing:end', (opt) => {
-            // Auto-remove nearly empty paths to avoid leftovers
-            const targets = opt?.targets || [];
-            let removedSomething = false;
-            targets.forEach((obj: any) => {
-              if (obj && obj.type === 'path') {
-                const bb = obj.getBoundingRect();
-                const area = bb.width * bb.height;
-                if (area < 25 || (obj.path && obj.path.length < 10)) {
-                  fabricInstance.remove(obj);
-                  removedSomething = true;
+        // Handle streaming edit response with proper buffering
+        editResponse.then(async (response) => {
+          if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+          }
+
+          if (!response.body) {
+            throw new Error('No response body for streaming');
+          }
+
+          const reader = response.body.getReader();
+          const decoder = new TextDecoder();
+          let buffer = ''; // Buffer to accumulate incomplete data
+
+          try {
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+
+              // Decode the chunk and add to buffer
+              const chunk = decoder.decode(value, { stream: true });
+              buffer += chunk;
+
+              // Process complete SSE messages from buffer
+              const lines = buffer.split('\n');
+
+              // Keep the last potentially incomplete line in buffer
+              buffer = lines.pop() || '';
+
+              for (const line of lines) {
+                if (line.startsWith('data: ')) {
+                  try {
+                    const jsonStr = line.slice(6).trim();
+                    if (jsonStr === '') continue; // Skip empty data lines
+
+                    const data = JSON.parse(jsonStr);
+                    console.log('Received streaming event:', data.type);
+
+                    switch (data.type) {
+                      case 'status':
+                        console.log('Status:', data.message);
+                        break;
+
+                      case 'partial_image':
+                        console.log(`Received partial image ${data.imageIndex}`);
+                        // Update the displayed image with the progressive version
+                        editedImageUrl.set(data.imageData);
+                        editedByModel.set('gpt-4.1-streaming');
+                        break;
+
+                      case 'final_image':
+                        console.log('Final image received:', data.imageUrl);
+                        editedImageUrl.set(data.imageUrl);
+                        editedByModel.set(data.model);
+                        if (data.aspectRatio) generatedImageAspectRatio = data.aspectRatio;
+                        break;
+
+                      case 'completed':
+                        console.log('Image generation completed');
+                        if (data.finalImageUrl) {
+                          editedImageUrl.set(data.finalImageUrl);
+                        }
+                        break;
+
+                      case 'error':
+                        console.error('Streaming error:', data.error);
+                        errorMessage = data.error;
+                        break;
+
+                      case 'done':
+                        console.log('Stream completed');
+                        isGenerating.set(false);
+                        isEditing.set(false);
+                        return; // Exit the function
+                    }
+                  } catch (parseError) {
+                    console.error('Error parsing streaming data:', parseError);
+                    console.log('Problematic line length:', line.length);
+                    console.log('Line preview:', line.substring(0, 100) + (line.length > 100 ? '...' : ''));
+                    // Continue processing other lines instead of failing completely
+                  }
                 }
               }
-            });
-            saveCanvasState();
-            if (removedSomething) {
-              recordHistory();
             }
-          });
+
+            // Process any remaining complete message in buffer
+            if (buffer.trim() && buffer.startsWith('data: ')) {
+              try {
+                const jsonStr = buffer.slice(6).trim();
+                if (jsonStr !== '') {
+                  const data = JSON.parse(jsonStr);
+                  console.log('Final buffered event:', data.type);
+                  // Process final message if needed
+                }
+              } catch (parseError) {
+                console.error('Error parsing final buffered data:', parseError);
+              }
+            }
+
+          } finally {
+            reader.releaseLock();
+          }
+        }).catch((error) => {
+          console.error('Error in streaming edit:', error);
+          errorMessage = error.message || 'Error during streaming generation';
+          isGenerating.set(false);
+          isEditing.set(false);
+        });
+
+        // Handle standard generation response
+        standardResponse.then(async (response) => {
+          if (!response.ok) {
+            console.error('Standard generation failed with status:', response.status);
+            return;
+          }
+
+          try {
+            const data = await response.json();
+            const url = data.imageUrl || data.url;
+            if (url) {
+              generatedImageUrl.set(url);
+              generatedByModel.set(data.model || 'gpt-image-1');
+              if (data.aspectRatio) generatedImageAspectRatio = data.aspectRatio;
+            }
+          } catch (error) {
+            console.error('Error parsing standard generation response:', error);
+          }
+        }).catch((error) => {
+          console.error('Standard generation failed:', error);
+        });
+
+        // Ensure flags are cleared after both operations
+        Promise.allSettled([editResponse, standardResponse]).then(() => {
+          isGenerating.set(false);
+          isEditing.set(false);
+        });
+
+      } else {
+        // Replicate-based models (non-streaming for now)
+        const repRes = await fetchAndLog('/api/ai/edit-replicate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...generatePayload, model: $selectedModel })
+        });
+
+        if (!repRes.ok) {
+          throw new Error(await repRes.text());
         }
 
-        // Replace the existing 'object:modified' handler for more specific logic
-        fabricInstance.off('object:modified'); // Remove previous one if any from prior steps
-        fabricInstance.on('object:modified', (e) => {
-          const target = e.target;
-          if (!target) return;
+        const data = await repRes.json();
+        const url = data.imageUrl || data.url;
+        if (url) {
+          generatedImageUrl.set(url);
+          editedImageUrl.set(url);
+          generatedByModel.set(data.model || $selectedModel);
+          editedByModel.set(data.model || $selectedModel);
+          if (data.aspectRatio) generatedImageAspectRatio = data.aspectRatio;
+        }
 
-          let propertyChanged = false;
-          if (target.type === 'rect') {
-            if (target.scaleX !== 1 || target.scaleY !== 1) {
-              const newWidth = target.width * target.scaleX;
-              const newHeight = target.height * target.scaleY;
-              target.set({
-                width: newWidth,
-                height: newHeight,
-                scaleX: 1,
-                scaleY: 1
-              });
-              target.setCoords();
-              propertyChanged = true;
-            }
-          }
-          // Add other type-specific modifications here if needed in the future
-
-          // Common post-modification logic
-          if (propertyChanged) {
-            fabricInstance.requestRenderAll(); // Render immediately if we changed properties
-          } else {
-            fabricInstance.renderAll(); // Standard render if no specific property change by this handler
-          }
-
-          setTimeout(() => {
-            saveCanvasState();
-            updateImageData(); // Ensure preview is updated
-            recordHistory();
-            // Update reactive proxies if the active object was the one modified
-            if (activeFabricObject && activeFabricObject === target) {
-                if (activeFabricObject.type === 'rect' || activeFabricObject.type === 'circle' || activeFabricObject.type === 'triangle') {
-                    selectedShapeFillProxy = activeFabricObject.fill || '#cccccc';
-                    selectedShapeStrokeProxy = activeFabricObject.stroke || '#000000';
-                    selectedShapeStrokeWidthProxy = activeFabricObject.strokeWidth === undefined ? 0 : activeFabricObject.strokeWidth;
-                }
-            }
-          }, 0);
-        });
-
-        // Listen for selection events to update activeFabricObject
-        fabricInstance.on('selection:created', (e) => {
-          if (e.selected && e.selected.length > 0) activeFabricObject = e.selected[0];
-          else activeFabricObject = null;
-        });
-        fabricInstance.on('selection:updated', (e) => {
-          if (e.selected && e.selected.length > 0) activeFabricObject = e.selected[0];
-          else activeFabricObject = null;
-        });
-        fabricInstance.on('selection:cleared', () => {
-          activeFabricObject = null;
-        });
-
-        // NEW: Also listen for additions & removals for history purposes
-        fabricInstance.on('object:added', () => {
-          // Object addition already triggers a render in Fabric
-          setTimeout(() => {
-            recordHistory();
-          }, 0);
-        });
-
-        fabricInstance.on('object:removed', () => {
-          // Ensure immediate render
-          fabricInstance.renderAll();
-
-          setTimeout(() => {
-            recordHistory();
-          }, 0);
-        });
-
-        // Handle live scaling to adjust width/height instead of scale
-        fabricInstance.on('object:scaling', (e) => {
-          const target = e.target;
-          if (!target) return;
-
-          // We only want this for basic shapes drawn via shape tool (rect, ellipse (radius), triangle)
-          if (target.type === 'rect') {
-            target.noScaleCache = false;
-            const newWidth = target.width * target.scaleX;
-            const newHeight = target.height * target.scaleY;
-            target.set({
-              width: newWidth,
-              height: newHeight,
-              scaleX: 1,
-              scaleY: 1
-            });
-            target.setCoords();
-            fabricInstance.requestRenderAll();
-          } else if (target.type === 'triangle') {
-            target.noScaleCache = false;
-            const newWidth = target.width * target.scaleX;
-            const newHeight = target.height * target.scaleY;
-            target.set({ width: newWidth, height: newHeight, scaleX: 1, scaleY: 1 });
-            target.setCoords();
-            fabricInstance.requestRenderAll();
-          } else if (target.type === 'ellipse') { // Changed from 'circle' to 'ellipse'
-            target.noScaleCache = false;
-            // For ellipse, adjust rx and ry based on scaleX and scaleY respectively
-            const newRx = target.rx * target.scaleX;
-            const newRy = target.ry * target.scaleY;
-            target.set({ rx: newRx, ry: newRy, scaleX: 1, scaleY: 1 });
-            target.setCoords();
-            fabricInstance.requestRenderAll();
-          }
-        });
-
-        // Add Alt/Option + Drag to Duplicate functionality
-        fabricInstance.on('mouse:down', function(opt) {
-          if (opt.e.altKey && opt.target && opt.target.selectable) {
-            // Store original values
-            const originalObj = opt.target;
-            const originalLeft = originalObj.left;
-            const originalTop = originalObj.top;
-
-            // Get current pointer position
-            const pointer = fabricInstance.getPointer(opt.e);
-
-            // Prevent default to avoid original object movement
-            opt.e.preventDefault();
-            opt.e.stopPropagation();
-
-            // Clear any existing selection
-            fabricInstance.discardActiveObject();
-
-            // Clone original object
-            originalObj.clone(function(cloned) {
-              // Position at exact same coordinates
-              cloned.set({
-                left: originalLeft,
-                top: originalTop,
-                evented: true
-              });
-
-              // Add to canvas
-              fabricInstance.add(cloned);
-
-              // Set as active object (important for controls)
-              fabricInstance.setActiveObject(cloned);
-              cloned.setCoords();
-
-              // Calculate offset from object center to cursor position
-              const offsetX = pointer.x - originalLeft;
-              const offsetY = pointer.y - originalTop;
-
-              // Create a transform object to simulate dragging state
-              fabricInstance._currentTransform = {
-                target: cloned,
-                action: 'drag',
-                corner: 0,
-                scaleX: cloned.scaleX,
-                scaleY: cloned.scaleY,
-                skewX: cloned.skewX,
-                skewY: cloned.skewY,
-                offsetX: offsetX,
-                offsetY: offsetY,
-                originX: cloned.originX,
-                originY: cloned.originY,
-                ex: pointer.x,
-                ey: pointer.y,
-                left: cloned.left,
-                top: cloned.top,
-                theta: cloned.angle * Math.PI / 180,
-                width: cloned.width * cloned.scaleX,
-                height: cloned.height * cloned.scaleY,
-                mouseXSign: 1,
-                mouseYSign: 1,
-                actionHandler: fabricInstance._getActionFromCorner.bind(fabricInstance, cloned, 0, opt.e) || fabricInstance._actionHandler
-              };
-
-              // Set the action handler for dragging
-              fabricInstance._currentTransform.actionHandler = function(eventData, transform, x, y) {
-                const target = transform.target;
-                const newLeft = x - transform.offsetX;
-                const newTop = y - transform.offsetY;
-
-                target.set({
-                  left: newLeft,
-                  top: newTop
-                });
-
-                return true;
-              };
-
-              // Ensure original stays in place
-              originalObj.set({
-                left: originalLeft,
-                top: originalTop
-              });
-              originalObj.setCoords();
-
-              // Set canvas state to indicate we're transforming
-              fabricInstance._isCurrentlyDrawing = true;
-
-              // Save canvas state after the operation completes
-              saveCanvasState();
-
-              // Force canvas to render
-              fabricInstance.requestRenderAll();
-            });
-
-            // Prevent event propagation
-            return false;
-          }
-        });
-
-        // Enhanced mouse:move handler to handle our custom transform
-        fabricInstance.on('mouse:move', function(opt) {
-          if (fabricInstance._currentTransform && fabricInstance._currentTransform.action === 'drag') {
-            const pointer = fabricInstance.getPointer(opt.e);
-            const transform = fabricInstance._currentTransform;
-
-            if (transform.actionHandler) {
-              transform.actionHandler(opt.e, transform, pointer.x, pointer.y);
-              transform.target.setCoords();
-              fabricInstance.requestRenderAll();
-            }
-          }
-        });
-
-        // Enhanced mouse:up handler to complete the transform
-        fabricInstance.on('mouse:up', function(opt) {
-          if (fabricInstance._currentTransform) {
-            const target = fabricInstance._currentTransform.target;
-
-            // Clear the transform state
-            fabricInstance._currentTransform = null;
-            fabricInstance._isCurrentlyDrawing = false;
-
-            // Ensure the object remains active and visible
-            if (target) {
-              fabricInstance.setActiveObject(target);
-              target.setCoords();
-              target.fire('modified');
-              fabricInstance.fire('object:modified', { target: target });
-              fabricInstance.requestRenderAll();
-            }
-          }
-        });
-
-        // Ensure selection is preserved after mouse:up
-        fabricInstance.on('mouse:up', function(opt) {
-          // If an object was being transformed, make sure it stays active
-          if (fabricInstance._currentTransform && fabricInstance._currentTransform.target) {
-            const target = fabricInstance._currentTransform.target;
-            fabricInstance.setActiveObject(target);
-            target.setCoords();
-            fabricInstance.requestRenderAll();
-          }
-        });
-
-        return true;
-      } else {
-        console.error('Fabric.js still not available after loading attempt');
-        return false;
+        isGenerating.set(false);
+        isEditing.set(false);
       }
     } catch (err) {
-      console.error('Error initializing Fabric canvas:', err);
-      return false;
+      console.error('Error generating image', err);
+      if (!(err.message && err.message.includes('apiLogEntry'))) {
+          errorMessage = err instanceof Error ? err.message : 'Unknown error during image generation';
+      }
+      isGenerating.set(false);
+      isEditing.set(false);
     }
   }
 
-  // Function to build the prompt for GPT-Image-1 (Ignoring AI, but keeping for structure)
-  function buildGptImagePrompt() {
-    let prompt = `Complete this drawing. DO NOT change the original image sketch at all; simply add onto the existing drawing EXACTLY as it is. CRITICAL STRUCTURE PRESERVATION: You MUST treat this sketch as an EXACT STRUCTURAL TEMPLATE. `;
+  function buildGptEditPrompt() { // AI Ignored
+    let prompt = `Complete this drawing, in the exact same style and proportions as the original. DO NOT change the original image sketch at all; simply add onto the existing drawing EXACTLY as it is. CRITICAL STRUCTURE PRESERVATION: You MUST treat this sketch as an EXACT STRUCTURAL TEMPLATE. `;
+    let prompt2 = `Complete this drawing, in the exact same style and proportions as the original. DO NOT change the original image sketch at all; simply add onto the existing drawing EXACTLY as it is. CRITICAL STRUCTURE PRESERVATION: You MUST treat this sketch as an EXACT STRUCTURAL TEMPLATE. `;
     const contentGuide = sketchAnalysis !== "Draw something to see AI's interpretation" ? sketchAnalysis : "A user's drawing.";
-    prompt += `CONTENT DESCRIPTION: ${contentGuide}\n\n`;
+    prompt += `\n\nCONTENT DESCRIPTION: ${contentGuide}`;
     if (additionalContext) {
-      prompt += `USER'S CONTEXT: "${additionalContext}"\n\n`;
+      prompt2 += `\n\nUSER'S CONTEXT: "${additionalContext}"`;
     }
     if (analysisElements.length > 0) {
       const structuralGuide = `Based on analysis, the drawing contains ${analysisElements.length} main elements. Element positions and basic relationships are implied by the sketch.`;
-      prompt += `STRUCTURAL GUIDE: ${structuralGuide}\n\n`;
+      prompt += `\n\nSTRUCTURAL GUIDE: ${structuralGuide}`;
     }
     const compositionGuide = `Focus on the arrangement within the ${selectedAspectRatio} frame.`;
-    prompt += `COMPOSITION GUIDE: ${compositionGuide}\n\n`;
+    prompt += `\n\nCOMPOSITION GUIDE: ${compositionGuide}`;
     if (strokeRecognition && strokeRecognition !== "Draw something to see shapes recognized") {
-      prompt += `RECOGNIZED SHAPES: ${strokeRecognition}\n\n`;
+      prompt += `\n\nRECOGNIZED SHAPES: ${strokeRecognition}`;
     }
-    prompt += `FINAL INSTRUCTIONS: Create a DIRECT, FRONT-FACING VIEW that maintains the EXACT same composition as the sketch. NEVER distort or reposition any element. Color and texture can be added, but the structural skeleton must remain identical to the original sketch.`;
-    return prompt.length > 4000 ? prompt.substring(0, 3997) + '...' : prompt;
+    return prompt2.length > 4000 ? prompt2.substring(0, 3997) + '...' : prompt2;
   }
 
   $: {
-    const newPrompt = buildGptImagePrompt();
-    gptImagePrompt.set(newPrompt);
+    const newEditPrompt = buildGptEditPrompt();
+    gptEditPrompt.set(newEditPrompt);
   }
 
-  function isRealUserEdit(): boolean {
-    if (isResizeEvent) return false;
-    if ($isGenerating || isArtificialEvent) return false;
-    if (isAnalyzing || isRecognizingStrokes) return false;
-    lastUserEditTime = Date.now();
-    pendingAnalysis = true;
-    return true;
+  $: if (additionalContext !== undefined) {
+    const newEditPrompt = buildGptEditPrompt();
+    gptEditPrompt.set(newEditPrompt);
   }
 
-  $: strokeCount = fabricInstance?.getObjects()?.length || 0; // Updated to use Fabric.js objects
+  $: {
+    $strokeOptions;
+  }
 
-  let pathBuilderLookup = {};
-  let browser = typeof window !== 'undefined';
-  let lastResizeTime = 0;
-
-  // Separate initialization function
-  async function initializeComponent() {
-    if (inputCanvas) {
-      inputCtx = inputCanvas.getContext('2d');
-
-      // Set white background for perfect-freehand canvas immediately
-      if (inputCtx) {
-        inputCtx.fillStyle = '#ffffff';
-        inputCtx.fillRect(0, 0, inputCanvas.width, inputCanvas.height);
-      }
+  function mobileCheck() {
+    const isMobile = window.innerWidth < 768;
+    if (isMobile) {
+      console.log('Mobile device detected, adjusting UI');
     }
+    // Call resizeCanvas directly rather than checking for canvas availability
+    resizeCanvas();
+  }
 
-    // First, load Fabric.js
-    try {
-      await loadFabricScript();
-      // Then initialize the canvas
-      const success = await initializeFabricCanvas();
-      if (!success) {
-        console.error('Failed to initialize Fabric canvas after script loaded');
-        fabricErrorMessage = 'Could not initialize drawing tools. Please try refreshing the page.';
-      } else {
-        // Successfully initialized
-        fabricErrorMessage = null;
-        // Set up initial canvas alignment and styles
-        setupCanvasAlignment();
+  let selectedAspectRatio = '1:1';
+  const aspectRatios = {
+    '1:1': 1 / 1,
+    'portrait': 1536 / 1024,
+    'landscape': 1024 / 1536
+  };
+  let generatedImageAspectRatio = '1:1';
 
-        // Ensure white background is applied and visible
-        if (fabricInstance) {
-          fabricInstance.setBackgroundColor('#ffffff', fabricInstance.renderAll.bind(fabricInstance));
-          // Force an immediate render
-          fabricInstance.requestRenderAll();
+  $: {
+    if (selectedAspectRatio) {
+      generatedImageAspectRatio = selectedAspectRatio;
+      if (browser) {
+        resizeCanvas();
+        // After resize, if fabricInstance exists and has objects, ensure they are rendered.
+        // If perfect-freehand is in the middle of a stroke, renderStrokes() handles it.
+        if (fabricInstance && fabricInstance.getObjects().length > 0) {
+          fabricInstance.renderAll();
+        } else if (currentStroke && $selectedTool === 'pen') {
+          renderStrokes();
         }
       }
-    } catch (err) {
-      console.error('Error loading Fabric.js:', err);
-      fabricErrorMessage = 'Error loading drawing tools. Please check your connection and try refreshing.';
+    }
+  }
+
+  // beforeNavigate to save
+  import { beforeNavigate } from '$app/navigation';
+  if (browser) {
+    beforeNavigate(() => {
+      saveCanvasState();
+    });
+    // Moved 'beforeunload' listener setup here for clarity, will be cleaned in onDestroy
+    window.addEventListener('beforeunload', saveCanvasState);
+  }
+
+  // CONSOLIDATED onDestroy function
+  onDestroy(() => {
+    console.log('Canvas component destroying. Saving state and cleaning up.');
+    saveCanvasState(); // Ensure state is saved
+
+    if (browser) {
+      window.removeEventListener('resize', mobileCheck);
+      window.removeEventListener('keydown', handleGlobalKeyDown);
+      window.removeEventListener('beforeunload', saveCanvasState);
     }
 
-    resizeCanvas(); // Initial resize and setup
-
-    if (inputCtx) {
-      // Set white background again after resize
-      inputCtx.fillStyle = '#ffffff';
-      inputCtx.fillRect(0, 0, inputCanvas.width, inputCanvas.height);
-
-      renderStrokes(); // Initial render (likely empty perfect-freehand canvas)
-      updateImageData(); // Use a centralized function to update imageData
+    // Clean up ResizeObserver
+    if (resizeObserver) {
+      resizeObserver.disconnect();
+      resizeObserver = null;
     }
 
-    console.log('Component mounted');
-    mobileCheck();
-
-    // Push initial baseline snapshot after component ready & state loaded
     if (fabricInstance) {
-      try {
-        undoStack.length = 0;
-        redoStack.length = 0;
-        const baseline = JSON.stringify(fabricInstance.toJSON());
-        undoStack.push(baseline);
-      } catch (err) {
-        console.error('Unable to set initial history baseline', err);
-      }
+      fabricInstance.dispose();
+      fabricInstance = null; // Help with garbage collection
     }
-  }
 
-  // Import Prettier for code formatting
-  import prettier from 'prettier/standalone';
-  import * as parserHtml from 'prettier/parser-html';
-  const htmlParser = parserHtml?.default || parserHtml;
-
-  // Shape type variable for binding to CanvasToolbar
-  let shapeType: string = 'rectangle';
-
-  // Session storage key for canvas data
-  const CANVAS_STORAGE_KEY = 'canvasDrawingData';
-
-  // Forward declaration for fabric
-  let fabric: any;
-
-  // Interface extension for Stroke type with hasPressure property
-  interface EnhancedStroke extends Stroke {
-    hasPressure?: boolean;
-    hasHardwarePressure?: boolean; // Flag for true hardware pressure support
-    isEraserStroke?: boolean; // Flag for eraser strokes
-  }
-
-  // Drawing content object with enhanced strokes
-  interface EnhancedDrawingContent {
-    strokes: EnhancedStroke[];
-    bounds?: {
-      width: number;
-      height: number;
-    };
-  }
-
-  // Analysis element type
-  interface AnalysisElement {
-    id: string;
-    name: string;
-    category?: string;
-    x: number;
-    y: number;
-    width?: number;
-    height?: number;
-    color: string;
-    isChild?: boolean;
-    parentId?: string;
-    children?: string[];
-    pressure?: number; // Add pressure property for visual effects
-    boundingBox?: {
-      minX: number;
-      minY: number;
-      maxX: number;
-      maxY: number;
-      width: number;
-      height: number;
-    };
-  }
-
-  // State variables
-  let inputCanvas: HTMLCanvasElement;
-  let fabricCanvasHTML: HTMLCanvasElement; // Renamed for clarity
-  let fabricInstance: any = null;
-  let inputCtx: CanvasRenderingContext2D | null = null;
-  let isDrawing = false;
-  let currentStroke: EnhancedStroke | null = null;
-  // Use the store values for reference but maintain local variables for reactivity
-  let strokeColor: string;
-  let strokeSize: number;
-  let strokeOpacity: number;
-  let canvasBackgroundColor: string = '#ffffff'; // Default background color
-
-  let lastUserEditTime = 0;
-  let pendingAnalysis = false;
-
-  // Subscribe to store changes
-  strokeOptions.subscribe(options => {
-    strokeColor = options.color;
-    strokeSize = options.size;
-    strokeOpacity = options.opacity;
-
-    // If pen tool is active and options change, update currentStroke if any
-    if ($selectedTool === 'pen' && currentStroke) {
-      currentStroke.color = strokeColor;
-      currentStroke.size = strokeSize;
-      currentStroke.opacity = strokeOpacity;
-      renderStrokes(); // Re-render temporary stroke
+    if (renderDebounceTimeout) {
+      clearTimeout(renderDebounceTimeout);
     }
-    // If eraser tool is active, update EraserBrush width
-    if ($selectedTool === 'eraser' && fabricInstance && fabricInstance.isDrawingMode) {
-      fabricInstance.freeDrawingBrush.width = eraserSize; // Assuming eraserSize will be derived from strokeSize or a dedicated variable
-    }
+    // Any other specific cleanup from previous onDestroy blocks would go here.
   });
 
-  let imageData: string | null = null;
-  let pointTimes: number[] = []; // Track time for velocity-based pressure
-  let errorMessage: string | null = null;
-  let fabricErrorMessage: string | null = null; // Add specific fabric error message
-  let sketchAnalysis = "Draw something to see AI's interpretation";
-  let isAnalyzing = false;
-  let strokeRecognition = "Draw something to see shapes recognized";
-  let isRecognizingStrokes = false;
-  let additionalContext = "";
-  let analysisElements: any[] = [];
-  let canvasScale = 1; // Scale factor for canvas display relative to internal resolution
+  // Svelte action for auto-resizing textarea
+  function autoResize(node: HTMLTextAreaElement) {
+    const MAX_HEIGHT = 160; // Max height in pixels
+    const computedStyle = getComputedStyle(node);
 
-  // Define imageModels for Omnibar
-  const imageGenerationModels = [
-    { value: 'gpt-image-1', label: 'GPT-Image-1' },
-    { value: 'gpt-4o', label: 'GPT-4o' },
-    { value: 'flux-canny-pro', label: 'Flux Canny Pro' },
-    { value: 'controlnet-scribble', label: 'ControlNet Scribble' },
-    { value: 'stable-diffusion', label: 'Stable Diffusion' },
-    { value: 'latent-consistency', label: 'Latent Consistency' }
-  ];
+    // Calculate base height for one line of text content (excluding padding)
+    let singleLineContentHeight;
+    const fs = parseFloat(computedStyle.fontSize);
+    const lhStyle = computedStyle.lineHeight;
 
-  // Reactive variable for Omnibar's parentDisabled prop
-  $: parentOmnibarDisabled = $isGenerating || ((!fabricInstance || fabricInstance.getObjects().length === 0) && !additionalContext.trim());
-
-  // Drawing content with enhanced strokes - This might become less central with Fabric.js
-  let drawingContent: EnhancedDrawingContent = {
-    strokes: [], // This will no longer store rendered strokes, Fabric.js does.
-    bounds: { width: 800, height: 600 }
-  };
-
-  // Canvas dimensions
-  let canvasWidth = 800;
-  let canvasHeight = 600;
-
-
-  // Variables for tracking user edits and analysis state
-  let isResizeEvent = false;
-  let renderDebounceTimeout: ReturnType<typeof setTimeout> | null = null; // Declare the missing variable
-  let isArtificialEvent = false; // Flag for programmatically triggered events
-
-  // For Fabric.js canvas
-  let fabricLoaded = false;
-  let fabricLoadAttempts = 0;
-  const MAX_FABRIC_LOAD_ATTEMPTS = 3;
-
-  // Function to dynamically load Fabric.js with retry logic
-  function loadFabricScript(): Promise<void> {
-    return new Promise((resolve, reject) => {
-      // Skip if already loaded
-      if (typeof fabric !== 'undefined') {
-        console.log('Fabric.js already loaded');
-        fabricLoaded = true;
-        fabricErrorMessage = null; // Clear any previous errors
-        return resolve();
-      }
-
-      // Track attempts to prevent infinite retry loops
-      fabricLoadAttempts++;
-      if (fabricLoadAttempts > MAX_FABRIC_LOAD_ATTEMPTS) {
-        const error = 'Failed to load Fabric.js after multiple attempts';
-        fabricErrorMessage = error;
-        return reject(new Error(error));
-      }
-
-      console.log(`Loading fabric.js (attempt ${fabricLoadAttempts})`);
-
-      const script = document.createElement('script');
-      script.src = '/js/fabric.js';
-      script.async = true;
-
-      script.onload = () => {
-        console.log('Fabric.js loaded successfully');
-        fabricLoaded = true;
-        fabric = window['fabric']; // Assign to our variable
-        fabricErrorMessage = null; // Clear any previous errors
-        resolve();
-      };
-
-      script.onerror = () => {
-        console.error('Failed to load Fabric.js');
-        if (fabricLoadAttempts >= MAX_FABRIC_LOAD_ATTEMPTS) {
-          fabricErrorMessage = 'Failed to load the drawing engine. Please check your internet connection and refresh the page.';
-          reject(new Error('Max retry attempts reached'));
-        } else {
-          // Retry on failure with a delay
-          setTimeout(() => {
-            loadFabricScript().then(resolve).catch(reject);
-          }, 500);
-        }
-      };
-
-      document.head.appendChild(script);
-    });
-  }
-
-  // Initialize Fabric.js canvas
-  async function initializeFabricCanvas() {
-    if (!fabricCanvasHTML) {
-      console.error('Fabric canvas element not yet available');
-      return false;
+    if (lhStyle === 'normal') {
+      singleLineContentHeight = Math.ceil(fs * 1.2); // Common approximation for 'normal'
+    } else if (lhStyle.endsWith('px')) {
+      singleLineContentHeight = parseFloat(lhStyle);
+    } else if (lhStyle.endsWith('em')) {
+      singleLineContentHeight = parseFloat(lhStyle) * fs;
+    } else if (!isNaN(parseFloat(lhStyle))) { // Unitless number (e.g., "1.5")
+      singleLineContentHeight = parseFloat(lhStyle) * fs;
+    } else {
+      singleLineContentHeight = Math.ceil(fs * 1.2); // Fallback if parsing lhStyle fails
     }
 
-    try {
-      if (!fabricLoaded) {
-        await loadFabricScript();
+    const paddingTop = parseFloat(computedStyle.paddingTop) || 0;
+    const paddingBottom = parseFloat(computedStyle.paddingBottom) || 0;
+
+    // Consider CSS min-height for the content box itself
+    const cssMinContentHeight = parseFloat(computedStyle.minHeight) || 0;
+    // The effective content height for one line, respecting CSS min-height for the content part.
+    const effectiveSingleLineContentHeight = Math.max(singleLineContentHeight, cssMinContentHeight);
+    // This is the target minimum height for the textarea (content + padding) when empty or containing a single line.
+    const minTargetHeightForOneLine = effectiveSingleLineContentHeight + paddingTop + paddingBottom;
+
+    function resize() {
+      if (node.value === '') {
+        node.style.height = minTargetHeightForOneLine + 'px';
+        node.style.overflowY = 'hidden';
+      } else {
+        const prevHeightStyle = node.style.height; // Store current explicit style.height
+        node.style.height = '1px'; // Temporarily collapse to measure actual content scroll height
+        let currentContentScrollHeight = node.scrollHeight; // Includes padding
+        node.style.height = prevHeightStyle; // Restore briefly (mostly for safety, will be overridden)
+
+        let targetHeight;
+        const epsilon = 2; // Tolerance for floating point comparisons
+
+        // If the measured scroll height for content is at or below one styled line height
+        if (currentContentScrollHeight <= minTargetHeightForOneLine + epsilon) {
+          targetHeight = minTargetHeightForOneLine;
+        } else {
+          targetHeight = currentContentScrollHeight;
+        }
+
+        if (targetHeight <= MAX_HEIGHT) {
+          node.style.height = targetHeight + 'px';
+          node.style.overflowY = 'hidden';
+        } else {
+          node.style.height = MAX_HEIGHT + 'px';
+          node.style.overflowY = 'auto';
+        }
       }
+    }
 
-      if (typeof fabric !== 'undefined') {
-        // Clean up any existing instance to prevent duplicates
-        if (fabricInstance) {
-          fabricInstance.dispose();
+    node.addEventListener('input', resize);
+    setTimeout(resize, 0); // Initial resize on mount
+
+    return {
+      destroy() {
+        node.removeEventListener('input', resize);
+      }
+    };
+  }
+
+  // Keydown handler for the textarea to submit with Enter
+  function handleCanvasInputKeydown(event: KeyboardEvent) {
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault();
+      // Check if the button would be disabled before calling generateImage
+      const isDisabled = $isGenerating || (!fabricInstance || fabricInstance.getObjects().length === 0) && !additionalContext.trim();
+      if (!isDisabled) {
+        generateImage(); // Call the existing submit function
+      }
+    }
+  }
+
+  let textColor: string = '#000000';
+  let fontSize: number = 32;
+  let fontFamily: string = 'Arial';
+
+  let shapeFillColor: string = '#cccccc';
+  let shapeStrokeColor: string = '#000000';
+  let shapeStrokeWidth: number = 2;
+  // Remove duplicate shapeType declaration
+  // let shapeType: string = 'rectangle'; // Default shape
+
+  // For shape selection dropdown
+  // const shapeOptionsList = [
+  //   { type: 'rectangle', icon: 'check_box_outline_blank' },
+  //   { type: 'circle',    icon: 'circle' }, // Using 'circle' material icon
+  //   { type: 'triangle',  icon: 'change_history' }
+  // ];
+
+  // $: currentShapeIcon = shapeOptionsList.find(s => s.type === shapeType)?.icon || 'check_box_outline_blank';
+
+  // Reactive update for dropdown position
+  // $: if (browser && showShapeDropdown && shapeToolButtonElement) {
+  //   const rect = shapeToolButtonElement.getBoundingClientRect();
+  //   const toolbarRect = shapeToolButtonElement.closest('.tool-selector-toolbar')?.getBoundingClientRect();
+  //   if (rect && toolbarRect) {
+  //     // Position the dropdown above the button
+  //     const buttonCenter = rect.left + (rect.width / 2);
+  //     shapeDropdownLeftPosition = `${buttonCenter - 24}px`; // Center the 48px dropdown over the button
+  //     shapeDropdownTopPosition = `auto`; // Let bottom property handle vertical position
+  //   }
+  // }
+
+  // For dynamic toolbar when a shape is selected
+  let activeFabricObject: any | null = null;
+  let selectedShapeFillProxy: string = '#cccccc';
+  let selectedShapeStrokeProxy: string = '#000000';
+  let selectedShapeStrokeWidthProxy: number = 0;
+
+  // Image upload variables
+  let fileInput: HTMLInputElement;
+  let isDraggingOver = false;
+  let imageUploadScale = 1.0;
+
+  function addTextObject(e: PointerEvent) {
+    if (!fabricInstance) {
+      console.error('Fabric instance not ready');
+      return;
+    }
+    const point = getPointerPosition(e);
+    const text = new fabric.IText('Text', {
+      left: point.x,
+      top: point.y,
+      fill: textColor,
+      fontSize: fontSize,
+      fontFamily: fontFamily,
+      selectable: true,
+      evented: true
+    });
+    fabricInstance.add(text);
+    fabricInstance.setActiveObject(text);
+    selectedTool.set('select');
+    updateImageData();
+    saveCanvasState();
+  }
+
+  function addShapeObject(e: PointerEvent) {
+    if (!fabricInstance) {
+      console.error('Fabric instance not ready');
+      return;
+    }
+    const point = getPointerPosition(e);
+    const commonProps = {
+      left: point.x,
+      top: point.y,
+      fill: shapeFillColor,
+      stroke: shapeStrokeColor,
+      strokeWidth: shapeStrokeWidth,
+      selectable: true,
+      evented: true
+    };
+    let obj: any = null;
+    switch (shapeType) {
+      case 'circle':
+        obj = new fabric.Ellipse({ ...commonProps, rx: 50, ry: 50 }); // Use Ellipse for circle
+        break;
+      case 'triangle':
+        obj = new fabric.Triangle({ ...commonProps, width: 100, height: 90 });
+        break;
+      case 'rectangle':
+      default:
+        obj = new fabric.Rect({ ...commonProps, width: 120, height: 80 });
+        break;
+    }
+    if (obj) {
+      fabricInstance.add(obj);
+      fabricInstance.setActiveObject(obj);
+    }
+    selectedTool.set('select');
+    updateImageData();
+    saveCanvasState();
+  }
+
+  // Handle image upload from file input
+  function handleFileInputChange(event: Event) {
+    const target = event.target as HTMLInputElement;
+    if (target.files && target.files.length > 0) {
+      const file = target.files[0];
+      uploadImage(file);
+      target.value = ''; // Reset file input to allow uploading the same file again
+    }
+  }
+
+  // Handle drag and drop
+  function handleDragOver(event: DragEvent) {
+    event.preventDefault();
+    isDraggingOver = true;
+  }
+
+  function handleDragLeave() {
+    isDraggingOver = false;
+  }
+
+  function handleDrop(event: DragEvent) {
+    event.preventDefault();
+    isDraggingOver = false;
+
+    if (event.dataTransfer?.files && event.dataTransfer.files.length > 0) {
+      const file = event.dataTransfer.files[0];
+      if (file.type.startsWith('image/')) {
+        uploadImage(file);
+      } else {
+        errorMessage = "Please drop an image file";
+        setTimeout(() => { errorMessage = null; }, 3000);
+      }
+    }
+  }
+
+  // Process image and add to canvas – ensure NO cropping occurs.
+  function uploadImage(file: File) {
+    if (!fabricInstance) {
+      console.error('Fabric instance not ready for uploadImage');
+      return;
+    }
+
+    const reader = new FileReader();
+
+    if (file.type === 'image/svg+xml') {
+      // Handle SVG files
+      reader.onload = function (e) {
+        const svgString = e.target?.result as string;
+        if (!svgString) {
+          console.error('Could not read SVG string');
+          errorMessage = "Could not read SVG file";
+          setTimeout(() => { errorMessage = null; }, 3000);
+          return;
         }
 
-        fabricInstance = new fabric.Canvas(fabricCanvasHTML, {
-          backgroundColor: canvasBackgroundColor, // Use the white background color
-          renderOnAddRemove: true,
-          width: fabricCanvasHTML.width,
-          height: fabricCanvasHTML.height,
-          preserveObjectStacking: true // Good for managing layers
-        });
+        console.log('SVG string loaded, length:', svgString.length);
 
-        // Ensure the background is rendered immediately
-        fabricInstance.requestRenderAll();
-
-        // Make sure Fabric's internal elements are correctly positioned
-        if (fabricInstance.wrapperEl) {
-          fabricInstance.wrapperEl.style.position = 'absolute';
-          fabricInstance.wrapperEl.style.top = '0';
-          fabricInstance.wrapperEl.style.left = '0';
-          fabricInstance.wrapperEl.style.width = fabricCanvasHTML.style.width;
-          fabricInstance.wrapperEl.style.height = fabricCanvasHTML.style.height;
+        let processedSvg = svgString.trim();
+        if (processedSvg.startsWith('<?xml')) {
+          processedSvg = processedSvg.substring(processedSvg.indexOf('?>') + 2).trim();
+          console.log('Removed XML declaration from SVG string.');
         }
 
-        // Set default control appearance for all objects
-        fabric.Object.prototype.set({
-          cornerStyle: 'circle',
-          cornerColor: 'white',
-          cornerStrokeColor: '#6355FF',
-          cornerStrokeWidth: 3,
-          cornerSize: 12,
-          padding: 0, // Increased padding for better selection handling
-          transparentCorners: false,
-          borderColor: '#6355FF',
-          borderScaleFactor: 1.5,
-          borderOpacityWhenMoving: .5,
-          touchCornerSize: 20,
-        });
+        if (!processedSvg.startsWith('<svg')) {
+          const svgTagIndex = processedSvg.toLowerCase().indexOf('<svg');
+          if (svgTagIndex !== -1) {
+            processedSvg = processedSvg.substring(svgTagIndex);
+            console.log('Trimmed SVG to start with <svg> tag.');
+          } else {
+            console.error('SVG content does not seem to contain an <svg> tag.');
+            errorMessage = "Invalid SVG content: Missing <svg> tag.";
+            setTimeout(() => { errorMessage = null; }, 3000);
+            return;
+          }
+        }
 
-        console.log('Fabric.js canvas initialized successfully');
-        // Listen to path creation and erasing events to save state automatically
-        fabricInstance.on('path:created', () => {
-          saveCanvasState();
-          recordHistory();
-        });
-        if (fabricInstance.on) {
-          fabricInstance.on('erasing:end', (opt) => {
-            // Auto-remove nearly empty paths to avoid leftovers
-            const targets = opt?.targets || [];
-            let removedSomething = false;
-            targets.forEach((obj: any) => {
-              if (obj && obj.type === 'path') {
-                const bb = obj.getBoundingRect();
-                const area = bb.width * bb.height;
-                if (area < 25 || (obj.path && obj.path.length < 10)) {
-                  fabricInstance.remove(obj);
-                  removedSomething = true;
+        const svgTagMatch = processedSvg.match(/<svg[^>]*>/i);
+        if (svgTagMatch && svgTagMatch[0] && !svgTagMatch[0].includes('xmlns="http://www.w3.org/2000/svg"')) {
+          processedSvg = processedSvg.replace(/<svg/i, '<svg xmlns="http://www.w3.org/2000/svg"');
+          console.log('Added SVG namespace to the <svg> tag.');
+        }
+
+        try {
+          console.log('Attempting to parse SVG with fabric.loadSVGFromString. Processed SVG string snippet:', processedSvg.substring(0, 200));
+          fabric.loadSVGFromString(processedSvg, (objects, options) => {
+            console.log('fabric.loadSVGFromString callback. Objects:', objects, 'Options:', options);
+
+            let finalObjects = objects;
+            if ((!finalObjects || finalObjects.length === 0) && options && options.objects && options.objects.length > 0) {
+              console.warn('`objects` array was empty in loadSVGFromString, but `options.objects` has content. Using `options.objects`.');
+              finalObjects = options.objects;
+            }
+
+            if (finalObjects && Array.isArray(finalObjects) && finalObjects.length > 0) {
+              console.log('Proceeding with objects from fabric.loadSVGFromString.');
+              processFabricElements(finalObjects, options);
+            } else {
+              console.warn('`objects` array is empty or invalid after fabric.loadSVGFromString. Attempting fallback with DOMParser, parseSVGDocument & enlivenObjects...');
+              try {
+                const parser = new DOMParser();
+                const svgDoc = parser.parseFromString(processedSvg, "image/svg+xml");
+
+                const parserErrorNode = svgDoc.querySelector('parsererror');
+                if (parserErrorNode) {
+                  console.error("Error parsing SVG with DOMParser:", parserErrorNode.textContent);
+                  errorMessage = "Error parsing SVG: " + (parserErrorNode.textContent || "Unknown DOMParser error");
+                  setTimeout(() => { errorMessage = null; }, 5000);
+                  return;
                 }
+
+                if (!svgDoc.documentElement || svgDoc.documentElement.nodeName === 'parsererror') {
+                  console.error('Failed to parse SVG with DOMParser or SVG is empty/invalid (documentElement error).');
+                  errorMessage = "Invalid SVG structure after DOMParser.";
+                  setTimeout(() => { errorMessage = null; }, 3000);
+                  return;
+                }
+                console.log('DOMParser successful. SVG Document Element:', svgDoc.documentElement);
+
+                // Corrected usage of fabric.parseSVGDocument and fabric.util.enlivenObjects
+                fabric.parseSVGDocument(svgDoc.documentElement, (results, optionsFromParseSVG) => {
+                  console.log('fabric.parseSVGDocument callback. Results:', results, 'Options from parseSVGDocument:', optionsFromParseSVG);
+                  if (results && Array.isArray(results) && results.length > 0) {
+                    console.log(`Found ${results.length} elements from parseSVGDocument. Attempting to enliven.`);
+                    fabric.util.enlivenObjects(results, (enlivenedFabricObjects: any[]) => {
+                      console.log('fabric.util.enlivenObjects callback. Enlivened Objects:', enlivenedFabricObjects);
+                      if (enlivenedFabricObjects && Array.isArray(enlivenedFabricObjects) && enlivenedFabricObjects.length > 0) {
+                        console.log('SVG enlivened successfully via fallback path.');
+                        // Pass the enlivened objects AND the options from this parseSVGDocument step
+                        processFabricElements(enlivenedFabricObjects, optionsFromParseSVG);
+                      } else {
+                        console.error('SVG enlivening via fallback resulted in no objects or an invalid/empty array.');
+                        errorMessage = "Could not process SVG elements after parsing (enlivenObjects failed or returned empty).";
+                        setTimeout(() => { errorMessage = null; }, 3000);
+                      }
+                    }, 'fabric'); // Use 'fabric' namespace
+                  } else {
+                    console.error('fabric.parseSVGDocument resulted in no elements or an invalid results array.');
+                    errorMessage = "Could not extract elements using fabric.parseSVGDocument (fallback returned empty/invalid).";
+                    setTimeout(() => { errorMessage = null; }, 3000);
+                  }
+                } /*, reviverFn_if_needed, options_for_parseSVGDocument_if_any */);
+              } catch (fallbackError) {
+                console.error('Error during SVG fallback parsing process:', fallbackError);
+                let message = "Unknown error";
+                if (fallbackError instanceof Error) message = fallbackError.message;
+                errorMessage = "Failed to parse SVG (fallback): " + message;
+                setTimeout(() => { errorMessage = null; }, 3000);
               }
-            });
-            saveCanvasState();
-            if (removedSomething) {
-              recordHistory();
             }
           });
+        } catch (loadError) {
+          console.error('Error calling fabric.loadSVGFromString (outer try-catch):', loadError);
+          let message = "Unknown error";
+          if (loadError instanceof Error) message = loadError.message;
+          errorMessage = "Error parsing SVG: " + message;
+          setTimeout(() => { errorMessage = null; }, 3000);
         }
+      };
 
-        // Replace the existing 'object:modified' handler for more specific logic
-        fabricInstance.off('object:modified'); // Remove previous one if any from prior steps
-        fabricInstance.on('object:modified', (e) => {
-          const target = e.target;
-          if (!target) return;
-
-          let propertyChanged = false;
-          if (target.type === 'rect') {
-            if (target.scaleX !== 1 || target.scaleY !== 1) {
-              const newWidth = target.width * target.scaleX;
-              const newHeight = target.height * target.scaleY;
-              target.set({
-                width: newWidth,
-                height: newHeight,
-                scaleX: 1,
-                scaleY: 1
-              });
-              target.setCoords();
-              propertyChanged = true;
-            }
+      // Function to process the elements (either from direct parse or enliven)
+      // This function is defined within reader.onload to have access to its scope if needed,
+      // but primarily uses fabricInstance, canvasWidth, canvasHeight from the component scope.
+      function processFabricElements(fabricObjects: any[], processingOptions: any) {
+        console.log('Processing Fabric elements. Count:', fabricObjects.length, 'Processing Options:', processingOptions);
+        try {
+          if (!fabricObjects || !Array.isArray(fabricObjects) || fabricObjects.length === 0) {
+              console.error('processFabricElements called with no valid objects.');
+              errorMessage = "No elements to process for SVG.";
+              setTimeout(() => { errorMessage = null; }, 3000);
+              return;
           }
-          // Add other type-specific modifications here if needed in the future
 
-          // Common post-modification logic
-          if (propertyChanged) {
-            fabricInstance.requestRenderAll(); // Render immediately if we changed properties
+          let elementToAdd;
+          const viewBox = processingOptions?.viewBox; // options from loadSVGFromString or parseSVGDocument callback
+
+          // If there's only one object and no specific viewBox indicating a complex layout, use it directly.
+          // Otherwise, group them. Grouping is generally safer for SVGs.
+          if (fabricObjects.length === 1 && !viewBox && fabricObjects[0] && typeof fabricObjects[0].set === 'function') {
+            elementToAdd = fabricObjects[0];
+            console.log('Single SVG element, will add directly.');
           } else {
-            fabricInstance.renderAll(); // Standard render if no specific property change by this handler
+            elementToAdd = fabric.util.groupSVGElements(fabricObjects, processingOptions || {});
+            console.log('Multiple SVG elements or viewBox implies grouping. Group created:', elementToAdd);
           }
 
-          setTimeout(() => {
-            saveCanvasState();
-            updateImageData(); // Ensure preview is updated
-            recordHistory();
-            // Update reactive proxies if the active object was the one modified
-            if (activeFabricObject && activeFabricObject === target) {
-                if (activeFabricObject.type === 'rect' || activeFabricObject.type === 'circle' || activeFabricObject.type === 'triangle') {
-                    selectedShapeFillProxy = activeFabricObject.fill || '#cccccc';
-                    selectedShapeStrokeProxy = activeFabricObject.stroke || '#000000';
-                    selectedShapeStrokeWidthProxy = activeFabricObject.strokeWidth === undefined ? 0 : activeFabricObject.strokeWidth;
+          if (!elementToAdd || typeof elementToAdd.set !== 'function') {
+            console.error('Failed to create a valid Fabric element/group (elementToAdd is invalid).');
+            errorMessage = "Error processing SVG elements into a usable Fabric object.";
+            setTimeout(() => { errorMessage = null; }, 3000);
+            return;
+          }
+
+          // Resetting transform for the new element
+          elementToAdd.set({
+            left: 0,
+            top: 0,
+            originX: 'left', // Set origin before calculating scaled dimensions and final position
+            originY: 'top',
+            scaleX: 1,
+            scaleY: 1,
+            angle: 0,
+            flipX: false,
+            flipY: false,
+            skewX: 0,
+            skewY: 0
+          });
+          elementToAdd.setCoords(); // Calculate initial coords after reset
+
+          let elementWidth = elementToAdd.width;
+          let elementHeight = elementToAdd.height;
+
+          // If width/height are still 0 or undefined, try getBoundingRect (more reliable after setCoords)
+          if ((!elementWidth || !elementHeight || elementWidth === 0 || elementHeight === 0) && typeof elementToAdd.getBoundingRect === 'function') {
+              const bounds = elementToAdd.getBoundingRect();
+              elementWidth = bounds.width;
+              elementHeight = bounds.height;
+              console.log('Used getBoundingRect for dimensions:', { width: elementWidth, height: elementHeight });
+          }
+
+          // If still no valid dimensions, calculate from all raw objects as a last resort
+          // This is less likely to be needed if groupSVGElements works well or getBoundingRect is reliable
+          if ((!elementWidth || !elementHeight || elementWidth === 0 || elementHeight === 0) && fabricObjects.length > 0){
+              let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+              fabricObjects.forEach(obj => {
+                if (obj && typeof obj.getBoundingRect === 'function') {
+                    obj.setCoords(); // Ensure coords are calculated
+                    const ob = obj.getBoundingRect();
+                    if(ob.left < minX) minX = ob.left;
+                    if(ob.top < minY) minY = ob.top;
+                    if(ob.left + ob.width > maxX) maxX = ob.left + ob.width;
+                    if(ob.top + ob.height > maxY) maxY = ob.top + ob.height;
                 }
-            }
-          }, 0);
-        });
-
-        // Listen for selection events to update activeFabricObject
-        fabricInstance.on('selection:created', (e) => {
-          if (e.selected && e.selected.length > 0) activeFabricObject = e.selected[0];
-          else activeFabricObject = null;
-        });
-        fabricInstance.on('selection:updated', (e) => {
-          if (e.selected && e.selected.length > 0) activeFabricObject = e.selected[0];
-          else activeFabricObject = null;
-        });
-        fabricInstance.on('selection:cleared', () => {
-          activeFabricObject = null;
-        });
-
-        // NEW: Also listen for additions & removals for history purposes
-        fabricInstance.on('object:added', () => {
-          // Object addition already triggers a render in Fabric
-          setTimeout(() => {
-            recordHistory();
-          }, 0);
-        });
-
-        fabricInstance.on('object:removed', () => {
-          // Ensure immediate render
-          fabricInstance.renderAll();
-
-          setTimeout(() => {
-            recordHistory();
-          }, 0);
-        });
-
-        // Handle live scaling to adjust width/height instead of scale
-        fabricInstance.on('object:scaling', (e) => {
-          const target = e.target;
-          if (!target) return;
-
-          // We only want this for basic shapes drawn via shape tool (rect, ellipse (radius), triangle)
-          if (target.type === 'rect') {
-            target.noScaleCache = false;
-            const newWidth = target.width * target.scaleX;
-            const newHeight = target.height * target.scaleY;
-            target.set({
-              width: newWidth,
-              height: newHeight,
-              scaleX: 1,
-              scaleY: 1
-            });
-            target.setCoords();
-            fabricInstance.requestRenderAll();
-          } else if (target.type === 'triangle') {
-            target.noScaleCache = false;
-            const newWidth = target.width * target.scaleX;
-            const newHeight = target.height * target.scaleY;
-            target.set({ width: newWidth, height: newHeight, scaleX: 1, scaleY: 1 });
-            target.setCoords();
-            fabricInstance.requestRenderAll();
-          } else if (target.type === 'ellipse') { // Changed from 'circle' to 'ellipse'
-            target.noScaleCache = false;
-            // For ellipse, adjust rx and ry based on scaleX and scaleY respectively
-            const newRx = target.rx * target.scaleX;
-            const newRy = target.ry * target.scaleY;
-            target.set({ rx: newRx, ry: newRy, scaleX: 1, scaleY: 1 });
-            target.setCoords();
-            fabricInstance.requestRenderAll();
+              });
+              if (isFinite(minX) && isFinite(maxX) && isFinite(minY) && isFinite(maxY)) {
+                  elementWidth = maxX - minX;
+                  elementHeight = maxY - minY;
+                  console.log('Calculated dimensions from bounding box of all raw objects as fallback:', {width: elementWidth, height: elementHeight});
+              }
           }
-        });
 
-        // Add Alt/Option + Drag to Duplicate functionality
-        fabricInstance.on('mouse:down', function(opt) {
-          if (opt.e.altKey && opt.target && opt.target.selectable) {
-            // Store original values
-            const originalObj = opt.target;
-            const originalLeft = originalObj.left;
-            const originalTop = originalObj.top;
 
-            // Get current pointer position
-            const pointer = fabricInstance.getPointer(opt.e);
+          if (!elementWidth || !elementHeight || elementWidth <= 0 || elementHeight <= 0) {
+            console.warn('Element has invalid/zero dimensions after all checks, using default dimensions (200x200) for scaling.', { elementWidth, elementHeight });
+            elementWidth = 200; // Default to avoid division by zero
+            elementHeight = 200;
+          }
 
-            // Prevent default to avoid original object movement
-            opt.e.preventDefault();
-            opt.e.stopPropagation();
+          const targetCanvasWidth = fabricInstance.width * 0.9;
+          const targetCanvasHeight = fabricInstance.height * 0.9;
+          let scale = 1.0;
 
-            // Clear any existing selection
-            fabricInstance.discardActiveObject();
+          scale = Math.min(targetCanvasWidth / elementWidth, targetCanvasHeight / elementHeight);
+          // Ensure it's not scaled beyond 100% of its original size unless necessary to meet minDim
+          scale = Math.min(scale, 1.0);
 
-            // Clone original object
-            originalObj.clone(function(cloned) {
-              // Position at exact same coordinates
-              cloned.set({
-                left: originalLeft,
-                top: originalTop,
-                evented: true
-              });
 
-              // Add to canvas
-              fabricInstance.add(cloned);
+          const minAllowableDimension = 100; // px
+          const currentMinWidth = elementWidth * scale;
+          const currentMinHeight = elementHeight * scale;
 
-              // Set as active object (important for controls)
-              fabricInstance.setActiveObject(cloned);
-              cloned.setCoords();
+          if (currentMinWidth < minAllowableDimension && elementWidth > 0) {
+              scale = Math.max(scale, minAllowableDimension / elementWidth);
+          }
+          if (currentMinHeight < minAllowableDimension && elementHeight > 0) {
+              scale = Math.max(scale, minAllowableDimension / elementHeight);
+          }
 
-              // Calculate offset from object center to cursor position
-              const offsetX = pointer.x - originalLeft;
-              const offsetY = pointer.y - originalTop;
+          // Final check to ensure it doesn't exceed canvas boundaries after min_dim scaling
+          if (elementWidth * scale > targetCanvasWidth) {
+              scale = targetCanvasWidth / elementWidth;
+          }
+          if (elementHeight * scale > targetCanvasHeight) {
+              scale = targetCanvasHeight / elementHeight;
+          }
 
-              // Create a transform object to simulate dragging state
-              fabricInstance._currentTransform = {
-                target: cloned,
-                action: 'drag',
-                corner: 0,
-                scaleX: cloned.scaleX,
-                scaleY: cloned.scaleY,
-                skewX: cloned.skewX,
-                skewY: cloned.skewY,
-                offsetX: offsetX,
-                offsetY: offsetY,
-                originX: cloned.originX,
-                originY: cloned.originY,
-                ex: pointer.x,
-                ey: pointer.y,
-                left: cloned.left,
-                top: cloned.top,
-                theta: cloned.angle * Math.PI / 180,
-                width: cloned.width * cloned.scaleX,
-                height: cloned.height * cloned.scaleY,
-                mouseXSign: 1,
-                mouseYSign: 1,
-                actionHandler: fabricInstance._getActionFromCorner.bind(fabricInstance, cloned, 0, opt.e) || fabricInstance._actionHandler
-              };
 
-              // Set the action handler for dragging
-              fabricInstance._currentTransform.actionHandler = function(eventData, transform, x, y) {
-                const target = transform.target;
-                const newLeft = x - transform.offsetX;
-                const newTop = y - transform.offsetY;
+          elementToAdd.set({
+            left: fabricInstance.width / 2,
+            top: fabricInstance.height / 2,
+            originX: 'center',
+            originY: 'center',
+            scaleX: scale,
+            scaleY: scale,
+            selectable: true,
+            evented: true,
+            crossOrigin: 'anonymous' // For SVGs that might contain external refs, though less common
+          });
 
-                target.set({
-                  left: newLeft,
-                  top: newTop
-                });
+          elementToAdd.setCoords();
+          fabricInstance.add(elementToAdd);
+          fabricInstance.setActiveObject(elementToAdd);
+          selectedTool.set('select');
+          fabricInstance.requestRenderAll(); // Use requestRenderAll for better perf
 
-                return true;
-              };
-
-              // Ensure original stays in place
-              originalObj.set({
-                left: originalLeft,
-                top: originalTop
-              });
-              originalObj.setCoords();
-
-              // Set canvas state to indicate we're transforming
-              fabricInstance._isCurrentlyDrawing = true;
-
-              // Save canvas state after the operation completes
+          setTimeout(() => { // Defer non-critical updates
+              updateImageData();
               saveCanvasState();
+              recordHistory(); // Ensure recordHistory is available in this scope
+          }, 0);
+          console.log('SVG element processed and added to canvas successfully. Final scale:', scale);
 
-              // Force canvas to render
-              fabricInstance.requestRenderAll();
-            });
-
-            // Prevent event propagation
-            return false;
-          }
-        });
-
-        // Enhanced mouse:move handler to handle our custom transform
-        fabricInstance.on('mouse:move', function(opt) {
-          if (fabricInstance._currentTransform && fabricInstance._currentTransform.action === 'drag') {
-            const pointer = fabricInstance.getPointer(opt.e);
-            const transform = fabricInstance._currentTransform;
-
-            if (transform.actionHandler) {
-              transform.actionHandler(opt.e, transform, pointer.x, pointer.y);
-              transform.target.setCoords();
-              fabricInstance.requestRenderAll();
-            }
-          }
-        });
-
-        // Enhanced mouse:up handler to complete the transform
-        fabricInstance.on('mouse:up', function(opt) {
-          if (fabricInstance._currentTransform) {
-            const target = fabricInstance._currentTransform.target;
-
-            // Clear the transform state
-            fabricInstance._currentTransform = null;
-            fabricInstance._isCurrentlyDrawing = false;
-
-            // Ensure the object remains active and visible
-            if (target) {
-              fabricInstance.setActiveObject(target);
-              target.setCoords();
-              target.fire('modified');
-              fabricInstance.fire('object:modified', { target: target });
-              fabricInstance.requestRenderAll();
-            }
-          }
-        });
-
-        // Ensure selection is preserved after mouse:up
-        fabricInstance.on('mouse:up', function(opt) {
-          // If an object was being transformed, make sure it stays active
-          if (fabricInstance._currentTransform && fabricInstance._currentTransform.target) {
-            const target = fabricInstance._currentTransform.target;
-            fabricInstance.setActiveObject(target);
-            target.setCoords();
-            fabricInstance.requestRenderAll();
-          }
-        });
-
-        return true;
-      } else {
-        console.error('Fabric.js still not available after loading attempt');
-        return false;
+        } catch (processingError) {
+          console.error('Error within processFabricElements:', processingError);
+          let message = "Unknown error";
+          if (processingError instanceof Error) message = processingError.message;
+          errorMessage = "Error processing SVG elements: " + message;
+          setTimeout(() => { errorMessage = null; }, 3000);
+        }
       }
-    } catch (err) {
-      console.error('Error initializing Fabric canvas:', err);
-      return false;
-    }
-  }
 
-  // Function to build the prompt for GPT-Image-1 (Ignoring AI, but keeping for structure)
-  function buildGptImagePrompt() {
-    let prompt = `Complete this drawing. DO NOT change the original image sketch at all; simply add onto the existing drawing EXACTLY as it is. CRITICAL STRUCTURE PRESERVATION: You MUST treat this sketch as an EXACT STRUCTURAL TEMPLATE. `;
-    const contentGuide = sketchAnalysis !== "Draw something to see AI's interpretation" ? sketchAnalysis : "A user's drawing.";
-    prompt += `CONTENT DESCRIPTION: ${contentGuide}\n\n`;
-    if (additionalContext) {
-      prompt += `USER'S CONTEXT: "${additionalContext}"\n\n`;
-    }
-    if (analysisElements.length > 0) {
-      const structuralGuide = `Based on analysis, the drawing contains ${analysisElements.length} main elements. Element positions and basic relationships are implied by the sketch.`;
-      prompt += `STRUCTURAL GUIDE: ${structuralGuide}\n\n`;
-    }
-    const compositionGuide = `Focus on the arrangement within the ${selectedAspectRatio} frame.`;
-    prompt += `COMPOSITION GUIDE: ${compositionGuide}\n\n`;
-    if (strokeRecognition && strokeRecognition !== "Draw something to see shapes recognized") {
-      prompt += `RECOGNIZED SHAPES: ${strokeRecognition}\n\n`;
-    }
-    prompt += `FINAL INSTRUCTIONS: Create a DIRECT, FRONT-FACING VIEW that maintains the EXACT same composition as the sketch. NEVER distort or reposition any element. Color and texture can be added, but the structural skeleton must remain identical to the original sketch.`;
-    return prompt.length > 4000 ? prompt.substring(0, 3997) + '...' : prompt;
-  }
+      reader.onerror = function (err) {
+        console.error('FileReader error for SVG:', err);
+        errorMessage = "Error reading SVG file";
+        setTimeout(() => { errorMessage = null; }, 3000);
+      };
+      reader.readAsText(file);
 
-  $: {
-    const newPrompt = buildGptImagePrompt();
-    gptImagePrompt.set(newPrompt);
-  }
+    } else {
+      // Handle raster images (PNG, JPG, etc.)
+      reader.onload = function (e) {
+        const imgData = e.target?.result as string;
+        if (!imgData) {
+          console.error('Could not read image data');
+          errorMessage = "Could not read image file";
+          setTimeout(() => { errorMessage = null; }, 3000);
+          return;
+        }
 
-  function isRealUserEdit(): boolean {
-    if (isResizeEvent) return false;
-    if ($isGenerating || isArtificialEvent) return false;
-    if (isAnalyzing || isRecognizingStrokes) return false;
-    lastUserEditTime = Date.now();
-    pendingAnalysis = true;
-    return true;
-  }
+        fabric.Image.fromURL(imgData, (img) => {
+          if (!img || typeof img.set !== 'function') {
+            console.error('Failed to create Fabric image or image object is invalid');
+            errorMessage = "Failed to process image";
+            setTimeout(() => { errorMessage = null; }, 3000);
+            return;
+          }
 
-  $: strokeCount = fabricInstance?.getObjects()?.length || 0; // Updated to use Fabric.js objects
+          const originalWidth = img.width;
+          const originalHeight = img.height;
 
-  let pathBuilderLookup = {};
-  let browser = typeof window !== 'undefined';
-  let lastResizeTime = 0;
+          if (!originalWidth || !originalHeight || originalWidth === 0 || originalHeight === 0) {
+              console.warn('Uploaded raster image has zero dimensions, using defaults (200x200).', { originalWidth, originalHeight });
+              img.set({ width: 200, height: 200 }); // Set some defaults
+          }
 
-  // Separate initialization function
-  async function initializeComponent() {
-    if (inputCanvas) {
-      inputCtx = inputCanvas.getContext('2d');
 
-      // Set white background for perfect-freehand canvas immediately
-      if (inputCtx) {
-        inputCtx.fillStyle = '#ffffff';
-        inputCtx.fillRect(0, 0, inputCanvas.width, inputCanvas.height);
-      }
-    }
+          const targetCanvasWidth = fabricInstance.width * 0.9;
+          const targetCanvasHeight = fabricInstance.height * 0.9;
+          let scale = 1.0;
 
-    // First, load Fabric.js
-    try {
-      await loadFabricScript();
-      // Then initialize the canvas
-      const success = await initializeFabricCanvas();
-      if (!success) {
-        console.error('Failed to initialize Fabric canvas after script loaded');
-        fabricErrorMessage = 'Could not initialize drawing tools. Please try refreshing the page.';
-      } else {
-        // Successfully initialized
-        fabricErrorMessage = null;
-        // Set up initial canvas alignment and styles
-        setupCanvasAlignment();
+          if (img.width > 0 && img.height > 0) {
+              scale = Math.min(targetCanvasWidth / img.width, targetCanvasHeight / img.height);
+               // Ensure it's not scaled beyond 100% of its original size unless necessary to meet minDim
+              scale = Math.min(scale, 1.0);
+          } else { // Should not happen if defaults set above
+              scale = 0.5;
+          }
 
-        // Ensure white background is applied and visible
-        if (fabricInstance) {
-          fabricInstance.setBackgroundColor('#ffffff', fabricInstance.renderAll.bind(fabricInstance));
-          // Force an immediate render
+          const minAllowableDimension = 100;
+          const currentMinWidth = img.width * scale;
+          const currentMinHeight = img.height * scale;
+
+          if (currentMinWidth < minAllowableDimension && img.width > 0) {
+              scale = Math.max(scale, minAllowableDimension / img.width);
+          }
+          if (currentMinHeight < minAllowableDimension && img.height > 0) {
+              scale = Math.max(scale, minAllowableDimension / img.height);
+          }
+
+          // Final check to ensure it doesn't exceed canvas boundaries after min_dim scaling
+          if (img.width * scale > targetCanvasWidth) {
+              scale = targetCanvasWidth / img.width;
+          }
+          if (img.height * scale > targetCanvasHeight) {
+              scale = targetCanvasHeight / img.height;
+          }
+
+
+          img.set({
+            left: fabricInstance.width / 2,
+            top: fabricInstance.height / 2,
+            originX: 'center',
+            originY: 'center',
+            scaleX: scale,
+            scaleY: scale,
+            selectable: true,
+            evented: true,
+            crossOrigin: 'anonymous' // Important for toDataURL if image source is different
+          });
+
+          fabricInstance.add(img);
+          fabricInstance.setActiveObject(img);
+          selectedTool.set('select');
           fabricInstance.requestRenderAll();
-        }
+
+          setTimeout(() => { // Defer non-critical updates
+              updateImageData();
+              saveCanvasState();
+              recordHistory(); // Ensure recordHistory is available in this scope
+          }, 0);
+          console.log('Raster image added to canvas successfully. Final scale:', scale);
+
+        }, { crossOrigin: 'anonymous' }); // Options for fromURL
+      };
+
+      reader.onerror = function(err){
+          console.error('FileReader error for raster image:', err);
+          errorMessage = "Error reading image file";
+          setTimeout(() => { errorMessage = null; }, 3000);
+      };
+      reader.readAsDataURL(file);
+    }
+  }
+
+  // Function to trigger file input click
+  function activateImageUpload() {
+    if (fileInput) {
+      fileInput.value = ''; // Clear previous selection to allow re-upload of same file
+      fileInput.click();
+    }
+  }
+
+  // --- UNDO / REDO HISTORY MANAGEMENT ---
+  const undoStack: string[] = [];
+  const redoStack: string[] = [];
+  let isRestoringHistory = false; // flag to suppress history during restore
+  const MAX_HISTORY = 50;
+
+  function recordHistory() {
+    if (!fabricInstance || isRestoringHistory) return;
+    try {
+      const snapshot = JSON.stringify(fabricInstance.toJSON());
+      // Prevent duplicate states at the top of the stack
+      if (undoStack.length === 0 || undoStack[undoStack.length - 1] !== snapshot) {
+        undoStack.push(snapshot);
+        if (undoStack.length > MAX_HISTORY) undoStack.shift();
+        redoStack.length = 0; // clear redo stack on new action
       }
     } catch (err) {
-      console.error('Error loading Fabric.js:', err);
-      fabricErrorMessage = 'Error loading drawing tools. Please check your connection and try refreshing.';
-    }
-
-    resizeCanvas(); // Initial resize and setup
-
-    if (inputCtx) {
-      // Set white background again after resize
-      inputCtx.fillStyle = '#ffffff';
-      inputCtx.fillRect(0, 0, inputCanvas.width, inputCanvas.height);
-
-      renderStrokes(); // Initial render (likely empty perfect-freehand canvas)
-      updateImageData(); // Use a centralized function to update imageData
-    }
-
-    console.log('Component mounted');
-    mobileCheck();
-
-    // Push initial baseline snapshot after component ready & state loaded
-    if (fabricInstance) {
-      try {
-        undoStack.length = 0;
-        redoStack.length = 0;
-        const baseline = JSON.stringify(fabricInstance.toJSON());
-        undoStack.push(baseline);
-      } catch (err) {
-        console.error('Unable to set initial history baseline', err);
-      }
+      console.error('Error recording history', err);
     }
   }
 
-  // Import Prettier for code formatting
-  import prettier from 'prettier/standalone';
-  import * as parserHtml from 'prettier/parser-html';
-  const htmlParser = parserHtml?.default || parserHtml;
-
-  // Shape type variable for binding to CanvasToolbar
-  let shapeType: string = 'rectangle';
-
-  // Session storage key for canvas data
-  const CANVAS_STORAGE_KEY = 'canvasDrawingData';
-
-  // Forward declaration for fabric
-  let fabric: any;
-
-  // Interface extension for Stroke type with hasPressure property
-  interface EnhancedStroke extends Stroke {
-    hasPressure?: boolean;
-    hasHardwarePressure?: boolean; // Flag for true hardware pressure support
-    isEraserStroke?: boolean; // Flag for eraser strokes
-  }
-
-  // Drawing content object with enhanced strokes
-  interface EnhancedDrawingContent {
-    strokes: EnhancedStroke[];
-    bounds?: {
-      width: number;
-      height: number;
-    };
-  }
-
-  // Analysis element type
-  interface AnalysisElement {
-    id: string;
-    name: string;
-    category?: string;
-    x: number;
-    y: number;
-    width?: number;
-    height?: number;
-    color: string;
-    isChild?: boolean;
-    parentId?: string;
-    children?: string[];
-    pressure?: number; // Add pressure property for visual effects
-    boundingBox?: {
-      minX: number;
-      minY: number;
-      maxX: number;
-      maxY: number;
-      width: number;
-      height: number;
-    };
-  }
-
-  // State variables
-  let inputCanvas: HTMLCanvasElement;
-  let fabricCanvasHTML: HTMLCanvasElement; // Renamed for clarity
-  let fabricInstance: any = null;
-  let inputCtx: CanvasRenderingContext2D | null = null;
-  let isDrawing = false;
-  let currentStroke: EnhancedStroke | null = null;
-  // Use the store values for reference but maintain local variables for reactivity
-  let strokeColor: string;
-  let strokeSize: number;
-  let strokeOpacity: number;
-  let canvasBackgroundColor: string = '#ffffff'; // Default background color
-
-  let lastUserEditTime = 0;
-  let pendingAnalysis = false;
-
-  // Subscribe to store changes
-  strokeOptions.subscribe(options => {
-    strokeColor = options.color;
-    strokeSize = options.size;
-    strokeOpacity = options.opacity;
-
-    // If pen tool is active and options change, update currentStroke if any
-    if ($selectedTool === 'pen' && currentStroke) {
-      currentStroke.color = strokeColor;
-      currentStroke.size = strokeSize;
-      currentStroke.opacity = strokeOpacity;
-      renderStrokes(); // Re-render temporary stroke
-    }
-    // If eraser tool is active, update EraserBrush width
-    if ($selectedTool === 'eraser' && fabricInstance && fabricInstance.isDrawingMode) {
-      fabricInstance.freeDrawingBrush.width = eraserSize; // Assuming eraserSize will be derived from strokeSize or a dedicated variable
-    }
-  });
-
-  let imageData: string | null = null;
-  let pointTimes: number[] = []; // Track time for velocity-based pressure
-  let errorMessage: string | null = null;
-  let fabricErrorMessage: string | null = null; // Add specific fabric error message
-  let sketchAnalysis = "Draw something to see AI's interpretation";
-  let isAnalyzing = false;
-  let strokeRecognition = "Draw something to see shapes recognized";
-  let isRecognizingStrokes = false;
-  let additionalContext = "";
-  let analysisElements: any[] = [];
-  let canvasScale = 1; // Scale factor for canvas display relative to internal resolution
-
-  // Define imageModels for Omnibar
-  const imageGenerationModels = [
-    { value: 'gpt-image-1', label: 'GPT-Image-1' },
-    { value: 'gpt-4o', label: 'GPT-4o' },
-    { value: 'flux-canny-pro', label: 'Flux Canny Pro' },
-    { value: 'controlnet-scribble', label: 'ControlNet Scribble' },
-    { value: 'stable-diffusion', label: 'Stable Diffusion' },
-    { value: 'latent-consistency', label: 'Latent Consistency' }
-  ];
-
-  // Reactive variable for Omnibar's parentDisabled prop
-  $: parentOmnibarDisabled = $isGenerating || ((!fabricInstance || fabricInstance.getObjects().length === 0) && !additionalContext.trim());
-
-  // Drawing content with enhanced strokes - This might become less central with Fabric.js
-  let drawingContent: EnhancedDrawingContent = {
-    strokes: [], // This will no longer store rendered strokes, Fabric.js does.
-    bounds: { width: 800, height: 600 }
-  };
-
-  // Canvas dimensions
-  let canvasWidth = 800;
-  let canvasHeight = 600;
-
-
-  // Variables for tracking user edits and analysis state
-  let isResizeEvent = false;
-  let renderDebounceTimeout: ReturnType<typeof setTimeout> | null = null; // Declare the missing variable
-  let isArtificialEvent = false; // Flag for programmatically triggered events
-
-  // For Fabric.js canvas
-  let fabricLoaded = false;
-  let fabricLoadAttempts = 0;
-  const MAX_FABRIC_LOAD_ATTEMPTS = 3;
-
-  // Function to dynamically load Fabric.js with retry logic
-  function loadFabricScript(): Promise<void> {
-    return new Promise((resolve, reject) => {
-      // Skip if already loaded
-      if (typeof fabric !== 'undefined') {
-        console.log('Fabric.js already loaded');
-        fabricLoaded = true;
-        fabricErrorMessage = null; // Clear any previous errors
-        return resolve();
-      }
-
-      // Track attempts to prevent infinite retry loops
-      fabricLoadAttempts++;
-      if (fabricLoadAttempts > MAX_FABRIC_LOAD_ATTEMPTS) {
-        const error = 'Failed to load Fabric.js after multiple attempts';
-        fabricErrorMessage = error;
-        return reject(new Error(error));
-      }
-
-      console.log(`Loading fabric.js (attempt ${fabricLoadAttempts})`);
-
-      const script = document.createElement('script');
-      script.src = '/js/fabric.js';
-      script.async = true;
-
-      script.onload = () => {
-        console.log('Fabric.js loaded successfully');
-        fabricLoaded = true;
-        fabric = window['fabric']; // Assign to our variable
-        fabricErrorMessage = null; // Clear any previous errors
-        resolve();
-      };
-
-      script.onerror = () => {
-        console.error('Failed to load Fabric.js');
-        if (fabricLoadAttempts >= MAX_FABRIC_LOAD_ATTEMPTS) {
-          fabricErrorMessage = 'Failed to load the drawing engine. Please check your internet connection and refresh the page.';
-          reject(new Error('Max retry attempts reached'));
-        } else {
-          // Retry on failure with a delay
-          setTimeout(() => {
-            loadFabricScript().then(resolve).catch(reject);
-          }, 500);
-        }
-      };
-
-      document.head.appendChild(script);
-    });
-  }
-
-  // Initialize Fabric.js canvas
-  async function initializeFabricCanvas() {
-    if (!fabricCanvasHTML) {
-      console.error('Fabric canvas element not yet available');
-      return false;
-    }
-
+  // Edit the applySnapshot function to ensure immediate rendering
+  function applySnapshot(snapshot: string) {
+    if (!fabricInstance) return;
+    isRestoringHistory = true;
     try {
-      if (!fabricLoaded) {
-        await loadFabricScript();
+      fabricInstance.loadFromJSON(JSON.parse(snapshot), () => {
+        // Immediate visual update first
+        fabricInstance.renderAll();
+
+        // Then perform the potentially slower operations
+        setTimeout(() => {
+          updateImageData();
+          saveCanvasState(); // This will save the restored state
+          isRestoringHistory = false;
+          // DO NOT call recordHistory() here, as this is restoring a state, not a new action.
+        }, 0);
+      });
+    } catch (err) {
+      console.error('Error applying history snapshot', err);
+      isRestoringHistory = false;
+    }
+  }
+
+  // Update the undoAction function for immediate rendering
+  function undoAction() {
+    if (!fabricInstance || undoStack.length === 0) return;
+    const current = JSON.stringify(fabricInstance.toJSON());
+    redoStack.push(current);
+    if (redoStack.length > MAX_HISTORY) redoStack.shift();
+
+    const prev = undoStack.pop();
+    if (prev) {
+      applySnapshot(prev);
+    }
+  }
+
+  // Update the redoAction function for immediate rendering
+  function redoAction() {
+    if (!fabricInstance || redoStack.length === 0) return;
+    const current = JSON.stringify(fabricInstance.toJSON());
+    undoStack.push(current);
+    if (undoStack.length > MAX_HISTORY) undoStack.shift();
+
+    const next = redoStack.pop();
+    if (next) {
+      applySnapshot(next);
+    }
+  }
+
+  // --- OBJECT REORDERING (Z-INDEX) ---
+  /**
+   * Reorder selected objects on the Fabric canvas.
+   * @param {'backward' | 'forward' | 'back' | 'front'} direction
+   */
+  function reorderObjects(direction: 'backward' | 'forward' | 'back' | 'front') {
+    if (!fabricInstance) return;
+    const activeObjects = fabricInstance.getActiveObjects();
+    if (!activeObjects || activeObjects.length === 0) return;
+
+    recordHistory(); // Save state before reordering
+
+    activeObjects.forEach((obj: any) => {
+      switch (direction) {
+        case 'backward':
+          fabricInstance.sendBackwards(obj);
+          break;
+        case 'forward':
+          fabricInstance.bringForward(obj);
+          break;
+        case 'back':
+          fabricInstance.sendToBack(obj);
+          break;
+        case 'front':
+          fabricInstance.bringToFront(obj);
+          break;
       }
+    });
 
-      if (typeof fabric !== 'undefined') {
-        // Clean up any existing instance to prevent duplicates
-        if (fabricInstance) {
-          fabricInstance.dispose();
-        }
+    // Immediate visual update
+    fabricInstance.requestRenderAll();
 
-        fabricInstance = new fabric.Canvas(fabricCanvasHTML, {
-          backgroundColor: canvasBackgroundColor, // Use the white background color
-          renderOnAddRemove: true,
-          width: fabricCanvasHTML.width,
-          height: fabricCanvasHTML.height,
-          preserveObjectStacking: true // Good for managing layers
-        });
+    // Persist state asynchronously to avoid blocking UI
+    setTimeout(() => {
+      updateImageData();
+      saveCanvasState();
+      // recordHistory(); // History already recorded at the start of function
+    }, 0);
+  }
 
-        // Ensure the background is rendered immediately
+  // Update the handleGlobalKeyDown function for immediate rendering after delete
+  // Renamed from handleKeyDown to handleGlobalKeyDown to avoid conflict with new textarea keydown
+  function handleGlobalKeyDown(event: KeyboardEvent) {
+    const target = event.target as HTMLElement | null;
+
+    // Check if the event target is the new textarea or any other input/editable element
+    if (target && (target.tagName === 'TEXTAREA' && target.classList.contains('text-input-area-canvas')) || target.tagName === 'INPUT' || target.isContentEditable || target.closest('.ql-editor')) {
+      return; // Ignore if focus is on the new textarea or other input/textarea, contentEditable, or Quill editor
+    }
+
+    // console.log('Key event:', { key: event.key, code: event.code, ctrlKey: event.ctrlKey, metaKey: event.metaKey, shiftKey: event.altKey });
+
+    const isMetaOrCtrl = event.metaKey || event.ctrlKey;
+    const isShift = event.shiftKey;
+
+    if ((event.key === 'Delete' || event.key === 'Backspace') && fabricInstance) {
+      const activeObjects = fabricInstance.getActiveObjects();
+      if (activeObjects && activeObjects.length > 0) {
+        event.preventDefault();
+        recordHistory(); // save state before deletion
+
+        activeObjects.forEach(obj => fabricInstance.remove(obj));
+        fabricInstance.discardActiveObject();
         fabricInstance.requestRenderAll();
 
-        // Make sure Fabric's internal elements are correctly positioned
-        if (fabricInstance.wrapperEl) {
-          fabricInstance.wrapperEl.style.position = 'absolute';
-          fabricInstance.wrapperEl.style.top = '0';
-          fabricInstance.wrapperEl.style.left = '0';
-          fabricInstance.wrapperEl.style.width = fabricCanvasHTML.style.width;
-          fabricInstance.wrapperEl.style.height = fabricCanvasHTML.style.height;
-        }
-
-        // Set default control appearance for all objects
-        fabric.Object.prototype.set({
-          cornerStyle: 'circle',
-          cornerColor: 'white',
-          cornerStrokeColor: '#6355FF',
-          cornerStrokeWidth: 3,
-          cornerSize: 12,
-          padding: 0, // Increased padding for better selection handling
-          transparentCorners: false,
-          borderColor: '#6355FF',
-          borderScaleFactor: 1.5,
-          borderOpacityWhenMoving: .5,
-          touchCornerSize: 20,
-        });
-
-        console.log('Fabric.js canvas initialized successfully');
-        // Listen to path creation and erasing events to save state automatically
-        fabricInstance.on('path:created', () => {
+        setTimeout(() => {
+          updateImageData();
           saveCanvasState();
-          recordHistory();
-        });
-        if (fabricInstance.on) {
-          fabricInstance.on('erasing:end', (opt) => {
-            // Auto-remove nearly empty paths to avoid leftovers
-            const targets = opt?.targets || [];
-            let removedSomething = false;
-            targets.forEach((obj: any) => {
-              if (obj && obj.type === 'path') {
-                const bb = obj.getBoundingRect();
-                const area = bb.width * bb.height;
-                if (area < 25 || (obj.path && obj.path.length < 10)) {
-                  fabricInstance.remove(obj);
-                  removedSomething = true;
-                }
-              }
-            });
-            saveCanvasState();
-            if (removedSomething) {
-              recordHistory();
-            }
-          });
-        }
-
-        // Replace the existing 'object:modified' handler for more specific logic
-        fabricInstance.off('object:modified'); // Remove previous one if any from prior steps
-        fabricInstance.on('object:modified', (e) => {
-          const target = e.target;
-          if (!target) return;
-
-          let propertyChanged = false;
-          if (target.type === 'rect') {
-            if (target.scaleX !== 1 || target.scaleY !== 1) {
-              const newWidth = target.width * target.scaleX;
-              const newHeight = target.height * target.scaleY;
-              target.set({
-                width: newWidth,
-                height: newHeight,
-                scaleX: 1,
-                scaleY: 1
-              });
-              target.setCoords();
-              propertyChanged = true;
-            }
-          }
-          // Add other type-specific modifications here if needed in the future
-
-          // Common post-modification logic
-          if (propertyChanged) {
-            fabricInstance.requestRenderAll(); // Render immediately if we changed properties
-          } else {
-            fabricInstance.renderAll(); // Standard render if no specific property change by this handler
-          }
-
-          setTimeout(() => {
-            saveCanvasState();
-            updateImageData(); // Ensure preview is updated
-            recordHistory();
-            // Update reactive proxies if the active object was the one modified
-            if (activeFabricObject && activeFabricObject === target) {
-                if (activeFabricObject.type === 'rect' || activeFabricObject.type === 'circle' || activeFabricObject.type === 'triangle') {
-                    selectedShapeFillProxy = activeFabricObject.fill || '#cccccc';
-                    selectedShapeStrokeProxy = activeFabricObject.stroke || '#000000';
-                    selectedShapeStrokeWidthProxy = activeFabricObject.strokeWidth === undefined ? 0 : activeFabricObject.strokeWidth;
-                }
-            }
-          }, 0);
-        });
-
-        // Listen for selection events to update activeFabricObject
-        fabricInstance.on('selection:created', (e) => {
-          if (e.selected && e.selected.length > 0) activeFabricObject = e.selected[0];
-          else activeFabricObject = null;
-        });
-        fabricInstance.on('selection:updated', (e) => {
-          if (e.selected && e.selected.length > 0) activeFabricObject = e.selected[0];
-          else activeFabricObject = null;
-        });
-        fabricInstance.on('selection:cleared', () => {
-          activeFabricObject = null;
-        });
-
-        // NEW: Also listen for additions & removals for history purposes
-        fabricInstance.on('object:added', () => {
-          // Object addition already triggers a render in Fabric
-          setTimeout(() => {
-            recordHistory();
-          }, 0);
-        });
-
-        fabricInstance.on('object:removed', () => {
-          // Ensure immediate render
-          fabricInstance.renderAll();
-
-          setTimeout(() => {
-            recordHistory();
-          }, 0);
-        });
-
-        // Handle live scaling to adjust width/height instead of scale
-        fabricInstance.on('object:scaling', (e) => {
-          const target = e.target;
-          if (!target) return;
-
-          // We only want this for basic shapes drawn via shape tool (rect, ellipse (radius), triangle)
-          if (target.type === 'rect') {
-            target.noScaleCache = false;
-            const newWidth = target.width * target.scaleX;
-            const newHeight = target.height * target.scaleY;
-            target.set({
-              width: newWidth,
-              height: newHeight,
-              scaleX: 1,
-              scaleY: 1
-            });
-            target.setCoords();
-            fabricInstance.requestRenderAll();
-          } else if (target.type === 'triangle') {
-            target.noScaleCache = false;
-            const newWidth = target.width * target.scaleX;
-            const newHeight = target.height * target.scaleY;
-            target.set({ width: newWidth, height: newHeight, scaleX: 1, scaleY: 1 });
-            target.setCoords();
-            fabricInstance.requestRenderAll();
-          } else if (target.type === 'ellipse') { // Changed from 'circle' to 'ellipse'
-            target.noScaleCache = false;
-            // For ellipse, adjust rx and ry based on scaleX and scaleY respectively
-            const newRx = target.rx * target.scaleX;
-            const newRy = target.ry * target.scaleY;
-            target.set({ rx: newRx, ry: newRy, scaleX: 1, scaleY: 1 });
-            target.setCoords();
-            fabricInstance.requestRenderAll();
-          }
-        });
-
-        // Add Alt/Option + Drag to Duplicate functionality
-        fabricInstance.on('mouse:down', function(opt) {
-          if (opt.e.altKey && opt.target && opt.target.selectable) {
-            // Store original values
-            const originalObj = opt.target;
-            const originalLeft = originalObj.left;
-            const originalTop = originalObj.top;
-
-            // Get current pointer position
-            const pointer = fabricInstance.getPointer(opt.e);
-
-            // Prevent default to avoid original object movement
-            opt.e.preventDefault();
-            opt.e.stopPropagation();
-
-            // Clear any existing selection
-            fabricInstance.discardActiveObject();
-
-            // Clone original object
-            originalObj.clone(function(cloned) {
-              // Position at exact same coordinates
-              cloned.set({
-                left: originalLeft,
-                top: originalTop,
-                evented: true
-              });
-
-              // Add to canvas
-              fabricInstance.add(cloned);
-
-              // Set as active object (important for controls)
-              fabricInstance.setActiveObject(cloned);
-              cloned.setCoords();
-
-              // Calculate offset from object center to cursor position
-              const offsetX = pointer.x - originalLeft;
-              const offsetY = pointer.y - originalTop;
-
-              // Create a transform object to simulate dragging state
-              fabricInstance._currentTransform = {
-                target: cloned,
-                action: 'drag',
-                corner: 0,
-                scaleX: cloned.scaleX,
-                scaleY: cloned.scaleY,
-                skewX: cloned.skewX,
-                skewY: cloned.skewY,
-                offsetX: offsetX,
-                offsetY: offsetY,
-                originX: cloned.originX,
-                originY: cloned.originY,
-                ex: pointer.x,
-                ey: pointer.y,
-                left: cloned.left,
-                top: cloned.top,
-                theta: cloned.angle * Math.PI / 180,
-                width: cloned.width * cloned.scaleX,
-                height: cloned.height * cloned.scaleY,
-                mouseXSign: 1,
-                mouseYSign: 1,
-                actionHandler: fabricInstance._getActionFromCorner.bind(fabricInstance, cloned, 0, opt.e) || fabricInstance._actionHandler
-              };
-
-              // Set the action handler for dragging
-              fabricInstance._currentTransform.actionHandler = function(eventData, transform, x, y) {
-                const target = transform.target;
-                const newLeft = x - transform.offsetX;
-                const newTop = y - transform.offsetY;
-
-                target.set({
-                  left: newLeft,
-                  top: newTop
-                });
-
-                return true;
-              };
-
-              // Ensure original stays in place
-              originalObj.set({
-                left: originalLeft,
-                top: originalTop
-              });
-              originalObj.setCoords();
-
-              // Set canvas state to indicate we're transforming
-              fabricInstance._isCurrentlyDrawing = true;
-
-              // Save canvas state after the operation completes
-              saveCanvasState();
-
-              // Force canvas to render
-              fabricInstance.requestRenderAll();
-            });
-
-            // Prevent event propagation
-            return false;
-          }
-        });
-
-        // Enhanced mouse:move handler to handle our custom transform
-        fabricInstance.on('mouse:move', function(opt) {
-          if (fabricInstance._currentTransform && fabricInstance._currentTransform.action === 'drag') {
-            const pointer = fabricInstance.getPointer(opt.e);
-            const transform = fabricInstance._currentTransform;
-
-            if (transform.actionHandler) {
-              transform.actionHandler(opt.e, transform, pointer.x, pointer.y);
-              transform.target.setCoords();
-              fabricInstance.requestRenderAll();
-            }
-          }
-        });
-
-        // Enhanced mouse:up handler to complete the transform
-        fabricInstance.on('mouse:up', function(opt) {
-          if (fabricInstance._currentTransform) {
-            const target = fabricInstance._currentTransform.target;
-
-            // Clear the transform state
-            fabricInstance._currentTransform = null;
-            fabricInstance._isCurrentlyDrawing = false;
-
-            // Ensure the object remains active and visible
-            if (target) {
-              fabricInstance.setActiveObject(target);
-              target.setCoords();
-              target.fire('modified');
-              fabricInstance.fire('object:modified', { target: target });
-              fabricInstance.requestRenderAll();
-            }
-          }
-        });
-
-        // Ensure selection is preserved after mouse:up
-        fabricInstance.on('mouse:up', function(opt) {
-          // If an object was being transformed, make sure it stays active
-          if (fabricInstance._currentTransform && fabricInstance._currentTransform.target) {
-            const target = fabricInstance._currentTransform.target;
-            fabricInstance.setActiveObject(target);
-            target.setCoords();
-            fabricInstance.requestRenderAll();
-          }
-        });
-
-        return true;
-      } else {
-        console.error('Fabric.js still not available after loading attempt');
-        return false;
+        }, 0);
       }
-    } catch (err) {
-      console.error('Error initializing Fabric canvas:', err);
-      return false;
+      return; // Important to prevent further processing for delete/backspace
     }
-  }
 
-  // Function to build the prompt for GPT-Image-1 (Ignoring AI, but keeping for structure)
-  function buildGptImagePrompt() {
-    let prompt = `Complete this drawing. DO NOT change the original image sketch at all; simply add onto the existing drawing EXACTLY as it is. CRITICAL STRUCTURE PRESERVATION: You MUST treat this sketch as an EXACT STRUCTURAL TEMPLATE. `;
-    const contentGuide = sketchAnalysis !== "Draw something to see AI's interpretation" ? sketchAnalysis : "A user's drawing.";
-    prompt += `CONTENT DESCRIPTION: ${contentGuide}\n\n`;
-    if (additionalContext) {
-      prompt += `USER'S CONTEXT: "${additionalContext}"\n\n`;
-    }
-    if (analysisElements.length > 0) {
-      const structuralGuide = `Based on analysis, the drawing contains ${analysisElements.length} main elements. Element positions and basic relationships are implied by the sketch.`;
-      prompt += `STRUCTURAL GUIDE: ${structuralGuide}\n\n`;
-    }
-    const compositionGuide = `Focus on the arrangement within the ${selectedAspectRatio} frame.`;
-    prompt += `COMPOSITION GUIDE: ${compositionGuide}\n\n`;
-    if (strokeRecognition && strokeRecognition !== "Draw something to see shapes recognized") {
-      prompt += `RECOGNIZED SHAPES: ${strokeRecognition}\n\n`;
-    }
-    prompt += `FINAL INSTRUCTIONS: Create a DIRECT, FRONT-FACING VIEW that maintains the EXACT same composition as the sketch. NEVER distort or reposition any element. Color and texture can be added, but the structural skeleton must remain identical to the original sketch.`;
-    return prompt.length > 4000 ? prompt.substring(0, 3997) + '...' : prompt;
-  }
-
-  $: {
-    const newPrompt = buildGptImagePrompt();
-    gptImagePrompt.set(newPrompt);
-  }
-
-  function isRealUserEdit(): boolean {
-    if (isResizeEvent) return false;
-    if ($isGenerating || isArtificialEvent) return false;
-    if (isAnalyzing || isRecognizingStrokes) return false;
-    lastUserEditTime = Date.now();
-    pendingAnalysis = true;
-    return true;
-  }
-
-  $: strokeCount = fabricInstance?.getObjects()?.length || 0; // Updated to use Fabric.js objects
-
-  let pathBuilderLookup = {};
-  let browser = typeof window !== 'undefined';
-  let lastResizeTime = 0;
-
-  // Separate initialization function
-  async function initializeComponent() {
-    if (inputCanvas) {
-      inputCtx = inputCanvas.getContext('2d');
-
-      // Set white background for perfect-freehand canvas immediately
-      if (inputCtx) {
-        inputCtx.fillStyle = '#ffffff';
-        inputCtx.fillRect(0, 0, inputCanvas.width, inputCanvas.height);
+    // Z-ordering shortcuts
+    if (isMetaOrCtrl) {
+      if (event.code === 'BracketLeft' || event.key === '[') {
+        event.preventDefault(); event.stopPropagation();
+        reorderObjects(isShift ? 'back' : 'backward');
+        return;
       }
-    }
-
-    // First, load Fabric.js
-    try {
-      await loadFabricScript();
-      // Then initialize the canvas
-      const success = await initializeFabricCanvas();
-      if (!success) {
-        console.error('Failed to initialize Fabric canvas after script loaded');
-        fabricErrorMessage = 'Could not initialize drawing tools. Please try refreshing the page.';
-      } else {
-        // Successfully initialized
-        fabricErrorMessage = null;
-        // Set up initial canvas alignment and styles
-        setupCanvasAlignment();
-
-        // Ensure white background is applied and visible
-        if (fabricInstance) {
-          fabricInstance.setBackgroundColor('#ffffff', fabricInstance.renderAll.bind(fabricInstance));
-          // Force an immediate render
-          fabricInstance.requestRenderAll();
-        }
+      if (event.code === 'BracketRight' || event.key === ']') {
+        event.preventDefault(); event.stopPropagation();
+        reorderObjects(isShift ? 'front' : 'forward');
+        return;
       }
-    } catch (err) {
-      console.error('Error loading Fabric.js:', err);
-      fabricErrorMessage = 'Error loading drawing tools. Please check your connection and try refreshing.';
-    }
-
-    resizeCanvas(); // Initial resize and setup
-
-    if (inputCtx) {
-      // Set white background again after resize
-      inputCtx.fillStyle = '#ffffff';
-      inputCtx.fillRect(0, 0, inputCanvas.width, inputCanvas.height);
-
-      renderStrokes(); // Initial render (likely empty perfect-freehand canvas)
-      updateImageData(); // Use a centralized function to update imageData
-    }
-
-    console.log('Component mounted');
-    mobileCheck();
-
-    // Push initial baseline snapshot after component ready & state loaded
-    if (fabricInstance) {
-      try {
-        undoStack.length = 0;
-        redoStack.length = 0;
-        const baseline = JSON.stringify(fabricInstance.toJSON());
-        undoStack.push(baseline);
-      } catch (err) {
-        console.error('Unable to set initial history baseline', err);
-      }
-    }
-  }
-
-  // Import Prettier for code formatting
-  import prettier from 'prettier/standalone';
-  import * as parserHtml from 'prettier/parser-html';
-  const htmlParser = parserHtml?.default || parserHtml;
-
-  // Shape type variable for binding to CanvasToolbar
-  let shapeType: string = 'rectangle';
-
-  // Session storage key for canvas data
-  const CANVAS_STORAGE_KEY = 'canvasDrawingData';
-
-  // Forward declaration for fabric
-  let fabric: any;
-
-  // Interface extension for Stroke type with hasPressure property
-  interface EnhancedStroke extends Stroke {
-    hasPressure?: boolean;
-    hasHardwarePressure?: boolean; // Flag for true hardware pressure support
-    isEraserStroke?: boolean; // Flag for eraser strokes
-  }
-
-  // Drawing content object with enhanced strokes
-  interface EnhancedDrawingContent {
-    strokes: EnhancedStroke[];
-    bounds?: {
-      width: number;
-      height: number;
-    };
-  }
-
-  // Analysis element type
-  interface AnalysisElement {
-    id: string;
-    name: string;
-    category?: string;
-    x: number;
-    y: number;
-    width?: number;
-    height?: number;
-    color: string;
-    isChild?: boolean;
-    parentId?: string;
-    children?: string[];
-    pressure?: number; // Add pressure property for visual effects
-    boundingBox?: {
-      minX: number;
-      minY: number;
-      maxX: number;
-      maxY: number;
-      width: number;
-      height: number;
-    };
-  }
-
-  // State variables
-  let inputCanvas: HTMLCanvasElement;
-  let fabricCanvasHTML: HTMLCanvasElement; // Renamed for clarity
-  let fabricInstance: any = null;
-  let inputCtx: CanvasRenderingContext2D | null = null;
-  let isDrawing = false;
-  let currentStroke: EnhancedStroke | null = null;
-  // Use the store values for reference but maintain local variables for reactivity
-  let strokeColor: string;
-  let strokeSize: number;
-  let strokeOpacity: number;
-  let canvasBackgroundColor: string = '#ffffff'; // Default background color
-
-  let lastUserEditTime = 0;
-  let pendingAnalysis = false;
-
-  // Subscribe to store changes
-  strokeOptions.subscribe(options => {
-    strokeColor = options.color;
-    strokeSize = options.size;
-    strokeOpacity = options.opacity;
-
-    // If pen tool is active and options change, update currentStroke if any
-    if ($selectedTool === 'pen' && currentStroke) {
-      currentStroke.color = strokeColor;
-      currentStroke.size = strokeSize;
-      currentStroke.opacity = strokeOpacity;
-      renderStrokes(); // Re-render temporary stroke
-    }
-    // If eraser tool is active, update EraserBrush width
-    if ($selectedTool === 'eraser' && fabricInstance && fabricInstance.isDrawingMode) {
-      fabricInstance.freeDrawingBrush.width = eraserSize; // Assuming eraserSize will be derived from strokeSize or a dedicated variable
-    }
-  });
-
-  let imageData: string | null = null;
-  let pointTimes: number[] = []; // Track time for velocity-based pressure
-  let errorMessage: string | null = null;
-  let fabricErrorMessage: string | null = null; // Add specific fabric error message
-  let sketchAnalysis = "Draw something to see AI's interpretation";
-  let isAnalyzing = false;
-  let strokeRecognition = "Draw something to see shapes recognized";
-  let isRecognizingStrokes = false;
-  let additionalContext = "";
-  let analysisElements: any[] = [];
-  let canvasScale = 1; // Scale factor for canvas display relative to internal resolution
-
-  // Define imageModels for Omnibar
-  const imageGenerationModels = [
-    { value: 'gpt-image-1', label: 'GPT-Image-1' },
-    { value: 'gpt-4o', label: 'GPT-4o' },
-    { value: 'flux-canny-pro', label: 'Flux Canny Pro' },
-    { value: 'controlnet-scribble', label: 'ControlNet Scribble' },
-    { value: 'stable-diffusion', label: 'Stable Diffusion' },
-    { value: 'latent-consistency', label: 'Latent Consistency' }
-  ];
-
-  // Reactive variable for Omnibar's parentDisabled prop
-  $: parentOmnibarDisabled = $isGenerating || ((!fabricInstance || fabricInstance.getObjects().length === 0) && !additionalContext.trim());
-
-  // Drawing content with enhanced strokes - This might become less central with Fabric.js
-  let drawingContent: EnhancedDrawingContent = {
-    strokes: [], // This will no longer store rendered strokes, Fabric.js does.
-    bounds: { width: 800, height: 600 }
-  };
-
-  // Canvas dimensions
-  let canvasWidth = 800;
-  let canvasHeight = 600;
-
-
-  // Variables for tracking user edits and analysis state
-  let isResizeEvent = false;
-  let renderDebounceTimeout: ReturnType<typeof setTimeout> | null = null; // Declare the missing variable
-  let isArtificialEvent = false; // Flag for programmatically triggered events
-
-  // For Fabric.js canvas
-  let fabricLoaded = false;
-  let fabricLoadAttempts = 0;
-  const MAX_FABRIC_LOAD_ATTEMPTS = 3;
-
-  // Function to dynamically load Fabric.js with retry logic
-  function loadFabricScript(): Promise<void> {
-    return new Promise((resolve, reject) => {
-      // Skip if already loaded
-      if (typeof fabric !== 'undefined') {
-        console.log('Fabric.js already loaded');
-        fabricLoaded = true;
-        fabricErrorMessage = null; // Clear any previous errors
-        return resolve();
-      }
-
-      // Track attempts to prevent infinite retry loops
-      fabricLoadAttempts++;
-      if (fabricLoadAttempts > MAX_FABRIC_LOAD_ATTEMPTS) {
-        const error = 'Failed to load Fabric.js after multiple attempts';
-        fabricErrorMessage = error;
-        return reject(new Error(error));
-      }
-
-      console.log(`Loading fabric.js (attempt ${fabricLoadAttempts})`);
-
-      const script = document.createElement('script');
-      script.src = '/js/fabric.js';
-      script.async = true;
-
-      script.onload = () => {
-        console.log('Fabric.js loaded successfully');
-        fabricLoaded = true;
-        fabric = window['fabric']; // Assign to our variable
-        fabricErrorMessage = null; // Clear any previous errors
-        resolve();
-      };
-
-      script.onerror = () => {
-        console.error('Failed to load Fabric.js');
-        if (fabricLoadAttempts >= MAX_FABRIC_LOAD_ATTEMPTS) {
-          fabricErrorMessage = 'Failed to load the drawing engine. Please check your internet connection and refresh the page.';
-          reject(new Error('Max retry attempts reached'));
+      // Undo/Redo
+      if (event.key.toLowerCase() === 'z') {
+        event.preventDefault(); event.stopPropagation();
+        if (isShift) {
+          redoAction();
         } else {
-          // Retry on failure with a delay
-          setTimeout(() => {
-            loadFabricScript().then(resolve).catch(reject);
-          }, 500);
+          undoAction();
+        }
+        return;
+      }
+      if (event.key.toLowerCase() === 'y') { // Typically redo
+        event.preventDefault(); event.stopPropagation();
+        redoAction();
+        return;
+      }
+    }
+  }
+
+  // Update proxy variables when activeFabricObject changes or is modified
+  $: {
+    if (activeFabricObject && (activeFabricObject.type === 'rect' || activeFabricObject.type === 'circle' || activeFabricObject.type === 'triangle' || activeFabricObject.type === 'ellipse')) {
+      selectedShapeFillProxy = activeFabricObject.fill || '#cccccc';
+      selectedShapeStrokeProxy = activeFabricObject.stroke || '#000000';
+      selectedShapeStrokeWidthProxy = activeFabricObject.strokeWidth === undefined ? 0 : activeFabricObject.strokeWidth;
+    } else if (activeFabricObject && activeFabricObject.type === 'i-text') {
+      // Proxies for text - assuming textColorProxy, fontSizeProxy, fontFamilyProxy exist or will be created
+      // textColorProxy = activeFabricObject.fill || '#000000';
+      // fontSizeProxy = activeFabricObject.fontSize || 32;
+      // fontFamilyProxy = activeFabricObject.fontFamily || 'Arial';
+    } else {
+      // Reset or set to defaults if no shape is selected or different type
+      selectedShapeFillProxy = shapeFillColor;
+      selectedShapeStrokeProxy = shapeStrokeColor;
+      selectedShapeStrokeWidthProxy = shapeStrokeWidth;
+    }
+  }
+
+  function updateSelectedObjectProperty(property: string, value: any) {
+    if (activeFabricObject) {
+      activeFabricObject.set(property, value);
+      fabricInstance.requestRenderAll();
+
+      setTimeout(() => {
+        // updateImageData(); // ImageData updated on object:modified
+        saveCanvasState();
+        recordHistory();
+      }, 0);
+    }
+  }
+
+  // Click outside to close shape dropdown
+  // function handleClickOutside(event: MouseEvent) {
+  //   if (showShapeDropdown && shapeDropdownElement && !shapeDropdownElement.contains(event.target as Node) && shapeToolButtonElement && !shapeToolButtonElement.contains(event.target as Node)) {
+  //     showShapeDropdown = false;
+  //   }
+  // }
+
+  // onMount(() => {
+  //   console.log('Canvas component mounting...');
+  //   // ... other onMount logic ...
+  //   window.addEventListener('click', handleClickOutside);
+  // });
+
+  // onDestroy(() => {
+  //   // ... other onDestroy logic ...
+  //   window.removeEventListener('click', handleClickOutside);
+  //   window.removeEventListener('keydown', handleGlobalKeyDown); // Ensure this is also cleaned up
+  // });
+
+  // --- NEW: Format selection & SVG output support ---
+  // User-selected output format: 'png' (default raster) or 'svg' (vector)
+  let selectedFormat: string = 'png';
+
+  // Holds raw SVG markup returned by the backend when selectedFormat === 'svg'
+  let generatedSvgCode: string | null = null;
+
+  // Fabric instance for rendering SVG output
+  let fabricOutputCanvasHTML: HTMLCanvasElement;
+  let fabricOutputInstance: any = null;
+
+  // Reactive: force model to GPT-4o and disable others when SVG format chosen
+  $: if (selectedFormat === 'svg') {
+    selectedModel.set('gpt-4o');
+  }
+
+  // Element for SVG code display (for Prism.js)
+  let svgCodeElement: HTMLElement;
+
+  /**
+   * Render provided SVG string onto a dedicated Fabric.js canvas inside the output pane.
+   * The canvas is created (or recreated) each time a new SVG is generated.
+   */
+  async function renderSvgToOutputCanvas(svgString: string) {
+    try {
+      if (!svgString) {
+        console.warn('renderSvgToOutputCanvas called with no svgString');
+        return;
+      }
+      console.log('Attempting to render SVG, length:', svgString.length);
+      // console.log('SVG string preview:', svgString.substring(0, 500) + '...');
+
+      // Pre-process the SVG string to ensure it's properly formatted
+      let processedSvg = extractValidSvg(svgString) || svgString; // Use extractValidSvg first
+      if (!processedSvg.trim().startsWith('<svg')) {
+        console.error('SVG content does not seem to start with an <svg> tag even after extraction.');
+        errorMessage = "Invalid SVG content: Missing <svg> tag.";
+        return;
+      }
+
+      // Ensure the SVG has the required namespace
+      if (!processedSvg.includes('xmlns="http://www.w3.org/2000/svg"')) {
+        processedSvg = processedSvg.replace(/<svg/i, '<svg xmlns="http://www.w3.org/2000/svg"');
+        console.log('Added SVG namespace to the <svg> tag');
+      }
+
+      // Ensure viewBox is present (if not already there, try to create a sensible one)
+      if (!processedSvg.match(/viewBox=(?:'[^']+'|"[^"]+")/i)) {
+        const widthMatch = processedSvg.match(/width=(?:\'([^\']+)\'|\"([^\"]+)\")/i);
+        const heightMatch = processedSvg.match(/height=(?:\'([^\']+)\'|\"([^\"]+)\")/i);
+
+        let vbWidth = canvasWidth; // Default to current main canvas width
+        let vbHeight = canvasHeight; // Default to current main canvas height
+
+        if (widthMatch && (widthMatch[1] || widthMatch[2])) {
+            const parsedW = parseFloat(widthMatch[1] || widthMatch[2]);
+            if (!isNaN(parsedW) && parsedW > 0) vbWidth = parsedW;
+        }
+        if (heightMatch && (heightMatch[1] || heightMatch[2])) {
+            const parsedH = parseFloat(heightMatch[1] || heightMatch[2]);
+            if (!isNaN(parsedH) && parsedH > 0) vbHeight = parsedH;
+        }
+
+        processedSvg = processedSvg.replace(/<svg/i, `<svg viewBox="0 0 ${vbWidth} ${vbHeight}"`);
+        console.log(`Added default viewBox attribute to SVG: viewBox="0 0 ${vbWidth} ${vbHeight}"`);
+      }
+
+      // console.log('Processed SVG for rendering:', processedSvg.substring(0,500) + '...');
+
+      await loadFabricScript();
+
+      // Check if we need to make the SVG view visible to ensure proper rendering
+      const svgViewContainer = document.querySelector('.output-view.svg-view');
+      const wasHidden = svgViewContainer && window.getComputedStyle(svgViewContainer).display === 'none';
+      let originalDisplay = null;
+
+      // Temporarily make SVG view visible if it was hidden (we'll restore later)
+      if (wasHidden && svgViewContainer) {
+        originalDisplay = (svgViewContainer as HTMLElement).style.display;
+        (svgViewContainer as HTMLElement).style.display = 'block';
+        console.log('Temporarily making SVG view visible for rendering');
+      }
+
+      if (fabricOutputInstance) {
+        try {
+          // First, clear all objects from the canvas
+          fabricOutputInstance.clear();
+
+          // Then dispose of the canvas properly
+          fabricOutputInstance.dispose();
+
+          // Ensure null references to avoid stale references
+          fabricOutputInstance = null;
+
+          // Add a small delay to ensure DOM operations complete
+          await new Promise(resolve => setTimeout(resolve, 0));
+
+          console.log('Previous output canvas instance properly disposed');
+        } catch (disposeError) {
+          console.error('Error disposing previous canvas:', disposeError);
+          // Continue with new canvas creation even if disposal had issues
+        }
+      }
+
+      if (!fabricOutputCanvasHTML) {
+        console.error('fabricOutputCanvasHTML is not available');
+        // Restore original visibility before returning
+        if (wasHidden && svgViewContainer && originalDisplay !== null) {
+          (svgViewContainer as HTMLElement).style.display = originalDisplay;
+        }
+        return;
+      }
+
+      // Clean up any existing canvas wrappers from previous renders
+      const existingWrappers = document.querySelectorAll('.canvas-container');
+      existingWrappers.forEach(wrapper => {
+        // Only remove wrappers inside the output display area
+        const outputDisplay = document.querySelector('.output-display');
+        if (outputDisplay && outputDisplay.contains(wrapper)) {
+          try {
+            // Clone canvas element before removing wrapper
+            const originalCanvas = wrapper.querySelector('canvas');
+            if (originalCanvas) {
+              const parent = wrapper.parentElement;
+              if (parent) {
+                const clonedCanvas = fabricOutputCanvasHTML.cloneNode(false);
+                parent.replaceChild(clonedCanvas, wrapper);
+                fabricOutputCanvasHTML = clonedCanvas as HTMLCanvasElement;
+              }
+            } else {
+              wrapper.remove();
+            }
+          } catch (err) {
+            console.warn('Error cleaning up canvas wrapper:', err);
+          }
+        }
+      });
+
+      // Set dimensions before creating canvas instance
+      fabricOutputCanvasHTML.width = canvasWidth;
+      fabricOutputCanvasHTML.height = canvasHeight;
+
+      fabricOutputInstance = new fabric.Canvas(fabricOutputCanvasHTML, {
+        backgroundColor: '#ffffff',
+        renderOnAddRemove: true,
+        width: canvasWidth,
+        height: canvasHeight,
+        preserveObjectStacking: true
+      });
+      console.log('Fabric output canvas initialized:', fabricOutputInstance.width, 'x', fabricOutputInstance.height);
+
+      if (fabricOutputInstance.wrapperEl) {
+        const inputContainer = document.querySelector('.canvas-container-overlay');
+        if (inputContainer) {
+          const computedStyle = window.getComputedStyle(inputContainer);
+          fabricOutputInstance.wrapperEl.style.width = computedStyle.width;
+          fabricOutputInstance.wrapperEl.style.height = computedStyle.height;
+          fabricOutputInstance.wrapperEl.style.position = 'absolute';
+          fabricOutputInstance.wrapperEl.style.top = '0';
+          fabricOutputInstance.wrapperEl.style.left = '0';
+        }
+      }
+      if (fabricOutputInstance.lowerCanvasEl && inputCanvas) {
+        fabricOutputInstance.lowerCanvasEl.style.width = inputCanvas.style.width;
+        fabricOutputInstance.lowerCanvasEl.style.height = inputCanvas.style.height;
+      }
+
+      // Centralized function to handle processing and rendering of fabric objects
+      const processAndRenderFabricObject = (objToRender, source) => {
+        try {
+          if (!objToRender) {
+            console.error(`processAndRenderFabricObject (${source}): No fabric object provided`);
+            errorMessage = 'Failed to render SVG - no object provided';
+            return false;
+          }
+
+          if (objToRender.type === 'group' && (!objToRender._objects || objToRender._objects.length === 0)) {
+            console.error(`processAndRenderFabricObject (${source}): Empty group received`, objToRender);
+            errorMessage = 'Failed to render SVG - empty group provided';
+            return false;
+          }
+
+          console.log(`processAndRenderFabricObject (${source}): Object type:`, objToRender.type);
+
+          // Temporarily add to calculate bounds accurately
+          fabricOutputInstance.add(objToRender);
+          objToRender.setCoords(); // Update coordinates and dimensions
+
+          // Get object bounds - ensure we consider stroke width
+          const bounds = objToRender.getBoundingRect(true);
+          fabricOutputInstance.remove(objToRender); // Remove after getting bounds
+
+          console.log(`Calculated bounds:`, bounds);
+
+          if (!bounds || bounds.width === 0 || bounds.height === 0) {
+            console.error(`Invalid bounds (zero width/height):`, bounds);
+            errorMessage = 'Failed to render SVG - could not determine object dimensions';
+            return false;
+          }
+
+          // Calculate appropriate scaling
+          const canvasTargetWidth = fabricOutputInstance.width * 0.9;
+          const canvasTargetHeight = fabricOutputInstance.height * 0.9;
+
+          const scaleX = canvasTargetWidth / bounds.width;
+          const scaleY = canvasTargetHeight / bounds.height;
+          const scale = Math.min(scaleX, scaleY);
+
+          console.log(`Calculated scale: ${scale} (canvas: ${canvasTargetWidth}x${canvasTargetHeight}, bounds: ${bounds.width}x${bounds.height})`);
+
+          // Position object centered on canvas with appropriate scale
+          objToRender.set({
+            left: fabricOutputInstance.width / 2,
+            top: fabricOutputInstance.height / 2,
+            originX: 'center',
+            originY: 'center',
+            scaleX: scale,
+            scaleY: scale
+          });
+
+          objToRender.setCoords(); // Update coordinates after transform
+          fabricOutputInstance.add(objToRender);
+
+          // If the object is a group, ungroup it so that each SVG element becomes its own Fabric object
+          if (objToRender.type === 'group' && objToRender._objects && objToRender._objects.length > 0) {
+            // Restore child objects' absolute positions
+            objToRender._restoreObjectsState();
+            const items = objToRender._objects;
+            objToRender._objects = [];
+            fabricOutputInstance.remove(objToRender);
+            items.forEach(item => {
+              // Ensure items respect the same scaling/positioning already applied via group transform
+              item.setCoords();
+              fabricOutputInstance.add(item);
+            });
+            console.log(`Ungrouped ${items.length} SVG elements into individual Fabric objects.`);
+          }
+
+          fabricOutputInstance.requestRenderAll();
+          console.log(`SVG rendered successfully from ${source}`);
+          errorMessage = null; // Clear any error messages
+          return true;
+        } catch (err) {
+          console.error(`Error in processAndRenderFabricObject (${source}):`, err);
+          errorMessage = `Error processing SVG elements: ${err.message || 'unknown error'}`;
+          return false;
         }
       };
 
-      document.head.appendChild(script);
-    });
-  }
+      // Try different parsing methods in sequence
 
-  // Initialize Fabric.js canvas
-  async function initializeFabricCanvas() {
-    if (!fabricCanvasHTML) {
-      console.error('Fabric canvas element not yet available');
-      return false;
-    }
+      // METHOD 1: Primary method - loadSVGFromString
+      let renderSuccess = false;
+      console.log('METHOD 1: Attempting primary SVG parsing with loadSVGFromString');
+      try {
+        fabric.loadSVGFromString(processedSvg, (objects, optionsFromLoadSvg) => { // Renamed options here
+          console.log('loadSVGFromString callback received', objects?.length || 0, 'objects');
 
-    try {
-      if (!fabricLoaded) {
-        await loadFabricScript();
-      }
+          if (objects && objects.length > 0) {
+            const validObjects = objects.filter(obj => obj && obj.type);
+            console.log(`Found ${validObjects.length} valid objects out of ${objects.length} total`);
 
-      if (typeof fabric !== 'undefined') {
-        // Clean up any existing instance to prevent duplicates
-        if (fabricInstance) {
-          fabricInstance.dispose();
-        }
+            if (validObjects.length > 0) {
+              let elementToAdd;
 
-        fabricInstance = new fabric.Canvas(fabricCanvasHTML, {
-          backgroundColor: canvasBackgroundColor, // Use the white background color
-          renderOnAddRemove: true,
-          width: fabricCanvasHTML.width,
-          height: fabricCanvasHTML.height,
-          preserveObjectStacking: true // Good for managing layers
-        });
+              if (validObjects.length === 1) {
+                elementToAdd = validObjects[0];
+                console.log('Processing single SVG element');
+              } else {
+                console.log('Grouping multiple SVG elements');
+                elementToAdd = fabric.util.groupSVGElements(validObjects, optionsFromLoadSvg || {}); // Use optionsFromLoadSvg
+              }
 
-        // Ensure the background is rendered immediately
-        fabricInstance.requestRenderAll();
+              if (elementToAdd) {
+                renderSuccess = processAndRenderFabricObject(elementToAdd, 'METHOD 1: loadSVGFromString');
 
-        // Make sure Fabric's internal elements are correctly positioned
-        if (fabricInstance.wrapperEl) {
-          fabricInstance.wrapperEl.style.position = 'absolute';
-          fabricInstance.wrapperEl.style.top = '0';
-          fabricInstance.wrapperEl.style.left = '0';
-          fabricInstance.wrapperEl.style.width = fabricCanvasHTML.style.width;
-          fabricInstance.wrapperEl.style.height = fabricCanvasHTML.style.height;
-        }
+                // Add this new section to handle text elements
+                if (renderSuccess) {
+                  // After successful render, extract and render text elements separately
+                  const bounds = elementToAdd.getBoundingRect(true);
+                  const canvasTargetWidth = fabricOutputInstance.width * 0.9;
+                  const canvasTargetHeight = fabricOutputInstance.height * 0.9;
+                  const scaleX = canvasTargetWidth / bounds.width;
+                  const scaleY = canvasTargetHeight / bounds.height;
+                  const scale = Math.min(scaleX, scaleY);
 
-        // Set default control appearance for all objects
-        fabric.Object.prototype.set({
-          cornerStyle: 'circle',
-          cornerColor: 'white',
-          cornerStrokeColor: '#6355FF',
-          cornerStrokeWidth: 3,
-          cornerSize: 12,
-          padding: 0, // Increased padding for better selection handling
-          transparentCorners: false,
-          borderColor: '#6355FF',
-          borderScaleFactor: 1.5,
-          borderOpacityWhenMoving: .5,
-          touchCornerSize: 20,
-        });
-
-        console.log('Fabric.js canvas initialized successfully');
-        // Listen to path creation and erasing events to save state automatically
-        fabricInstance.on('path:created', () => {
-          saveCanvasState();
-          recordHistory();
-        });
-        if (fabricInstance.on) {
-          fabricInstance.on('erasing:end', (opt) => {
-            // Auto-remove nearly empty paths to avoid leftovers
-            const targets = opt?.targets || [];
-            let removedSomething = false;
-            targets.forEach((obj: any) => {
-              if (obj && obj.type === 'path') {
-                const bb = obj.getBoundingRect();
-                const area = bb.width * bb.height;
-                if (area < 25 || (obj.path && obj.path.length < 10)) {
-                  fabricInstance.remove(obj);
-                  removedSomething = true;
+                  // Extract and render text elements with appropriate scaling
+                  extractAndRenderTextElements(processedSvg, bounds, scale);
                 }
               }
-            });
-            saveCanvasState();
-            if (removedSomething) {
-              recordHistory();
+            }
+          }
+
+          // If method 1 failed, try the next method
+          if (!renderSuccess) {
+            tryMethod2();
+          } else {
+            // If successful, restore original visibility
+            restoreVisibility();
+          }
+        });
+      } catch (error) {
+        console.error('Error in METHOD 1:', error);
+        tryMethod2();
+      }
+
+      // METHOD 2: Manual DOM parsing and fabric.parseSVGDocument
+      function tryMethod2() {
+        console.log('METHOD 2: Attempting DOM parsing with parseSVGDocument');
+        try {
+          const parser = new DOMParser();
+          const svgDoc = parser.parseFromString(processedSvg, 'image/svg+xml');
+
+          const parserError = svgDoc.querySelector('parsererror');
+          if (parserError) {
+            console.error('XML parsing error:', parserError.textContent);
+            const errorDetails = parserError.textContent || "Unknown XML parsing error";
+            errorMessage = `SVG Parsing Error (Method 2): ${errorDetails.substring(0, 100)}`;
+            tryMethod3();
+            return;
+          }
+
+          const svgElement = svgDoc.documentElement;
+          if (!svgElement || svgElement.nodeName.toLowerCase() !== 'svg') {
+            console.error('Not a valid SVG document element or svgElement is null/undefined');
+            errorMessage = 'Invalid SVG structure (Method 2): Missing <svg> root element.';
+            tryMethod3();
+            return;
+          }
+
+          let parsedViewBoxObj = null;
+          const viewBoxAttr = svgElement.getAttribute('viewBox');
+          if (viewBoxAttr) {
+            const parts = viewBoxAttr.split(/[\s,]+/).map(Number);
+            if (parts.length === 4 && parts.every(p => !isNaN(p))) {
+              parsedViewBoxObj = { x: parts[0], y: parts[1], width: parts[2], height: parts[3] };
+            }
+          }
+
+          // Initial options for parseSVGDocument, potentially including the viewBox from the SVG element itself.
+          const initialParseOptions = parsedViewBoxObj ? { viewBox: parsedViewBoxObj } : {};
+
+          fabric.parseSVGDocument(svgElement, (results, fabricOptionsFromParse) => {
+            // Combine initial options (like our parsed viewBox) with options returned by parseSVGDocument
+            const finalProcessingOptions = { ...initialParseOptions, ...(fabricOptionsFromParse || {}) };
+            console.log('parseSVGDocument returned', results?.length || 0, 'results. Options used for enliven/grouping:', finalProcessingOptions);
+
+            if (results && results.length > 0) {
+              fabric.util.enlivenObjects(results, (enlivenedObjects) => {
+                console.log('Enlivened', enlivenedObjects?.length || 0, 'objects');
+
+                if (enlivenedObjects && enlivenedObjects.length > 0) {
+                  let elementToAdd;
+
+                  if (enlivenedObjects.length === 1) {
+                    elementToAdd = enlivenedObjects[0];
+                  } else {
+                    // Pass the combined finalProcessingOptions to groupSVGElements
+                    elementToAdd = fabric.util.groupSVGElements(enlivenedObjects, finalProcessingOptions);
+                  }
+
+                  renderSuccess = processAndRenderFabricObject(elementToAdd, 'METHOD 2: parseSVGDocument');
+
+                  if (!renderSuccess) {
+                    tryMethod3();
+                  } else {
+                    // Add text element rendering for Method 2
+                    const bounds = elementToAdd.getBoundingRect(true);
+                    const canvasTargetWidth = fabricOutputInstance.width * 0.9;
+                    const canvasTargetHeight = fabricOutputInstance.height * 0.9;
+                    const scaleX = canvasTargetWidth / bounds.width;
+                    const scaleY = canvasTargetHeight / bounds.height;
+                    const scale = Math.min(scaleX, scaleY);
+
+                    // Extract and render text elements with appropriate scaling
+                    extractAndRenderTextElements(processedSvg, bounds, scale);
+                    restoreVisibility();
+                  }
+                } else {
+                  tryMethod3(); // No valid objects found
+                }
+              }, 'fabric');
+            } else {
+              tryMethod3(); // No results from parseSVGDocument
             }
           });
+        } catch (error) {
+          console.error('Error in METHOD 2:', error);
+          tryMethod3();
         }
+      }
 
-        // Replace the existing 'object:modified' handler for more specific logic
-        fabricInstance.off('object:modified'); // Remove previous one if any from prior steps
-        fabricInstance.on('object:modified', (e) => {
-          const target = e.target;
-          if (!target) return;
+      // METHOD 3: Direct path creation as a last resort
+      function tryMethod3() {
+        console.log('METHOD 3: Attempting direct path element creation');
+        try {
+          // Extract path elements directly from the SVG string
+          const pathRegex = /<path[^>]*d="([^"]*)"[^>]*>/gi;
+          const paths = [];
+          let match;
 
-          let propertyChanged = false;
-          if (target.type === 'rect') {
-            if (target.scaleX !== 1 || target.scaleY !== 1) {
-              const newWidth = target.width * target.scaleX;
-              const newHeight = target.height * target.scaleY;
-              target.set({
-                width: newWidth,
-                height: newHeight,
-                scaleX: 1,
-                scaleY: 1
-              });
-              target.setCoords();
-              propertyChanged = true;
-            }
-          }
-          // Add other type-specific modifications here if needed in the future
+          while ((match = pathRegex.exec(processedSvg)) !== null) {
+            // Extract other attributes for the path
+            const pathElement = match[0];
+            const pathData = match[1];
 
-          // Common post-modification logic
-          if (propertyChanged) {
-            fabricInstance.requestRenderAll(); // Render immediately if we changed properties
-          } else {
-            fabricInstance.renderAll(); // Standard render if no specific property change by this handler
-          }
+            // Extract fill, stroke, stroke-width if available
+            const fillMatch = pathElement.match(/fill="([^"]*)"/);
+            const strokeMatch = pathElement.match(/stroke="([^"]*)"/);
+            const strokeWidthMatch = pathElement.match(/stroke-width="([^"]*)"/);
 
-          setTimeout(() => {
-            saveCanvasState();
-            updateImageData(); // Ensure preview is updated
-            recordHistory();
-            // Update reactive proxies if the active object was the one modified
-            if (activeFabricObject && activeFabricObject === target) {
-                if (activeFabricObject.type === 'rect' || activeFabricObject.type === 'circle' || activeFabricObject.type === 'triangle') {
-                    selectedShapeFillProxy = activeFabricObject.fill || '#cccccc';
-                    selectedShapeStrokeProxy = activeFabricObject.stroke || '#000000';
-                    selectedShapeStrokeWidthProxy = activeFabricObject.strokeWidth === undefined ? 0 : activeFabricObject.strokeWidth;
-                }
-            }
-          }, 0);
-        });
+            const fill = fillMatch ? fillMatch[1] : 'none';
+            const stroke = strokeMatch ? strokeMatch[1] : '#000000';
+            const strokeWidth = strokeWidthMatch ? parseFloat(strokeWidthMatch[1]) : 1;
 
-        // Listen for selection events to update activeFabricObject
-        fabricInstance.on('selection:created', (e) => {
-          if (e.selected && e.selected.length > 0) activeFabricObject = e.selected[0];
-          else activeFabricObject = null;
-        });
-        fabricInstance.on('selection:updated', (e) => {
-          if (e.selected && e.selected.length > 0) activeFabricObject = e.selected[0];
-          else activeFabricObject = null;
-        });
-        fabricInstance.on('selection:cleared', () => {
-          activeFabricObject = null;
-        });
-
-        // NEW: Also listen for additions & removals for history purposes
-        fabricInstance.on('object:added', () => {
-          // Object addition already triggers a render in Fabric
-          setTimeout(() => {
-            recordHistory();
-          }, 0);
-        });
-
-        fabricInstance.on('object:removed', () => {
-          // Ensure immediate render
-          fabricInstance.renderAll();
-
-          setTimeout(() => {
-            recordHistory();
-          }, 0);
-        });
-
-        // Handle live scaling to adjust width/height instead of scale
-        fabricInstance.on('object:scaling', (e) => {
-          const target = e.target;
-          if (!target) return;
-
-          // We only want this for basic shapes drawn via shape tool (rect, ellipse (radius), triangle)
-          if (target.type === 'rect') {
-            target.noScaleCache = false;
-            const newWidth = target.width * target.scaleX;
-            const newHeight = target.height * target.scaleY;
-            target.set({
-              width: newWidth,
-              height: newHeight,
-              scaleX: 1,
-              scaleY: 1
-            });
-            target.setCoords();
-            fabricInstance.requestRenderAll();
-          } else if (target.type === 'triangle') {
-            target.noScaleCache = false;
-            const newWidth = target.width * target.scaleX;
-            const newHeight = target.height * target.scaleY;
-            target.set({ width: newWidth, height: newHeight, scaleX: 1, scaleY: 1 });
-            target.setCoords();
-            fabricInstance.requestRenderAll();
-          } else if (target.type === 'ellipse') { // Changed from 'circle' to 'ellipse'
-            target.noScaleCache = false;
-            // For ellipse, adjust rx and ry based on scaleX and scaleY respectively
-            const newRx = target.rx * target.scaleX;
-            const newRy = target.ry * target.scaleY;
-            target.set({ rx: newRx, ry: newRy, scaleX: 1, scaleY: 1 });
-            target.setCoords();
-            fabricInstance.requestRenderAll();
-          }
-        });
-
-        // Add Alt/Option + Drag to Duplicate functionality
-        fabricInstance.on('mouse:down', function(opt) {
-          if (opt.e.altKey && opt.target && opt.target.selectable) {
-            // Store original values
-            const originalObj = opt.target;
-            const originalLeft = originalObj.left;
-            const originalTop = originalObj.top;
-
-            // Get current pointer position
-            const pointer = fabricInstance.getPointer(opt.e);
-
-            // Prevent default to avoid original object movement
-            opt.e.preventDefault();
-            opt.e.stopPropagation();
-
-            // Clear any existing selection
-            fabricInstance.discardActiveObject();
-
-            // Clone original object
-            originalObj.clone(function(cloned) {
-              // Position at exact same coordinates
-              cloned.set({
-                left: originalLeft,
-                top: originalTop,
-                evented: true
-              });
-
-              // Add to canvas
-              fabricInstance.add(cloned);
-
-              // Set as active object (important for controls)
-              fabricInstance.setActiveObject(cloned);
-              cloned.setCoords();
-
-              // Calculate offset from object center to cursor position
-              const offsetX = pointer.x - originalLeft;
-              const offsetY = pointer.y - originalTop;
-
-              // Create a transform object to simulate dragging state
-              fabricInstance._currentTransform = {
-                target: cloned,
-                action: 'drag',
-                corner: 0,
-                scaleX: cloned.scaleX,
-                scaleY: cloned.scaleY,
-                skewX: cloned.skewX,
-                skewY: cloned.skewY,
-                offsetX: offsetX,
-                offsetY: offsetY,
-                originX: cloned.originX,
-                originY: cloned.originY,
-                ex: pointer.x,
-                ey: pointer.y,
-                left: cloned.left,
-                top: cloned.top,
-                theta: cloned.angle * Math.PI / 180,
-                width: cloned.width * cloned.scaleX,
-                height: cloned.height * cloned.scaleY,
-                mouseXSign: 1,
-                mouseYSign: 1,
-                actionHandler: fabricInstance._getActionFromCorner.bind(fabricInstance, cloned, 0, opt.e) || fabricInstance._actionHandler
-              };
-
-              // Set the action handler for dragging
-              fabricInstance._currentTransform.actionHandler = function(eventData, transform, x, y) {
-                const target = transform.target;
-                const newLeft = x - transform.offsetX;
-                const newTop = y - transform.offsetY;
-
-                target.set({
-                  left: newLeft,
-                  top: newTop
+            if (pathData) {
+              console.log(`Creating path with data: ${pathData.substring(0, 30)}...`);
+              try {
+                const fabricPath = new fabric.Path(pathData, {
+                  fill: fill,
+                  stroke: stroke,
+                  strokeWidth: strokeWidth,
+                  objectCaching: false // Disable caching for more reliable rendering
                 });
 
-                return true;
-              };
+                if (fabricPath) {
+                  paths.push(fabricPath);
+                }
+              } catch (pathError) {
+                console.error('Error creating individual path:', pathError);
+              }
+            }
+          }
 
-              // Ensure original stays in place
-              originalObj.set({
-                left: originalLeft,
-                top: originalTop
+          console.log(`METHOD 3: Extracted ${paths.length} paths from SVG string`);
+
+          if (paths.length > 0) {
+            let elementToAdd;
+
+            if (paths.length === 1) {
+              elementToAdd = paths[0];
+            } else {
+              elementToAdd = new fabric.Group(paths, {
+                objectCaching: false
               });
-              originalObj.setCoords();
-
-              // Set canvas state to indicate we're transforming
-              fabricInstance._isCurrentlyDrawing = true;
-
-              // Save canvas state after the operation completes
-              saveCanvasState();
-
-              // Force canvas to render
-              fabricInstance.requestRenderAll();
-            });
-
-            // Prevent event propagation
-            return false;
-          }
-        });
-
-        // Enhanced mouse:move handler to handle our custom transform
-        fabricInstance.on('mouse:move', function(opt) {
-          if (fabricInstance._currentTransform && fabricInstance._currentTransform.action === 'drag') {
-            const pointer = fabricInstance.getPointer(opt.e);
-            const transform = fabricInstance._currentTransform;
-
-            if (transform.actionHandler) {
-              transform.actionHandler(opt.e, transform, pointer.x, pointer.y);
-              transform.target.setCoords();
-              fabricInstance.requestRenderAll();
             }
-          }
-        });
 
-        // Enhanced mouse:up handler to complete the transform
-        fabricInstance.on('mouse:up', function(opt) {
-          if (fabricInstance._currentTransform) {
-            const target = fabricInstance._currentTransform.target;
+            renderSuccess = processAndRenderFabricObject(elementToAdd, 'METHOD 3: direct path creation');
 
-            // Clear the transform state
-            fabricInstance._currentTransform = null;
-            fabricInstance._isCurrentlyDrawing = false;
+            if (!renderSuccess) {
+              showFinalError();
+            } else {
+              // Add text element rendering for Method 3
+              const bounds = elementToAdd.getBoundingRect(true);
+              const canvasTargetWidth = fabricOutputInstance.width * 0.9;
+              const canvasTargetHeight = fabricOutputInstance.height * 0.9;
+              const scaleX = canvasTargetWidth / bounds.width;
+              const scaleY = canvasTargetHeight / bounds.height;
+              const scale = Math.min(scaleX, scaleY);
 
-            // Ensure the object remains active and visible
-            if (target) {
-              fabricInstance.setActiveObject(target);
-              target.setCoords();
-              target.fire('modified');
-              fabricInstance.fire('object:modified', { target: target });
-              fabricInstance.requestRenderAll();
+              extractAndRenderTextElements(processedSvg, bounds, scale);
+              restoreVisibility();
             }
+          } else {
+            showFinalError();
           }
-        });
-
-        // Ensure selection is preserved after mouse:up
-        fabricInstance.on('mouse:up', function(opt) {
-          // If an object was being transformed, make sure it stays active
-          if (fabricInstance._currentTransform && fabricInstance._currentTransform.target) {
-            const target = fabricInstance._currentTransform.target;
-            fabricInstance.setActiveObject(target);
-            target.setCoords();
-            fabricInstance.requestRenderAll();
-          }
-        });
-
-        return true;
-      } else {
-        console.error('Fabric.js still not available after loading attempt');
-        return false;
-      }
-    } catch (err) {
-      console.error('Error initializing Fabric canvas:', err);
-      return false;
-    }
-  }
-
-  // Function to build the prompt for GPT-Image-1 (Ignoring AI, but keeping for structure)
-  function buildGptImagePrompt() {
-    let prompt = `Complete this drawing. DO NOT change the original image sketch at all; simply add onto the existing drawing EXACTLY as it is. CRITICAL STRUCTURE PRESERVATION: You MUST treat this sketch as an EXACT STRUCTURAL TEMPLATE. `;
-    const contentGuide = sketchAnalysis !== "Draw something to see AI's interpretation" ? sketchAnalysis : "A user's drawing.";
-    prompt += `CONTENT DESCRIPTION: ${contentGuide}\n\n`;
-    if (additionalContext) {
-      prompt += `USER'S CONTEXT: "${additionalContext}"\n\n`;
-    }
-    if (analysisElements.length > 0) {
-      const structuralGuide = `Based on analysis, the drawing contains ${analysisElements.length} main elements. Element positions and basic relationships are implied by the sketch.`;
-      prompt += `STRUCTURAL GUIDE: ${structuralGuide}\n\n`;
-    }
-    const compositionGuide = `Focus on the arrangement within the ${selectedAspectRatio} frame.`;
-    prompt += `COMPOSITION GUIDE: ${compositionGuide}\n\n`;
-    if (strokeRecognition && strokeRecognition !== "Draw something to see shapes recognized") {
-      prompt += `RECOGNIZED SHAPES: ${strokeRecognition}\n\n`;
-    }
-    prompt += `FINAL INSTRUCTIONS: Create a DIRECT, FRONT-FACING VIEW that maintains the EXACT same composition as the sketch. NEVER distort or reposition any element. Color and texture can be added, but the structural skeleton must remain identical to the original sketch.`;
-    return prompt.length > 4000 ? prompt.substring(0, 3997) + '...' : prompt;
-  }
-
-  $: {
-    const newPrompt = buildGptImagePrompt();
-    gptImagePrompt.set(newPrompt);
-  }
-
-  function isRealUserEdit(): boolean {
-    if (isResizeEvent) return false;
-    if ($isGenerating || isArtificialEvent) return false;
-    if (isAnalyzing || isRecognizingStrokes) return false;
-    lastUserEditTime = Date.now();
-    pendingAnalysis = true;
-    return true;
-  }
-
-  $: strokeCount = fabricInstance?.getObjects()?.length || 0; // Updated to use Fabric.js objects
-
-  let pathBuilderLookup = {};
-  let browser = typeof window !== 'undefined';
-  let lastResizeTime = 0;
-
-  // Separate initialization function
-  async function initializeComponent() {
-    if (inputCanvas) {
-      inputCtx = inputCanvas.getContext('2d');
-
-      // Set white background for perfect-freehand canvas immediately
-      if (inputCtx) {
-        inputCtx.fillStyle = '#ffffff';
-        inputCtx.fillRect(0, 0, inputCanvas.width, inputCanvas.height);
-      }
-    }
-
-    // First, load Fabric.js
-    try {
-      await loadFabricScript();
-      // Then initialize the canvas
-      const success = await initializeFabricCanvas();
-      if (!success) {
-        console.error('Failed to initialize Fabric canvas after script loaded');
-        fabricErrorMessage = 'Could not initialize drawing tools. Please try refreshing the page.';
-      } else {
-        // Successfully initialized
-        fabricErrorMessage = null;
-        // Set up initial canvas alignment and styles
-        setupCanvasAlignment();
-
-        // Ensure white background is applied and visible
-        if (fabricInstance) {
-          fabricInstance.setBackgroundColor('#ffffff', fabricInstance.renderAll.bind(fabricInstance));
-          // Force an immediate render
-          fabricInstance.requestRenderAll();
+        } catch (error) {
+          console.error('Error in METHOD 3:', error);
+          showFinalError();
         }
       }
-    } catch (err) {
-      console.error('Error loading Fabric.js:', err);
-      fabricErrorMessage = 'Error loading drawing tools. Please check your connection and try refreshing.';
-    }
 
-    resizeCanvas(); // Initial resize and setup
-
-    if (inputCtx) {
-      // Set white background again after resize
-      inputCtx.fillStyle = '#ffffff';
-      inputCtx.fillRect(0, 0, inputCanvas.width, inputCanvas.height);
-
-      renderStrokes(); // Initial render (likely empty perfect-freehand canvas)
-      updateImageData(); // Use a centralized function to update imageData
-    }
-
-    console.log('Component mounted');
-    mobileCheck();
-
-    // Push initial baseline snapshot after component ready & state loaded
-    if (fabricInstance) {
-      try {
-        undoStack.length = 0;
-        redoStack.length = 0;
-        const baseline = JSON.stringify(fabricInstance.toJSON());
-        undoStack.push(baseline);
-      } catch (err) {
-        console.error('Unable to set initial history baseline', err);
+      function showFinalError() {
+        console.error('All SVG parsing methods failed');
+        errorMessage = 'Failed to render SVG - no valid elements found after all parsing attempts.';
+        restoreVisibility();
       }
-    }
-  }
 
-  // Import Prettier for code formatting
-  import prettier from 'prettier/standalone';
-  import * as parserHtml from 'prettier/parser-html';
-  const htmlParser = parserHtml?.default || parserHtml;
+      // Helper function to restore original visibility state
+      function restoreVisibility() {
+        if (wasHidden && svgViewContainer && originalDisplay !== null) {
+          // Delay restoring display to ensure rendering is complete
+          setTimeout(() => {
+            (svgViewContainer as HTMLElement).style.display = originalDisplay;
+            console.log('Restored original visibility state of SVG view');
+          }, 100);
+        }
+      }
 
-  // Shape type variable for binding to CanvasToolbar
-  let shapeType: string = 'rectangle';
-
-  // Session storage key for canvas data
-  const CANVAS_STORAGE_KEY = 'canvasDrawingData';
-
-  // Forward declaration for fabric
-  let fabric: any;
-
-  // Interface extension for Stroke type with hasPressure property
-  interface EnhancedStroke extends Stroke {
-    hasPressure?: boolean;
-    hasHardwarePressure?: boolean; // Flag for true hardware pressure support
-    isEraserStroke?: boolean; // Flag for eraser strokes
-  }
-
-  // Drawing content object with enhanced strokes
-  interface EnhancedDrawingContent {
-    strokes: EnhancedStroke[];
-    bounds?: {
-      width: number;
-      height: number;
-    };
-  }
-
-  // Analysis element type
-  interface AnalysisElement {
-    id: string;
-    name: string;
-    category?: string;
-    x: number;
-    y: number;
-    width?: number;
-    height?: number;
-    color: string;
-    isChild?: boolean;
-    parentId?: string;
-    children?: string[];
-    pressure?: number; // Add pressure property for visual effects
-    boundingBox?: {
-      minX: number;
-      minY: number;
-      maxX: number;
-      maxY: number;
-      width: number;
-      height: number;
-    };
-  }
-
-  // State variables
-  let inputCanvas: HTMLCanvasElement;
-  let fabricCanvasHTML: HTMLCanvasElement; // Renamed for clarity
-  let fabricInstance: any = null;
-  let inputCtx: CanvasRenderingContext2D | null = null;
-  let isDrawing = false;
-  let currentStroke: EnhancedStroke | null = null;
-  // Use the store values for reference but maintain local variables for reactivity
-  let strokeColor: string;
-  let strokeSize: number;
-  let strokeOpacity: number;
-  let canvasBackgroundColor: string = '#ffffff'; // Default background color
-
-  let lastUserEditTime = 0;
-  let pendingAnalysis = false;
-
-  // Subscribe to store changes
-  strokeOptions.subscribe(options => {
-    strokeColor = options.color;
-    strokeSize = options.size;
-    strokeOpacity = options.opacity;
-
-    // If pen tool is active and options change, update currentStroke if any
-    if ($selectedTool === 'pen' && currentStroke) {
-      currentStroke.color = strokeColor;
-      currentStroke.size = strokeSize;
-      currentStroke.opacity = strokeOpacity;
-      renderStrokes(); // Re-render temporary stroke
-    }
-    // If eraser tool is active, update EraserBrush width
-    if ($selectedTool === 'eraser' && fabricInstance && fabricInstance.isDrawingMode) {
-      fabricInstance.freeDrawingBrush.width = eraserSize; // Assuming eraserSize will be derived from strokeSize or a dedicated variable
-    }
-  });
-
-  let imageData: string | null = null;
-  let pointTimes: number[] = []; // Track time for velocity-based pressure
-  let errorMessage: string | null = null;
-  let fabricErrorMessage: string | null = null; // Add specific fabric error message
-  let sketchAnalysis = "Draw something to see AI's interpretation";
-  let isAnalyzing = false;
-  let strokeRecognition = "Draw something to see shapes recognized";
-  let isRecognizingStrokes = false;
-  let additionalContext = "";
-  let analysisElements: any[] = [];
-  let canvasScale = 1; // Scale factor for canvas display relative to internal resolution
-
-  // Define imageModels for Omnibar
-  const imageGenerationModels = [
-    { value: 'gpt-image-1', label: 'GPT-Image-1' },
-    { value: 'gpt-4o', label: 'GPT-4o' },
-    { value: 'flux-canny-pro', label: 'Flux Canny Pro' },
-    { value: 'controlnet-scribble', label: 'ControlNet Scribble' },
-    { value: 'stable-diffusion', label: 'Stable Diffusion' },
-    { value: 'latent-consistency', label: 'Latent Consistency' }
-  ];
-
-  // Reactive variable for Omnibar's parentDisabled prop
-  $: parentOmnibarDisabled = $isGenerating || ((!fabricInstance || fabricInstance.getObjects().length === 0) && !additionalContext.trim());
-
-  // Drawing content with enhanced strokes - This might become less central with Fabric.js
-  let drawingContent: EnhancedDrawingContent = {
+    } catch (err) {
       console.error('Outer error in renderSvgToOutputCanvas:', err);
       errorMessage = `Failed to render SVG: ${err.message || 'unexpected error'}`;
     }
@@ -6333,12 +4178,12 @@ Guidelines:
       position: relative;
       width: 1400px;
       max-width: 100%;
-      background: rgba(#030025, .05);
+
 
       .area{
         flex: 1;
         height: 100%;
-        padding: 12px;
+        padding: 4px;
 
       }
 
@@ -6441,17 +4286,20 @@ Guidelines:
         display: flex;
         justify-content: center;
         align-items: center;
-        overflow: visible; // Changed from hidden to visible for Fabric controls
+        overflow: hidden; // Changed from hidden to visible for Fabric controls
         transition: all 0.3s ease;
         box-shadow: none;
-        border-radius: 0; // Was 8px, can be 0 if canvas elements themselves have border-radius
+        border-radius: 8px; // Was 8px, can be 0 if canvas elements themselves have border-radius
         margin: auto;
+        border: 1px solid rgba(#030025, .1);
+
+        box-shadow: -12px 24px 36px rgba(#030025, 0.1);
 
         &.input-canvas { // This wrapper contains both fabric and perfect-freehand canvases
           position: relative;
           min-width: 300px;
           max-width: 800px; // Max width of the drawing area
-          box-shadow: -16px 48px 36px rgba(#030025, 0.12);
+
 
           // Adjust dimensions based on aspect ratio
           &.ratio-1-1 {
@@ -6525,7 +4373,6 @@ Guidelines:
         &.output-canvas {
           min-width: 300px;
           max-width: 800px;
-          box-shadow: -16px 48px 36px rgba(#030025, 0.12);
 
           // Adjust dimensions based on aspect ratio
           &.ratio-1-1 {

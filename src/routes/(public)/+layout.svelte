@@ -96,8 +96,9 @@
         overflow: hidden;
         flex-grow: 0;
         overscroll-behavior: none;
-        background: rgb(29, 29, 32);
-        background: var(--background-color);
+        //background: rgb(29, 29, 32);
+        //background: var(--background-color);
+        background: #fbfcff;
         gap: 8px;
         padding: 12px 4px 12px 12px;
         transition: all 0.4s cubic-bezier(0.25, 0.46, 0.45, 0.94);
@@ -107,7 +108,7 @@
         flex: 1;
         box-sizing: border-box;
         border-radius: 8px;
-        box-shadow: -12px 36px 48px rgba(#030025, 0.4);
+        //box-shadow: -12px 36px 48px rgba(#030025, 0.4);
         position: relative;
         background: var(--background-color);
         background: #fbfcff;

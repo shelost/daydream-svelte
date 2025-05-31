@@ -98,13 +98,6 @@
             </span>
         </div>
 
-        <div class = 'navbtn disabled' class:active={$page.url.pathname === '/agent'} on:click={() => {goto('/agent')}} >
-            <span class='material-symbols-outlined'>
-                mood
-            </span>
-        </div>
-
-
         <div class = 'navbtn' class:active={$page.url.pathname === '/chat'} on:click={() => {goto('/chat')}} >
             <span class='material-symbols-outlined'>
                 chat_bubble
@@ -218,13 +211,19 @@
                     text-align: center;
                     user-select: none;
                     filter: drop-shadow(0 4px 8px rgba(black, .1));
+                    transition: .2s ease;
                 }
                 &:hover{
-                    background: rgba(#030025, .1);
+                   // background: rgba(#030025, .1);
                     border-radius: 12px;
+                    span{
+                        color: rgba(#030025, 1);
+                        filter: none;
+                    }
                 }
                 &.disabled{
                     //display: none;
+
                 }
                 &.active{
                     //background: rgba(#e0e0e0, .8);
