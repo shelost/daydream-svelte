@@ -2,14 +2,17 @@
   import { onMount, tick } from 'svelte';
   import { scale, fly, fade } from 'svelte/transition';
   import { cubicOut, elasticOut } from 'svelte/easing';
-  import Omnibar from '$lib/components/Omnibar.svelte';
-  import { Markdown } from 'svelte-rune-markdown';
-  import { fetchAndLog } from '$lib/utils/fetchAndLog';
-  import Browserbase from '$lib/components/Browserbase.svelte';
+  import { writable } from 'svelte/store';
+  import Omnibar from '$lib/components/Omnibar.svelte'; // Import Omnibar
+  import { Markdown } from 'svelte-rune-markdown'; // Add this line to import the Markdown component
+  import { fetchAndLog } from '$lib/utils/fetchAndLog'; // Import fetchAndLog for API logging
 
   // Import Prism.js for syntax highlighting - make it conditional for production builds
-  let Prism: any = null;
-  let PrismLoaded: boolean = false;
+  let Prism: any = null; // Keep at top-level, initialize to null
+  let PrismLoaded: boolean = false; // Keep at top-level
+
+  // Word animation configuration
+  const WORD_ANIMATION_DURATION_MS = 500; // Duration for each word to fade in (milliseconds)
 
   interface AnimatedWord {
     id: string;
@@ -18,16 +21,8 @@
     currentOpacity: number;
   }
 
-  // Unified event log entry
-  interface EventLogEntry {
-    id: string; // Unique ID for Svelte #each key
-    type: 'reasoning' | 'action' | 'summary';
-    description: string;
-    fullDetails: any; // Store the original action/reasoning object
-  }
-
   interface Message {
-    id:string;
+    id: string;
     role: 'user' | 'assistant' | 'system';
     content: string;
     rawContent?: string;
@@ -35,69 +30,20 @@
     isStreaming?: boolean;
     modelUsed?: string;
     error?: string;
-    animatedWords?: AnimatedWord[];
+    animatedWords?: AnimatedWord[]; // Track animated words
     _lastProcessedContentLength?: number;
     _previousContent?: string;
-    eventLog?: EventLogEntry[]; // Unified log for reasoning and actions
+    wasUserAtBottom?: boolean; // Add this flag
   }
 
   let messages: Message[] = [];
-  let omnibarPrompt: string = '';
-  let isOverallLoading: boolean = false;
-  let currentSelectedTextModel: string = 'claude-3-7-sonnet-20250219';
-  let currentAbortController: AbortController | null = null;
-  let currentFollowUpQuestions: string[] = [];
+  let omnibarPrompt: string = ''; // Bound to Omnibar's additionalContext
+  let isOverallLoading: boolean = false; // Tracks if a response is being generated
+  let currentSelectedTextModel: string = 'claude-3-7-sonnet-20250219'; // Updated default text model
+  let currentAbortController: AbortController | null = null; // For stopping generation
+  let currentFollowUpQuestions: string[] = []; // For follow-up prompts to show above Omnibar
 
-  // Browser automation state with live view URL
-  let browserSessionId: string | null = null;
-  let browserScreenshot: string | null = null;
-  let browserLiveViewUrl: string | null = null; // Live view URL for real-time browser display
-  let isBrowserLoading: boolean = false;
-  let browserUrl: string = 'https://google.com';
-  let showBrowserViewport: boolean = true;
-  let isCleaningUpStaleSession: boolean = false; // New flag
-
-  // Reactive statement to ensure loader hides once liveViewUrl is available
-  $: if (browserLiveViewUrl && isBrowserLoading) {
-    isBrowserLoading = false;
-  }
-
-  // Browser auto-initialization function - now split to allow waiting for cleanup
-  async function initializeNewStagehandSession() {
-    if (browserSessionId || isCleaningUpStaleSession) return; // Don't init if already exists or cleaning up
-
-    console.log("🚀 Initiating new Stagehand session (e.g., navigating to linkedin.com)...");
-    isBrowserLoading = !browserLiveViewUrl;
-    showBrowserViewport = true;
-
-    try {
-      const response = await fetch('/api/stagehand', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          initUrl: 'https://www.linkedin.com', // Direct bootstrap URL
-          chatId: 'init-' + generateUniqueId(),
-          stream: false
-        })
-      });
-
-      if (response.ok) {
-        const result = await response.json();
-        console.log('✅ Initial Stagehand session established:', result);
-        if (result.sessionId) browserSessionId = result.sessionId;
-        if (result.liveViewUrl) browserLiveViewUrl = result.liveViewUrl;
-        if (result.screenshot) browserScreenshot = result.screenshot;
-        showBrowserViewport = true;
-      } else {
-        console.warn('⚠️ Failed to establish initial Stagehand session:', response.status, await response.text());
-      }
-    } catch (error) {
-      console.warn('⚠️ Error establishing initial Stagehand session:', error);
-    } finally {
-      isBrowserLoading = false;
-    }
-  }
-
+  // Map of model IDs to human-friendly labels for display
   const modelLabels: Record<string, string> = {
     'gpt-4o-mini': 'GPT-4o Mini',
     'gpt-4o': 'GPT-4o',
@@ -112,13 +58,22 @@
   let chatContainer: HTMLElement;
   let isInitialized = false;
   let isStartState = true;
+  let showScrollButton = false;
+  const shouldAutoScroll = writable(true); // Convert to writable store
+  let lastScrollTop = 0;
   const SESSION_STORAGE_KEY = 'textChatMessages';
 
   const generateUniqueId = () => `_${Math.random().toString(36).substring(2, 11)}`;
 
   let lastUserEditTime = 0;
   let pendingAnalysis = false;
+
   let markdownContainers = new Map();
+  let messageObservers: Map<string, MutationObserver> = new Map();
+
+  const ANIMATION_DURATION = 3000; // 3 seconds for opacity transition
+  const INITIAL_OPACITY = 0.5;
+  const FINAL_OPACITY = 1.0;
 
   // Animation constants
   const WORD_FADE_DURATION = 800;
@@ -126,12 +81,13 @@
   const INITIAL_WORD_OPACITY = 0.0;
   const FINAL_WORD_OPACITY = 1.0;
 
-  // Functions for syntax highlighting and other utilities
+  // Function to apply syntax highlighting to code blocks
   async function highlightCodeBlocks(element) {
     if (!element) return;
 
     const codeBlocks = element.querySelectorAll('pre code:not(.highlighted)');
     if (codeBlocks.length > 0) {
+      // Wait for DOM update
       await tick();
       codeBlocks.forEach(codeBlock => {
         addHeaderAndHighlight(codeBlock);
@@ -139,19 +95,23 @@
     }
   }
 
+  // Separated function to add header and highlight a single code block
   function addHeaderAndHighlight(codeBlock) {
     if (!codeBlock || codeBlock.classList.contains('highlighted')) return;
 
+    // Mark this code block as processed
     codeBlock.classList.add('highlighted');
 
+    // If the language class is not set, default to markup
     let language = 'markup';
     const langClass = Array.from(codeBlock.classList).find(cls => typeof cls === 'string' && cls.startsWith('language-'));
     if (langClass && typeof langClass === 'string') {
-      language = langClass.substring(9);
+      language = langClass.substring(9); // Remove 'language-' prefix
     } else {
       codeBlock.classList.add('language-markup');
     }
 
+    // Add a header with language label and copy button if not already present
     const pre = codeBlock.parentElement;
     if (pre && !pre.querySelector('.code-header')) {
       const header = document.createElement('div');
@@ -172,137 +132,295 @@
       header.appendChild(copyBtn);
 
       pre.insertBefore(header, codeBlock);
+
+      // Add position relative to pre element to position the header
       pre.style.position = 'relative';
     }
 
+    // Apply syntax highlighting only if Prism is loaded
     if (PrismLoaded && Prism && typeof Prism.highlightElement === 'function') {
       Prism.highlightElement(codeBlock);
     }
   }
 
+  // Universal copy function with checkmark feedback
   function copyWithFeedback(button, content) {
     navigator.clipboard.writeText(content);
+
+    // Store original innerHTML
     const originalHTML = button.innerHTML;
+
+    // Show checkmark
     button.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"></path></svg>';
+
+    // Restore original after 2 seconds
     setTimeout(() => {
       button.innerHTML = originalHTML;
     }, 2000);
   }
 
-  // Simplified chat functions
+  // Track animated words for each message
+  let animatedWordsMap = new Map();
+
+  // Apply fade animation to new words in real-time
+  function applyRealtimeWordAnimation(container: HTMLElement, messageId: string) {
+    if (!container) return;
+
+    // Find the message by id
+    const messageIndex = messages.findIndex((m) => m.id === messageId);
+    if (messageIndex === -1) return;
+    const message = messages[messageIndex];
+
+    if (!message.animatedWords) message.animatedWords = [];
+
+    const existingCount = message.animatedWords.length; // words already tracked
+    let globalIndex = 0; // will increment for every word encountered in DOM traversal
+
+    const newNodesToReplace = new Map<Node, DocumentFragment>();
+    const now = Date.now();
+    let newWordAdded = false; // track if we actually add new words
+
+    const walker = document.createTreeWalker(
+      container,
+      NodeFilter.SHOW_TEXT,
+      {
+        acceptNode: (node) => {
+          const parent = node.parentElement;
+          if (parent && (parent.classList.contains('animated-word') || parent.closest('pre code'))) {
+            return NodeFilter.FILTER_REJECT;
+          }
+          if (!node.textContent || !node.textContent.trim()) {
+            return NodeFilter.FILTER_REJECT;
+          }
+          return NodeFilter.FILTER_ACCEPT;
+        }
+      }
+    );
+
+    let node: Node | null;
+    while ((node = walker.nextNode())) {
+      const textContent = node.textContent || '';
+      const segments = textContent.split(/(\s+)/);
+      const fragment = document.createDocumentFragment();
+
+      segments.forEach((segment) => {
+        if (segment.trim().length === 0) {
+          // whitespace
+          fragment.appendChild(document.createTextNode(segment));
+          return;
+        }
+
+        globalIndex++;
+
+        let animatedWord = message.animatedWords[globalIndex - 1];
+        if (!animatedWord) {
+          // New word
+          animatedWord = {
+            id: `word-${messageId}-${globalIndex}`,
+            text: segment,
+            addedTime: now,
+            currentOpacity: 0,
+          };
+          message.animatedWords.push(animatedWord);
+          newWordAdded = true;
+        }
+
+        // Use existing span if it already exists to avoid flicker
+        let span = document.getElementById(animatedWord.id) as HTMLSpanElement | null;
+        if (!span) {
+          span = document.createElement('span');
+          span.id = animatedWord.id;
+          span.className = 'animated-word';
+        }
+        span.textContent = segment;
+        span.style.opacity = animatedWord.currentOpacity.toString();
+        fragment.appendChild(span);
+      });
+
+      // Only mark this text node for replacement if we actually added a new word
+      if (newWordAdded) {
+        newNodesToReplace.set(node, fragment);
+      }
+    }
+
+    // If no new words were added, skip DOM replacement to prevent flicker
+    if (!newWordAdded) return;
+
+    newNodesToReplace.forEach((frag, original) => {
+      original.parentNode?.replaceChild(frag, original);
+    });
+
+    // kick off animation loop if needed
+    if (message.isStreaming) {
+      animateWords(messageId);
+    }
+  }
+
+  function animateWords(messageId: string) {
+    const message = messages.find(m => m.id === messageId);
+    if (!message || !message.animatedWords || !message.isStreaming) return;
+
+    const now = Date.now();
+    let needsUpdate = false;
+
+    message.animatedWords.forEach(word => {
+      const age = now - word.addedTime;
+      if (age < WORD_ANIMATION_DURATION_MS) {
+        // Calculate new opacity based on age
+        word.currentOpacity = age / WORD_ANIMATION_DURATION_MS;
+        needsUpdate = true;
+
+        // Update DOM element
+        const element = document.getElementById(word.id);
+        if (element) {
+          element.style.opacity = word.currentOpacity.toString();
+        }
+      } else if (word.currentOpacity < 1) {
+        word.currentOpacity = 1;
+        needsUpdate = true;
+
+        const element = document.getElementById(word.id);
+        if (element) {
+          element.style.opacity = '1';
+        }
+      }
+    });
+
+    if (needsUpdate && message.isStreaming) {
+      requestAnimationFrame(() => animateWords(messageId));
+    }
+  }
+
+  function setupStreamingContentObserver(container, messageId) {
+    // Disconnect existing observer for this message if it exists
+    if (messageObservers.has(messageId)) {
+      messageObservers.get(messageId).disconnect();
+    }
+
+    if (!container) return;
+
+    // Create a new mutation observer to watch for content changes
+    const observer = new MutationObserver((mutations) => {
+      let hasTextChanges = false;
+
+      for (const mutation of mutations) {
+        if (mutation.type === 'childList' || mutation.type === 'characterData') {
+          hasTextChanges = true;
+
+          // Check if any new pre/code elements were added or modified
+          const codeBlocks = container.querySelectorAll('pre code:not(.highlighted)');
+          if (codeBlocks.length > 0) {
+            codeBlocks.forEach(codeBlock => {
+              addHeaderAndHighlight(codeBlock);
+            });
+          }
+        }
+      }
+
+      // Apply animation to new words without forcing scroll
+      if (hasTextChanges) {
+        highlightCodeBlocks(container); // Highlight first
+        applyRealtimeWordAnimation(container, messageId); // Then animate
+
+        // Auto-scroll ONLY if enabled - this is critical
+        if ($shouldAutoScroll && chatContainer) {
+          // Use requestAnimationFrame for smoother scrolling
+          requestAnimationFrame(() => {
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+          });
+        }
+      }
+    });
+
+    // Start observing the container for changes
+    observer.observe(container, {
+      childList: true,
+      subtree: true,
+      characterData: true
+    });
+
+    // Store the observer for cleanup later
+    messageObservers.set(messageId, observer);
+
+    return observer;
+  }
+
+  // Function to copy message content
   function copyMessage(content, button) {
     copyWithFeedback(button, content || '');
   }
 
+  // Update scrollToBottom to use shouldAutoScroll state
   async function scrollToBottom() {
-    await tick();
-    if (chatContainer) {
-      chatContainer.scrollTop = chatContainer.scrollHeight;
-    }
-  }
-
-  // Browser session cleanup function
-  async function closeBrowserSession() {
-    if (!browserSessionId) return;
-
-    console.log('🔄 Closing browser session:', browserSessionId);
-
-    try {
-      const response = await fetch('/api/browserbase', {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          sessionId: browserSessionId
-        }),
-        keepalive: true // ensure request is attempted even during unload
+    await tick(); // Ensure DOM is updated before scrolling
+    if (chatContainer && $shouldAutoScroll) {
+      // Use requestAnimationFrame for smoother scrolling
+      requestAnimationFrame(() => {
+        // Use instant scroll during streaming for smoothness
+        if (messages.some(m => m.isStreaming)) {
+          //chatContainer.scrollTop = chatContainer.scrollHeight;
+          chatContainer.scrollTo({
+            //top: chatContainer.scrollHeight,
+           // behavior: 'smooth'
+          });
+        } else {
+          // Use smooth scroll for non-streaming updates (like initial load or manual button click)
+          chatContainer.scrollTo({
+            top: chatContainer.scrollHeight,
+            behavior: 'smooth'
+          });
+        }
       });
-
-      if (response.ok) {
-        console.log('✅ Browser session closed successfully');
-      } else {
-        console.warn('⚠️ Failed to close browser session:', await response.text());
-      }
-    } catch (error) {
-      console.warn('⚠️ Error closing browser session:', error);
-    } finally {
-      // Reset browser state regardless of API success
-      browserSessionId = null;
-      browserLiveViewUrl = null;
-      browserScreenshot = null;
-      showBrowserViewport = false;
-      // Clean from storage so next load doesn't try to close again
-      if (typeof window !== 'undefined') {
-        sessionStorage.removeItem('browserSessionId');
-      }
     }
   }
 
-  // Helper to persist sessionId to sessionStorage when set
-  $: if (browserSessionId) {
-    const browser = typeof window !== 'undefined';
-    if (browser) {
-      sessionStorage.setItem('browserSessionId', browserSessionId);
+  // Add scroll handler function
+  function handleScroll(event: Event) {
+    const target = event.target as HTMLElement;
+    const currentScrollTop = target.scrollTop;
+    const isScrollable = target.scrollHeight > target.clientHeight;
+    const scrollBottom = target.scrollHeight - target.scrollTop - target.clientHeight;
+
+    // Only detect manual scrolling during streaming to avoid disabling auto-scroll unnecessarily
+    if (messages.some(m => m.isStreaming)) {
+      // Check if user has manually scrolled by comparing with the last position
+      if (Math.abs(currentScrollTop - lastScrollTop) > 1) {
+        // Only disable auto-scroll if user is actually scrolling away from bottom
+        // This prevents auto-scroll from being disabled during normal content updates
+        if (scrollBottom > 20) {
+          console.log('User manually scrolled - disabling auto-scroll');
+          $shouldAutoScroll = false;
+        }
+      }
     }
+
+    lastScrollTop = currentScrollTop;
+    showScrollButton = isScrollable && scrollBottom > 500;
   }
 
   function handleClearChat() {
-    if (isOverallLoading) return;
+    if (isOverallLoading) return; // Don't clear during loading
 
     messages = [
       {
         id: generateUniqueId(),
         role: 'assistant',
-        content: "Hi there! I'm your AI-powered browser automation assistant. I can understand natural language commands and translate them into precise browser actions.\n\n**Try natural commands like:**\n• 'find Vitalii Dodonov\'s LinkedIn profile' - I'll navigate to LinkedIn and search for the person\n• 'go to OpenAI\'s website' - I'll understand you want openai.com\n• 'search for AI news' - I'll search on the current page or find a search engine\n• 'read the latest posts' - I'll extract content from the page\n• 'take a screenshot' - I'll capture the current page\n\nI use advanced AI to understand your intent, then execute precise browser actions. The live browser window shows real-time results!"
+        content: "Hi there! I'm your friendly chat assistant. How can I help you today?"
       }
     ];
     isStartState = true;
     omnibarPrompt = '';
     isOverallLoading = false;
-    currentFollowUpQuestions = [];
-
-    // Reset browser session state
-    browserSessionId = null;
-    browserLiveViewUrl = null;
-    browserScreenshot = null;
-    showBrowserViewport = false;
-    isBrowserLoading = false;
-
-    // Remove stored session id reference as chat is cleared
-    if (typeof window !== 'undefined') {
-      sessionStorage.removeItem('browserSessionId');
-    }
+    currentFollowUpQuestions = []; // Clear follow-up prompts
   }
 
-  async function clearChatAndStorage() {
+  function clearChatAndStorage() {
     if (isOverallLoading) return;
-
-    // Close Stagehand session first
-    if (browserSessionId) {
-      try {
-        console.log('🔄 Cleaning up Stagehand session before clearing chat...');
-        const response = await fetch('/api/stagehand', {
-          method: 'DELETE',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ sessionId: browserSessionId }),
-          keepalive: true
-        });
-
-        if (response.ok) {
-          console.log('✅ Stagehand session cleaned up successfully');
-        } else {
-          console.warn('⚠️ Failed to clean up Stagehand session:', await response.text());
-        }
-      } catch (error) {
-        console.warn('⚠️ Error cleaning up Stagehand session:', error);
-      }
-    }
-
-    handleClearChat();
+    handleClearChat(); // Resets UI and in-memory messages
     const browser = typeof window !== 'undefined';
     if (browser) {
       sessionStorage.removeItem(SESSION_STORAGE_KEY);
-      sessionStorage.removeItem('browserSessionId');
-      console.log('Chat history cleared from sessionStorage.');
+      console.log('Text chat history cleared from sessionStorage.');
     }
   }
 
@@ -313,6 +431,7 @@
     }
     isOverallLoading = false;
 
+    // Update the last message to show it was stopped
     messages = messages.map(msg => {
       if (msg.isStreaming || msg.isLoading) {
         return {
@@ -327,582 +446,719 @@
     });
   }
 
-  // Utility to stream event log entries to the UI one-by-one for a simulated real-time effect
-  function streamEvents(
-    messageId: string,
-    eventEntries: EventLogEntry[]
-  ) {
-    const DELAY = 700; // ms between pills
-    (async () => {
-      for (const event of eventEntries) {
-        await new Promise((res) => setTimeout(res, DELAY));
-        messages = messages.map((m) =>
-          m.id === messageId
-            ? { ...m, eventLog: [...(m.eventLog || []), event] }
-            : m
-        );
-        await tick(); // Ensure Svelte updates the DOM
-        scrollToBottom(); // Keep chat scrolled to the bottom
-      }
-    })();
+  function parseFollowUpQuestions(content: string): { mainContent: string, followUpQuestions: string[] } {
+    console.log('🔍 Parsing follow-up prompts from content length:', content.length);
+    console.log('🔍 Content sample:', content.slice(-500)); // Show more content to see the follow-up section
+
+    const followUpMatch = content.match(/⟪---FOLLOWUP---(.*?)---ENDFOLLOWUP---/s);
+
+    if (followUpMatch) {
+      console.log('✅ Found follow-up section:', followUpMatch[1]);
+      const mainContent = content.replace(/⟪---FOLLOWUP---(.*?)---ENDFOLLOWUP---/s, '').trim();
+      const followUpSection = followUpMatch[1].trim();
+
+      // Extract questions from numbered list - make more flexible
+      const questions = followUpSection
+        .split('\n')
+        .map(line => line.trim())
+        .filter(line => line.length > 0) // Any non-empty line
+        .map(line => {
+          // Try different patterns for numbered questions
+          if (line.match(/^\d+\.\s*\[(.*)\]$/)) {
+            return line.replace(/^\d+\.\s*\[(.*)\]$/, '$1');
+          } else if (line.match(/^\d+\.\s*(.+)$/)) {
+            return line.replace(/^\d+\.\s*(.+)$/, '$1');
+          } else if (line.match(/^[-*]\s*(.+)$/)) {
+            return line.replace(/^[-*]\s*(.+)$/, '$1');
+          } else if (line.length > 5) { // Any substantial line
+            return line;
+          }
+          return null;
+        })
+        .filter(q => q && q.length > 0);
+
+      console.log('🎯 Extracted questions:', questions);
+
+      return {
+        mainContent,
+        followUpQuestions: questions.slice(0, 3) // Ensure max 3 questions
+      };
+    }
+
+    console.log('❌ No follow-up section found in content');
+    return {
+      mainContent: content,
+      followUpQuestions: []
+    };
   }
 
-  // Unified configuration for each supported LLM model
-  // provider:  "openai" | "anthropic" | "google"
-  // endpoint:  API route that will be called for the provider
-  const llmApiConfig = {
-    'claude-3-7-sonnet-20250219': { provider: 'anthropic', endpoint: '/api/ai/anthropic' },
-    'gpt-4o': { provider: 'openai', endpoint: '/api/ai/chat' },
-    'gpt-4o-mini': { provider: 'openai', endpoint: '/api/ai/chat' },
-    'gpt-3.5-turbo': { provider: 'openai', endpoint: '/api/ai/chat' },
-    'gemini-2.5-pro-preview-05-06': { provider: 'google', endpoint: '/api/ai/google' },
-    'gemini-2.5-flash-preview-05-20': { provider: 'google', endpoint: '/api/ai/google' },
-  };
-
-  async function handleStandardChat(promptText: string) {
-    const userMessageId = messages.find((m) => m.role === 'user' && m.content === promptText)?.id || generateUniqueId();
-    const assistantMessageId = generateUniqueId();
-
-    // Update or append user message
-    if (!messages.find((m) => m.id === userMessageId)) {
-      messages = [...messages, { id: userMessageId, role: 'user', content: promptText }];
-    } else {
-      messages = messages.map((m) => (m.id === userMessageId ? { ...m, content: promptText } : m));
-    }
-
-    // Assistant placeholder
-    messages = [
-      ...messages,
-      {
-        id: assistantMessageId,
-        role: 'assistant',
-        content: '',
-        isLoading: true,
-        isStreaming: true,
-        modelUsed: getModelLabel(currentSelectedTextModel)
-      }
-    ];
-
-    isOverallLoading = true;
-    currentAbortController = new AbortController();
-
-    // Determine provider config
-    const config = llmApiConfig[currentSelectedTextModel] || { provider: 'openai', endpoint: '/api/ai/chat' };
-
-    // Build request payload based on provider expectations
-    let requestBody: any = { model: currentSelectedTextModel };
-
-    if (config.provider === 'openai') {
-      requestBody.messagesHistory = messages
-        .filter((m) => m.id !== assistantMessageId && m.role !== 'system')
-        .map((m) => ({ role: m.role, content: m.content }));
-    } else {
-      // For Anthropic & Google endpoints
-      requestBody.prompt = promptText;
-    }
-
-    console.log(`💬 Standard chat via ${config.provider.toUpperCase()} (${currentSelectedTextModel}) → ${config.endpoint}`);
-
-    try {
-      const response = await fetch(config.endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(requestBody),
-        signal: currentAbortController.signal
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`HTTP ${response.status}: ${errorText || response.statusText}`);
-      }
-
-      const reader = response.body?.getReader();
-      const decoder = new TextDecoder();
-      if (!reader) throw new Error('Failed to get response reader for standard chat.');
-
-      let streamedContent = '';
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        const chunkStr = decoder.decode(value, { stream: true });
-
-        // Skip API log metadata if present
-        if (chunkStr.trim().startsWith('{') && chunkStr.includes('"apiLogEntry"')) {
-          continue;
-        }
-
-        // Attempt to parse OpenAI SSE format; fall back to raw text otherwise
-        let processed = false;
-        const lines = chunkStr.split('\n');
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            const jsonData = line.substring(6);
-            if (jsonData.trim() === '[DONE]') {
-              processed = true;
-              continue;
-            }
-            try {
-              const parsed = JSON.parse(jsonData);
-              if (parsed.choices && parsed.choices[0]?.delta?.content) {
-                streamedContent += parsed.choices[0].delta.content;
-                processed = true;
-              }
-            } catch (e) {
-              /* ignore JSON errors */
-            }
-          }
-        }
-
-        if (!processed) {
-          streamedContent += chunkStr;
-        }
-
-        messages = messages.map((msg) =>
-          msg.id === assistantMessageId ? { ...msg, content: streamedContent, isLoading: false, isStreaming: true } : msg
-        );
-        await tick();
-        scrollToBottom();
-      }
-
-      messages = messages.map((msg) =>
-        msg.id === assistantMessageId ? { ...msg, isStreaming: false, rawContent: streamedContent } : msg
-      );
-
-    } catch (error: any) {
-      console.error('Error during standard chat:', error);
-      messages = messages.map((msg) =>
-        msg.id === assistantMessageId
-          ? {
-              ...msg,
-              isLoading: false,
-              isStreaming: false,
-              error: error.message || 'Failed to get response from chat model.',
-              content: `Error: ${error.message || 'Failed to get response from chat model.'}`
-            }
-          : msg
-      );
-    } finally {
-      isOverallLoading = false;
-      if (currentAbortController && !currentAbortController.signal.aborted) {
-        currentAbortController = null;
-      }
-      await tick();
-      scrollToBottom();
-    }
-  }
-
-  // Generic handler for Stagehand (Agent and Direct Browser commands)
-  async function handleStagehandCommand(promptText: string, commandType: 'agent' | 'direct') {
-    const userMessageId = messages.find(m => m.role === 'user' && m.content.endsWith(promptText))?.id || generateUniqueId();
-    const assistantMessageId = generateUniqueId();
-
-    // Update existing user message or add new one
-    const fullUserPrompt = commandType === 'agent' ? `@${promptText}` : `>${promptText}`;
-    if (!messages.find(m => m.id === userMessageId)) {
-      messages = [...messages, { id: userMessageId, role: 'user', content: fullUserPrompt }];
-    } else {
-       messages = messages.map(m => m.id === userMessageId ? { ...m, content: fullUserPrompt } : m);
-    }
-
-
-    messages = [
-      ...messages,
-      {
-        id: assistantMessageId,
-        role: 'assistant',
-        content: '',
-        eventLog: [],
-        isLoading: true,
-        isStreaming: true,
-        modelUsed: commandType === 'agent' ? 'Stagehand CU Agent' : 'Stagehand Direct Browser'
-      }
-    ];
-
-    isOverallLoading = true;
-    currentAbortController = new AbortController();
-
-    if (!browserLiveViewUrl && commandType !== 'agent') { // Don't auto-show browser for agent unless it was already up
-      isBrowserLoading = true;
-    }
-    showBrowserViewport = true; // Always attempt to show for any browser interaction
-
-    try {
-      console.log(`🚀 Starting Stagehand command (type: ${commandType}):`, promptText);
-
-      const response = await fetch('/api/stagehand', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          command: promptText,
-          chatId: userMessageId,
-          stream: true,
-          commandType: commandType // 'agent' or 'direct'
-        }),
-        signal: currentAbortController?.signal
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`HTTP ${response.status}: ${errorText || response.statusText}`);
-      }
-
-      const reader = response.body?.getReader();
-      const decoder = new TextDecoder();
-      if (!reader) throw new Error('Failed to get response reader for Stagehand command.');
-
-      let buffer = '';
-      let finalData: any = null;
-      let currentEventType = '';
-
-      // eslint-disable-next-line no-constant-condition
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
-
-        for (const line of lines) {
-          if (line.startsWith('event: ')) {
-            currentEventType = line.slice(7).trim();
-          } else if (line.startsWith('data: ') && line.trim() !== 'data: ') {
-            try {
-              const data = JSON.parse(line.slice(6));
-              if (currentEventType === 'pill') {
-                messages = messages.map((m) =>
-                  m.id === assistantMessageId
-                    ? { ...m, eventLog: [...(m.eventLog || []), data] }
-                    : m
-                );
-              } else if (currentEventType === 'start') {
-                messages = messages.map((m) =>
-                  m.id === assistantMessageId
-                    ? { ...m, content: data.message || 'Starting execution...' }
-                    : m
-                );
-              } else if (currentEventType === 'session') {
-                if (data.sessionId) browserSessionId = data.sessionId;
-                if (data.liveViewUrl) browserLiveViewUrl = data.liveViewUrl;
-                showBrowserViewport = true;
-              } else if (currentEventType === 'complete') {
-                finalData = data;
-              } else if (currentEventType === 'error') {
-                throw new Error(data.error || 'Streaming error occurred for Stagehand command');
-              }
-              currentEventType = '';
-            } catch (parseError) {
-              console.warn('⚠️ Failed to parse SSE data from Stagehand:', parseError, 'Line:', line);
-            }
-          }
-        }
-        await tick();
-        scrollToBottom();
-      }
-
-      if (finalData) {
-        let responseContent = typeof finalData.message === 'string' ? finalData.message : JSON.stringify(finalData.message, null, 2);
-        if (!responseContent && commandType === 'direct') responseContent = `Direct action "${promptText}" completed.`
-        else if (!responseContent) responseContent = "Stagehand processed the command.";
-
-
-        const summaryPill: EventLogEntry = {
-          id: generateUniqueId() + '-summary',
-          type: 'summary',
-          description: `Stagehand ${commandType} completed ${finalData.actionsPerformed?.length || 0} actions`,
-          fullDetails: {
-            actionsPerformed: finalData.actionsPerformed || [],
-            data: finalData.data,
-            success: finalData.success,
-            modelUsed: finalData.modelUsed,
-          }
-        };
-
-        messages = messages.map(msg =>
-          msg.id === assistantMessageId
-            ? {
-                ...msg,
-                content: responseContent,
-                isLoading: false,
-                isStreaming: false,
-                modelUsed: finalData.modelUsed || (commandType === 'agent' ? 'Stagehand CU Agent' : 'Stagehand Direct Browser'),
-                eventLog: [...(msg.eventLog || []), summaryPill]
-              }
-            : msg
-        );
-
-        if (finalData.screenshot) browserScreenshot = finalData.screenshot;
-        if (finalData.liveViewUrl) browserLiveViewUrl = finalData.liveViewUrl;
-        if (finalData.sessionId) browserSessionId = finalData.sessionId;
-        showBrowserViewport = true;
-      } else {
-        messages = messages.map(msg =>
-          msg.id === assistantMessageId
-            ? { ...msg, content: "Stagehand execution completed.", isLoading: false, isStreaming: false }
-            : msg
-        );
-      }
-
-    } catch (error: any) {
-      console.error(`Error during Stagehand command (type: ${commandType}):`, error);
-      if (error.name === 'AbortError') {
-        messages = messages.map(msg =>
-          msg.id === assistantMessageId && msg.isLoading
-            ? { ...msg, content: "Operation aborted.", isLoading: false, isStreaming: false }
-            : msg
-        );
-      } else {
-        messages = messages.map(msg =>
-          msg.id === assistantMessageId
-            ? {
-                ...msg,
-                isLoading: false,
-                isStreaming: false,
-                error: error.message || 'Failed to get response from Stagehand.',
-                content: `Error: ${error.message || 'Failed to get response from Stagehand.'}`
-              }
-            : msg
-        );
-      }
-    } finally {
-      isOverallLoading = false;
-      isBrowserLoading = false;
-      if (currentAbortController && !currentAbortController.signal.aborted) {
-        currentAbortController = null;
-      }
-      await tick();
-      scrollToBottom();
-    }
-  }
-
-  // Main omnibar submit function - NOW A DISPATCHER
   async function handleOmnibarSubmit() {
-    const currentPromptValue = omnibarPrompt.trim();
-    if (!currentPromptValue || isOverallLoading) return;
+    const currentPrompt = omnibarPrompt.trim();
+    if (!currentPrompt || isOverallLoading) return;
+
+    // Reset auto-scroll state for new API call
+    $shouldAutoScroll = true;
+
+    // Create new AbortController for this request
+    currentAbortController = new AbortController();
 
     if (isStartState) {
       isStartState = false;
     }
 
-    // Add user message immediately
+    isOverallLoading = true;
     const userMessageId = generateUniqueId();
-    messages = [...messages, { id: userMessageId, role: 'user', content: currentPromptValue }];
-    omnibarPrompt = ''; // Clear omnibar after capturing prompt
-    await tick();
-    scrollToBottom();
+    messages = [...messages, { id: userMessageId, role: 'user', content: currentPrompt }];
+    omnibarPrompt = '';
 
-    if (currentPromptValue.startsWith('@')) {
-      const commandText = currentPromptValue.substring(1).trim();
-      if (commandText) {
-        await handleStagehandCommand(commandText, 'agent');
-      } else {
-         messages = [...messages, { id: generateUniqueId(), role: 'assistant', content: "Agent command cannot be empty after '@'.", modelUsed: "System" }];
-         isOverallLoading = false;
+    // Initial scroll to bottom when starting new response - ensure it's smooth
+    await scrollToBottom();
+
+    const assistantMessageId = generateUniqueId();
+    messages = [
+      ...messages,
+      {
+        id: assistantMessageId,
+        role: 'assistant',
+        content: '',
+        isLoading: true,
+        isStreaming: true,
+        modelUsed: currentSelectedTextModel
       }
-    } else if (currentPromptValue.startsWith('>')) {
-      const commandText = currentPromptValue.substring(1).trim();
-      if (commandText) {
-        await handleStagehandCommand(commandText, 'direct');
+    ];
+
+    // Initialize/reset processedWords count for the new assistant message
+    animatedWordsMap.set(assistantMessageId, { processedWords: 0 });
+
+    try {
+      // Determine appropriate endpoint based on model prefix/provider
+      let endpoint = '/api/ai/chat';
+      let requestBody: any = {};
+
+      const messagesHistory = messages
+        .filter(m => m.role === 'user' || (m.role === 'assistant' && !m.isLoading && !m.isStreaming && !m.error))
+        .map(m => ({ role: m.role, content: m.content }));
+
+      if (currentSelectedTextModel.startsWith('claude')) {
+        // Anthropic Claude models expect a plain prompt plus optional images
+        endpoint = '/api/ai/anthropic';
+
+        // Format conversation history for Claude
+        let formattedPrompt = '';
+        if (messagesHistory && messagesHistory.length > 0) {
+          formattedPrompt = messagesHistory
+            .map(m => `${m.role === 'user' ? 'Human' : 'Assistant'}: ${m.content}`)
+            .join('\n\n');
+
+          // Add the current prompt if not already included
+          if (currentPrompt && !messagesHistory.some(m =>
+              m.role === 'user' && m.content.trim() === currentPrompt.trim())) {
+            formattedPrompt += `\n\nHuman: ${currentPrompt}`;
+          }
+        } else {
+          formattedPrompt = currentPrompt;
+        }
+
+        // Add a reminder of the model's identity
+        const modelIdentityGuide = `You are Stanley, a helpful AI Creator Asistant created by Stan. Stan is the All-in-one store for Creators, enabling individuals to build businesses online. You are extremely friendly and cute and helpful, so keep that in mind when responding.
+
+IMPORTANT: After your response, provide exactly 3 SHORT, relevant follow-up prompts that the USER might want to ask YOU to continue the conversation. Keep each question under 6 words when possible.
+
+Use this EXACT format at the very end, with the special delimiter ⟪ to signal the start:
+
+⟪---FOLLOWUP---
+1. [Short question]
+2. [Short question]
+3. [Short question]
+---ENDFOLLOWUP---`;
+
+        requestBody = {
+          prompt: `${modelIdentityGuide}\n\n${formattedPrompt}`,
+          model: currentSelectedTextModel,
+          images: []
+        };
+        console.log('Using Anthropic endpoint with model:', currentSelectedTextModel);
+      } else if (currentSelectedTextModel.startsWith('gemini')) {
+        // Google Gemini models
+        endpoint = '/api/ai/google';
+
+        // Better conversation formatting for Gemini
+        // Format more like a chat conversation rather than raw history
+        let formattedPrompt = '';
+        if (messagesHistory && messagesHistory.length > 0) {
+          formattedPrompt = messagesHistory
+            .map(m => `${m.role === 'user' ? 'Human' : 'Assistant'}: ${m.content}`)
+            .join('\n\n');
+
+          // Add the current prompt if not included in history
+          if (currentPrompt && !messagesHistory.some(m =>
+              m.role === 'user' && m.content.trim() === currentPrompt.trim())) {
+            formattedPrompt += `\n\nHuman: ${currentPrompt}`;
+          }
+        } else {
+          formattedPrompt = currentPrompt;
+        }
+
+        // Add a reminder of the model's identity at the beginning
+        const modelIdentityGuide = `You are ${getModelLabel(currentSelectedTextModel)}, a helpful AI assistant created by Google.
+
+IMPORTANT: After your response, provide exactly 3 SHORT, relevant follow-up prompts or questions that the USER might want to prompt YOU to continue the conversation. Keep each question under 6 words when possible.
+
+Use this EXACT format at the very end, with the special delimiter ⟪ to signal the start:
+
+⟪---FOLLOWUP---
+1. [Short prompt]
+2. [Short prompt]
+3. [Short prompt]
+---ENDFOLLOWUP---`;
+        requestBody = {
+          prompt: `${modelIdentityGuide}\n\n${formattedPrompt}`,
+          model: currentSelectedTextModel,
+          images: []
+        };
+        console.log('Using Google endpoint with model:', currentSelectedTextModel);
       } else {
-        messages = [...messages, { id: generateUniqueId(), role: 'assistant', content: "Browser command cannot be empty after '>'.", modelUsed: "System" }];
+        // Default to OpenAI chat endpoint with full messages history
+        endpoint = '/api/ai/chat';
+
+        // Add a system message about model identity if not already present
+        let systemMessageAdded = false;
+        const processedMessages = messagesHistory.map((msg, index) => {
+          if (index === 0 && msg.role === 'system') {
+            systemMessageAdded = true;
+            return {
+              ...msg,
+              content: `You are ${getModelLabel(currentSelectedTextModel)}, a helpful AI assistant created by OpenAI. ${msg.content}`
+            };
+          }
+          return msg;
+        });
+
+        // Add a system message if none exists
+        if (!systemMessageAdded && processedMessages.length > 0) {
+          processedMessages.unshift({
+            role: 'system',
+            content: `You are ${getModelLabel(currentSelectedTextModel)}, a helpful AI assistant created by OpenAI.
+
+IMPORTANT: After your response, provide exactly 3 SHORT, relevant follow-up prompts that the USER might want to prompt or ask YOU to continue the conversation. Keep each prompt under 6 words when possible.
+
+Use this EXACT format at the very end, with the special delimiter ⟪ to signal the start:
+
+⟪---FOLLOWUP---
+1. [Short prompt]
+2. [Short prompt]
+3. [Short prompt]
+---ENDFOLLOWUP---`
+          });
+        }
+
+        requestBody = {
+          messagesHistory: processedMessages,
+          model: currentSelectedTextModel
+        };
+        console.log('Using OpenAI endpoint with model:', currentSelectedTextModel);
+      }
+
+      const response = await fetchAndLog(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(requestBody),
+          signal: currentAbortController?.signal
+      }, {
+        page: 'Chat',
+        model: currentSelectedTextModel,
+        apiProvider: currentSelectedTextModel.startsWith('claude') ? 'Anthropic' :
+                    currentSelectedTextModel.startsWith('gemini') ? 'Google' : 'OpenAI'
+      });
+
+      if (!response.ok || !response.body) {
+        const errorData = await response.json().catch(() => ({ message: `HTTP error ${response.status}` }));
+        throw new Error(errorData.message || `Failed to get response from ${currentSelectedTextModel}`);
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let done = false;
+      let assistantContent = '';
+      let followUpContent = ''; // Track follow-up content separately
+      let inFollowUpSection = false; // Track if we're in the follow-up section
+
+      messages = messages.map(msg =>
+        msg.id === assistantMessageId ? { ...msg, isLoading: false, isStreaming: true, _previousContent: '' } : msg
+      );
+
+      // Set up a mutation observer for the streaming content
+      const setupObserver = () => {
+        if (markdownContainers[assistantMessageId]) {
+          setupStreamingContentObserver(markdownContainers[assistantMessageId], assistantMessageId);
+        } else {
+          // If container isn't available yet, retry after a short delay
+          setTimeout(setupObserver, 100);
+        }
+      };
+      setupObserver();
+
+      while (!done) {
+        const { value, done: readerDone } = await reader.read();
+        done = readerDone;
+        if (value) {
+          const chunk = decoder.decode(value, { stream: !done });
+          let processedChunk = chunk;
+
+          // Check if this is an API log entry chunk (will be at the end)
+          if (chunk.includes('"apiLogEntry"')) {
+            try {
+              // Try to extract just the API log entry as JSON
+              const logMatch = chunk.match(/\{[\s\n]*"apiLogEntry"[\s\n]*:[\s\n]*(\{.*\})[\s\n]*\}/s);
+              if (logMatch && logMatch[1]) {
+                // This is just an API log entry, don't add to the response content
+                console.log('Received API log entry');
+                continue;
+              }
+            } catch (e) {
+              console.log('Failed to parse API log entry', e);
+            }
+          }
+
+          if (currentSelectedTextModel.startsWith('gemini')) {
+            try {
+              // Try to parse JSON if it's a complete JSON object
+              if (chunk.trim().startsWith('{') && chunk.trim().endsWith('}')) {
+                const jsonResponse = JSON.parse(chunk);
+
+                // Extract the actual message content from Gemini's response format
+                if (jsonResponse.message && typeof jsonResponse.message === 'object' && jsonResponse.message.content) {
+                  processedChunk = jsonResponse.message.content;
+                } else if (jsonResponse.message && typeof jsonResponse.message === 'string') {
+                  processedChunk = jsonResponse.message;
+                } else if (jsonResponse.content) {
+                  processedChunk = jsonResponse.content;
+                } else if (jsonResponse.text) {
+                  processedChunk = jsonResponse.text;
+                }
+
+                // Filter out metadata properties that shouldn't be shown to the user
+                if (processedChunk === chunk && typeof jsonResponse === 'object') {
+                  // If we couldn't extract a specific content field, try removing metadata
+                  const metadataKeys = ['usage', 'input_chars', 'output_chars', 'cost', 'durationMs', 'total_tokens'];
+                  const hasMetadataKeys = metadataKeys.some(key => key in jsonResponse);
+
+                  if (hasMetadataKeys) {
+                    // Create a filtered copy without metadata
+                    const filtered = { ...jsonResponse };
+                    metadataKeys.forEach(key => delete filtered[key]);
+                    processedChunk = JSON.stringify(filtered);
+                  }
+                }
+
+                // Log any errors in the JSON response
+                if (jsonResponse.error) {
+                  console.error('Error in Gemini response:', jsonResponse.error);
+                }
+              }
+            } catch (e) {
+              // If JSON parsing fails, use the chunk as is
+              console.log('Could not parse Gemini response as JSON:', e);
+            }
+          }
+
+          // Check for the special delimiter to stop main content streaming
+          if (!inFollowUpSection && processedChunk.includes('⟪')) {
+            console.log('🛑 Detected follow-up delimiter, stopping main content stream');
+
+            // Split the chunk at the delimiter
+            const delimiterIndex = processedChunk.indexOf('⟪');
+            const beforeDelimiter = processedChunk.substring(0, delimiterIndex);
+            const afterDelimiter = processedChunk.substring(delimiterIndex);
+
+            // Add the content before delimiter to main content
+            if (beforeDelimiter) {
+              assistantContent += beforeDelimiter;
+              messages = messages.map(msg => {
+                if (msg.id === assistantMessageId && msg.isStreaming) {
+                  const previousContent = msg._previousContent || '';
+                  let currentContent = msg.content || '';
+                  currentContent += beforeDelimiter;
+
+                  return {
+                    ...msg,
+                    content: currentContent,
+                    _previousContent: previousContent
+                  };
+                }
+                return msg;
+              });
+            }
+
+            // Switch to follow-up mode
+            inFollowUpSection = true;
+            followUpContent = afterDelimiter;
+
+            // Immediately try to parse and set follow-up prompts
+            const tempFollowUpResult = parseFollowUpQuestions('⟪' + followUpContent);
+            if (tempFollowUpResult.followUpQuestions.length > 0) {
+              currentFollowUpQuestions = tempFollowUpResult.followUpQuestions;
+              console.log('🎯 Immediately set follow-up prompts:', currentFollowUpQuestions);
+            }
+
+            continue; // Skip the normal processing for this chunk
+          }
+
+          if (inFollowUpSection) {
+            // We're in follow-up section, collect content but don't display in main response
+            followUpContent += processedChunk;
+
+            // Try to parse follow-up prompts as we get more content
+            const tempFollowUpResult = parseFollowUpQuestions('⟪' + followUpContent);
+            if (tempFollowUpResult.followUpQuestions.length > 0) {
+              currentFollowUpQuestions = tempFollowUpResult.followUpQuestions;
+              console.log('🔄 Updated follow-up prompts:', currentFollowUpQuestions);
+            }
+
+            continue; // Don't add follow-up content to main response
+          }
+
+          assistantContent += processedChunk;
+          messages = messages.map(msg => {
+            if (msg.id === assistantMessageId && msg.isStreaming) {
+              let currentContent = msg.content || '';
+              currentContent += processedChunk;
+
+              return {
+                ...msg,
+                content: currentContent
+              };
+            }
+            return msg;
+          });
+
+          // Auto-scroll during streaming if enabled
+          if ($shouldAutoScroll) {
+             await tick();
+             // Use instant scroll during streaming for smoothness
+             chatContainer.scrollTop = chatContainer.scrollHeight;
+           }
+        }
+      }
+      messages = messages.map(msg => {
+        if (msg.id === assistantMessageId) {
+          // Clean up animation properties and ensure final content is trimmed
+          const finalContent = (msg.content || "Sorry, I couldn't generate a response.").trim();
+          return {
+            ...msg,
+            isStreaming: false,
+            content: finalContent,
+            _previousContent: '' // Clear previous content tracking
+          };
+        }
+        return msg;
+      });
+
+      // Final cleanup pass - check if the content might still be JSON
+      messages = messages.map(msg => {
+        if (msg.id === assistantMessageId && msg.content) {
+          const content = msg.content.trim();
+          // Try to clean up any remaining JSON objects
+          if (content.startsWith('{') && content.endsWith('}')) {
+            try {
+              const jsonObj = JSON.parse(content);
+
+              // Extract the message if possible
+              if (jsonObj.message && typeof jsonObj.message === 'string') {
+                return { ...msg, content: jsonObj.message };
+              } else if (jsonObj.content && typeof jsonObj.content === 'string') {
+                return { ...msg, content: jsonObj.content };
+              } else if (jsonObj.text && typeof jsonObj.text === 'string') {
+                return { ...msg, content: jsonObj.text };
+              }
+            } catch (e) {
+              // If parsing or extraction fails, try to remove metadata if it looks like a structured object
+              // This part of the catch block is a bit of a heuristic
+              try {
+                const jsonObjForFiltering = JSON.parse(content); // Re-parse for filtering attempt
+                 // Remove metadata fields
+                const filtered = { ...jsonObjForFiltering };
+                ['usage', 'input_chars', 'output_chars', 'cost', 'durationMs', 'total_tokens'].forEach(key => {
+                  delete filtered[key];
+                });
+
+                // Only use the filtered JSON if it's different and not empty
+                if (Object.keys(filtered).length < Object.keys(jsonObjForFiltering).length && Object.keys(filtered).length > 0) {
+                  return { ...msg, content: JSON.stringify(filtered, null, 2) };
+                } else if (Object.keys(filtered).length === 0 && Object.keys(jsonObjForFiltering).length > 0) {
+                  // If filtering results in an empty object but original was not, perhaps it was all metadata
+                  return { ...msg, content: "Received a structured response, but it contained only metadata after filtering." };
+                }
+              } catch (filterError) {
+                // Not valid JSON even for filtering, leave as is
+              }
+            }
+          }
+        }
+        return msg;
+      });
+
+      // Parse follow-up prompts from the final content
+      const finalMessage = messages.find(msg => msg.id === assistantMessageId);
+      if (finalMessage && finalMessage.content) {
+        console.log('🔄 Processing final message for follow-ups...');
+
+        // Only parse if we haven't already set follow-up prompts during streaming
+        if (currentFollowUpQuestions.length === 0) {
+          const parsedResult = parseFollowUpQuestions(finalMessage.content);
+
+          console.log('📝 Parsed main content length:', parsedResult.mainContent.length);
+          console.log('❓ Parsed follow-up prompts:', parsedResult.followUpQuestions);
+
+          // Update the message content to exclude follow-up prompts
+          messages = messages.map(msg =>
+            msg.id === assistantMessageId
+              ? { ...msg, content: parsedResult.mainContent }
+              : msg
+          );
+
+          // Set follow-up prompts for the Omnibar
+          currentFollowUpQuestions = parsedResult.followUpQuestions;
+          console.log('✨ Set currentFollowUpQuestions to:', currentFollowUpQuestions);
+        } else {
+          console.log('✅ Follow-up questions already set during streaming:', currentFollowUpQuestions);
+
+          // Clean the main content of any follow-up remnants just in case
+          const cleanedContent = finalMessage.content.replace(/⟪---FOLLOWUP---(.*?)---ENDFOLLOWUP---/s, '').trim();
+          if (cleanedContent !== finalMessage.content) {
+            messages = messages.map(msg =>
+              msg.id === assistantMessageId
+                ? { ...msg, content: cleanedContent }
+                : msg
+            );
+          }
+        }
+      } else {
+        console.log('❌ No final message found or content is empty');
+      }
+
+    } catch (error: any) {
+      console.error(`Error with ${currentSelectedTextModel}:`, error);
+
+      // Don't update messages if the request was aborted
+      if (error.name === 'AbortError') {
+        console.log('Request was aborted by user');
+        return;
+      }
+
+      messages = messages.map(msg =>
+        msg.id === assistantMessageId
+          ? {
+              ...msg,
+              isLoading: false,
+              isStreaming: false,
+              error: error.message || 'Unknown error',
+              content: `Error: ${error.message || 'Failed to get response.'}`,
+              _previousContent: ''
+            }
+          : msg
+      );
+    } finally {
         isOverallLoading = false;
-      }
-    } else {
-      await handleStandardChat(currentPromptValue);
+        currentAbortController = null;
+      // scrollToBottom(); // Will be handled by reactive messages update
     }
   }
 
-
   function handleFollowUpClick(question: string) {
     if (isOverallLoading) return;
-    omnibarPrompt = question;
-    currentFollowUpQuestions = [];
-    handleOmnibarSubmit();
-  }
 
-  function handleExamplePrompt(promptText: string) {
-    if (isOverallLoading) return;
-    omnibarPrompt = promptText;
+    // Reset auto-scroll state for follow-up questions
+    $shouldAutoScroll = true;
+
+    omnibarPrompt = question;
+    currentFollowUpQuestions = []; // Clear follow-up prompts
+
+    // Auto-submit the follow-up question
     handleOmnibarSubmit();
   }
 
   onMount(() => {
     const browser = typeof window !== 'undefined';
     if (browser) {
-      const handleBrowserbaseMessage = (event) => {
-        console.log('🔌 Received message from iframe:', event.data, 'Origin:', event.origin);
-
-        if (event.data === "browserbase-disconnected") {
-          console.log('🔌 Browserbase connection lost:', event.data);
-          browserLiveViewUrl = null;
-          showBrowserViewport = false;
-        }
-      };
-
-      (async () => {
-        isCleaningUpStaleSession = true;
-        const staleSessionId = sessionStorage.getItem('browserSessionId');
-
-        if (staleSessionId) {
-          console.log('🧹 Found stale session ID in storage:', staleSessionId, "Attempting to close immediately.");
+        // Dynamically import Prism.js to avoid SSR issues
+        const loadPrism = async () => {
           try {
-            // IMPORTANT: Call DELETE on BOTH Stagehand and Browserbase
-            const stagehandDelete = fetch('/api/stagehand', {
-              method: 'DELETE',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ sessionId: staleSessionId }),
-              // keepalive: true, // Not strictly needed for onMount, but doesn't hurt
-            });
-            const browserbaseDelete = fetch('/api/browserbase', {
-              method: 'DELETE',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ sessionId: staleSessionId }),
-              // keepalive: true,
-            });
+            if (typeof window !== 'undefined') {
+              const prismModule = await import('prismjs');
+              await import('prismjs/components/prism-markup.js');
+              await import('prismjs/components/prism-javascript.js');
+              await import('prismjs/components/prism-typescript.js');
+              await import('prismjs/components/prism-css.js');
+              await import('prismjs/components/prism-scss.js');
+              await import('prismjs/components/prism-python.js');
+              await import('prismjs/components/prism-json.js');
+              await import('prismjs/components/prism-bash.js');
+              await import('prismjs/components/prism-markdown.js');
 
-            await Promise.all([stagehandDelete, browserbaseDelete]);
-            console.log('✅ Stale session cleanup requests sent for:', staleSessionId);
+              const prismInstance = prismModule.default || prismModule;
 
-          } catch (err) {
-            console.warn('⚠️ Error during stale session cleanup fetch:', err);
-          } finally {
-            sessionStorage.removeItem('browserSessionId'); // Remove regardless of API success
-            console.log('🧹 Stale session ID removed from sessionStorage.');
+              if (prismInstance && typeof prismInstance.highlightElement === 'function') {
+                Prism = prismInstance; // Assign to top-level Prism
+                PrismLoaded = true;    // Assign to top-level PrismLoaded
+                console.log('Prism.js loaded successfully for chat page.');
+
+                // Load CSS dynamically
+                if (!document.querySelector('link[href*="prism-okaidia"]')) {
+                  const link = document.createElement('link');
+                  link.rel = 'stylesheet';
+                  link.href = 'https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-okaidia.min.css';
+                  document.head.appendChild(link);
+                }
+              } else {
+                console.warn('Prism.js loaded but highlightElement method not available.');
+              }
+            }
+          } catch (error) {
+            console.error('Failed to load Prism.js:', error);
           }
-        }
-        isCleaningUpStaleSession = false;
+        };
 
-        // Now that cleanup is done (or if there was nothing to clean), proceed with new session init
-        // Only initialize if it's truly a fresh start, not if messages are loaded from session storage
+        loadPrism();
+
         const storedMessages = sessionStorage.getItem(SESSION_STORAGE_KEY);
+        let loadedSuccessfully = false;
         if (storedMessages) {
-          try {
-            messages = JSON.parse(storedMessages);
-            isStartState = messages.length <= 1 && messages[0]?.content.startsWith("Hi there!"); // Re-evaluate start state
-            console.log('Chat history loaded from sessionStorage.');
-          } catch (e) {
-            console.error('Failed to parse chat history from sessionStorage:', e);
-            handleClearChat(); // Start fresh if parsing fails
-          }
-        } else {
+            try {
+                const parsedMessages: Message[] = JSON.parse(storedMessages);
+                if (Array.isArray(parsedMessages) && (parsedMessages.length === 0 || (parsedMessages[0].id && typeof parsedMessages[0].content === 'string'))) {
+                    messages = parsedMessages.map(msg => ({
+                        ...msg,
+                        // Reset transient states for loaded messages
+                        isLoading: false,
+                        isStreaming: false,
+                        _previousContent: ''
+                    }));
+                    isStartState = !parsedMessages.some(msg => msg.role === 'user');
+                    loadedSuccessfully = true;
+                    console.log('Text chat history loaded from sessionStorage.');
+                } else {
+                    console.warn('Invalid text chat data found in sessionStorage.');
+                    sessionStorage.removeItem(SESSION_STORAGE_KEY);
+                }
+            } catch (e) {
+                console.error('Failed to parse text chat history from sessionStorage:', e);
+                sessionStorage.removeItem(SESSION_STORAGE_KEY);
+            }
+        }
+
+        if (!loadedSuccessfully) {
             messages = [
                 {
                     id: generateUniqueId(),
                     role: 'assistant',
-                    content: "Hi there! I'm now powered by Stagehand for advanced browser automation. I can understand complex natural language commands.\n\n**Use prefixes for different modes:**\n• `@command` for complex Agent tasks (e.g., `@find Vitalii Dodonov\'s LinkedIn and tell me his current role`)\n• `>command` for direct Browser actions (e.g., `>go to openai.com` or `>click the login button`)\n• `command` (no prefix) for standard Chat (e.g., `What is Svelte?`)\n\nThe live browser window will show real-time results for Agent and Browser commands!"
+                    content: "Hi there! I'm your friendly chat assistant. How can I help you today?",
+                    _previousContent: ''
                 }
             ];
             isStartState = true;
         }
-
-        // Initialize Stagehand session only if it seems necessary (e.g. no active session from previous page load)
-        // and not if we are in a pure chat context without prior browser interaction
-        // This logic might need refinement based on desired UX for when the browser automatically opens.
-        if (isStartState || !browserSessionId) {
-            await initializeNewStagehandSession();
-        }
-
         isInitialized = true;
         scrollToBottom();
-        window.addEventListener("message", handleBrowserbaseMessage);
-      })();
 
-      const cleanupSessions = async (isUnloading = false) => {
-        if (browserSessionId) {
-          console.log(`🧹 Cleaning up sessions (unload: ${isUnloading}):`, browserSessionId);
-          const headers = { 'Content-Type': 'application/json' };
-          const body = JSON.stringify({ sessionId: browserSessionId });
+        // Initialize Prism.js for any code blocks that might already be in the DOM
+        setTimeout(() => {
+          document.querySelectorAll('.markdown-container').forEach(container => {
+            highlightCodeBlocks(container);
+          });
+        }, 100);
 
-          try {
-            if (isUnloading && navigator.sendBeacon) {
-              // navigator.sendBeacon('/api/stagehand', body); // sendBeacon expects specific content types
-              // navigator.sendBeacon('/api/browserbase', body);
-              // Using fetch with keepalive for JSON bodies is more reliable cross-browser for beacons
-              fetch('/api/stagehand', { method: 'DELETE', headers, body, keepalive: true });
-              fetch('/api/browserbase', { method: 'DELETE', headers, body, keepalive: true });
-              console.log('🚀 Session cleanup initiated via fetch keepalive (for beacon-like behavior)');
-            } else {
-              await Promise.all([
-                fetch('/api/stagehand', { method: 'DELETE', headers, body, keepalive: true }),
-                fetch('/api/browserbase', { method: 'DELETE', headers, body, keepalive: true })
-              ]);
-              console.log('🚀 Session cleanup initiated via fetch keepalive');
-            }
-          } catch (error) {
-            console.warn('⚠️ Error during session cleanup:', error);
-          }
-          // Clear current session ID from state, but let sessionStorage be handled by the next load or explicit clear
-          // browserSessionId = null;
+        // Add scroll event listener and do initial check
+        if (chatContainer) {
+          chatContainer.addEventListener('scroll', handleScroll);
+          // Initial check for scroll button visibility
+          const isScrollable = chatContainer.scrollHeight > chatContainer.clientHeight;
+          const scrollBottom = chatContainer.scrollHeight - chatContainer.scrollTop - chatContainer.clientHeight;
+          showScrollButton = isScrollable && scrollBottom > 500;
         }
-        // Always remove from sessionStorage on unload to ensure next load attempts cleanup if beacon fails
-        if (isUnloading && typeof window !== 'undefined') {
-            sessionStorage.removeItem('browserSessionId');
-        }
-      };
-
-      const handleBeforeUnload = (event) => {
-        cleanupSessions(true);
-      };
-
-      const handleUnload = () => {
-        cleanupSessions(true); // ensure it runs, sendBeacon is preferred here
-      };
-
-      window.addEventListener('beforeunload', handleBeforeUnload);
-      window.addEventListener('unload', handleUnload);
-
-      return () => {
-        window.removeEventListener('beforeunload', handleBeforeUnload);
-        window.removeEventListener('unload', handleUnload);
-        window.removeEventListener('message', handleBrowserbaseMessage);
-        // Optional: Call cleanup if component is unmounted mid-session without page close
-        // This might be redundant if beforeunload/unload always fire, but can be a safeguard.
-        // cleanupSessions(false);
-      };
     }
-  });
 
-  function parseLog(log: string) {
-
-    return log
-
-    if (log.includes('Processing block')){
-      const json = JSON.parse(log.substring(18))
-      switch (json.type){
-        case 'text':
-          return `text: ${json.text}`
-        case 'tool_use':
-          return `tool_use: ${json.input?.action}`
-        default:
-          break
+    return () => {
+      // Clean up scroll listener
+      if (chatContainer) {
+        chatContainer.removeEventListener('scroll', handleScroll);
       }
-    }
-
-  }
+    };
+  });
 
   $: {
     const browser = typeof window !== 'undefined';
     if (browser && isInitialized && messages) {
         try {
             const messagesToSave = messages.map(msg => {
+                // Ensure we don't save active loading/streaming states permanently
                 const { isLoading, isStreaming, ...rest } = msg;
                     return rest;
             });
             sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(messagesToSave));
-            scrollToBottom();
+
+            // Check if any message is currently streaming and auto-scroll is enabled
+            if ($shouldAutoScroll && messages.some(m => m.isStreaming)) {
+              // Use requestAnimationFrame for smoother scrolling and to avoid conflicting with other scroll operations
+              if (chatContainer) {
+                requestAnimationFrame(() => {
+                  chatContainer.scrollTop = chatContainer.scrollHeight;
+                });
+              }
+            }
         } catch (e) {
-        console.error('Failed to save chat history to sessionStorage:', e);
+            console.error('Failed to save text chat history to sessionStorage:', e);
+        }
+    }
+
+    // When a message starts or stops streaming, setup or cleanup observers
+    for (const message of messages) {
+      if (message.role === 'assistant') {
+        if (message.isStreaming) {
+          // Ensure observer is set up if streaming starts/continues
+          if (markdownContainers[message.id] && !messageObservers.has(message.id)) {
+            setupStreamingContentObserver(markdownContainers[message.id], message.id);
+          }
+        } else if (!message.isStreaming && messageObservers.has(message.id)) {
+          // Clean up observer when streaming ends
+          const observer = messageObservers.get(message.id);
+          observer.disconnect();
+          messageObservers.delete(message.id);
+
+          // Final highlighting pass
+          if (markdownContainers[message.id]) {
+            highlightCodeBlocks(markdownContainers[message.id]);
+          }
+        }
       }
     }
+  }
+
+  // Handle example prompt clicks
+  function handleExamplePrompt(promptText: string) {
+    if (isOverallLoading) return;
+
+    // Reset auto-scroll state for example prompts
+    $shouldAutoScroll = true;
+
+    omnibarPrompt = promptText;
+    // Auto-submit the prompt
+    handleOmnibarSubmit();
   }
 </script>
 
 <svelte:head>
-  <title>Chat</title>
+  <title>Stanley</title>
+  <link href = 'stan-avatar.png' rel = 'icon'>
 </svelte:head>
 
-<div id="main" class="stan" in:scale={{ duration: 300, start: 0.95, opacity: 0, easing: cubicOut }}>
+
+<div id = 'main' class = 'stan' in:scale={{ duration: 300, start: 0.95, opacity: 0, easing: cubicOut }}>
+  <!-- Auto-scroll status indicator -->
+  <div class="auto-scroll-status" class:active={$shouldAutoScroll}>
+    Auto-scroll: {$shouldAutoScroll ? 'ON' : 'OFF'}
+  </div>
+
   <button
     class="global-refresh-button"
     title="Clear Chat and History"
@@ -917,98 +1173,135 @@
   </button>
 
 {#if isStartState}
-    <div id="start-state-container">
+  <div id="start-state-container" >
     <div class="welcome-header" in:fade={{ delay: 300, duration: 500 }}>
-        <img src="/opal.png" alt="Chat" class="stan-avatar">
-        <h2> Chat </h2>
+      <video
+            muted
+            loop
+            preload="auto"
+            autoPlay
+            playsInline
+            src='stanley-3.mp4'
+         ></video>
+      <h2> Stanley </h2>
     </div>
 
     <!-- Example Prompts Section -->
     <div class="example-prompts" in:fade={{ delay: 500, duration: 500 }}>
+      <!-- First carousel row - scrolls left to right -->
       <div class="carousel-container">
         <div class="carousel-track carousel-left-to-right">
+          <!-- Original cards -->
           <button
             class="prompt-card"
-              on:click={() => handleExamplePrompt("@find Vitalii Dodonov's LinkedIn profile")}
+            on:click={() => handleExamplePrompt("What is a Stan Store?")}
             disabled={isOverallLoading}
           >
-              <span class="prompt-text">@find Vitalii Dodonov's LinkedIn profile</span>
+            <span class="prompt-text">What is a Stan Store?</span>
           </button>
 
           <button
             class="prompt-card"
-              on:click={() => handleExamplePrompt(">search for AI news")}
+            on:click={() => handleExamplePrompt("Give me a list of content ideas")}
             disabled={isOverallLoading}
           >
-              <span class="prompt-text">>search for AI news</span>
+            <span class="prompt-text">Give me a list of content ideas</span>
           </button>
 
           <button
             class="prompt-card"
-              on:click={() => handleExamplePrompt(">go to OpenAI's website")}
+            on:click={() => handleExamplePrompt("How do I create a successful TikTok strategy?")}
             disabled={isOverallLoading}
           >
-              <span class="prompt-text">>go to OpenAI's website</span>
+            <span class="prompt-text">How do I create a successful TikTok strategy?</span>
+          </button>
+
+          <!-- Duplicate cards for seamless loop -->
+          <button
+            class="prompt-card"
+            on:click={() => handleExamplePrompt("What is a Stan Store?")}
+            disabled={isOverallLoading}
+          >
+            <span class="prompt-text">What is a Stan Store?</span>
           </button>
 
           <button
             class="prompt-card"
-              on:click={() => handleExamplePrompt("What is Svelte?")}
+            on:click={() => handleExamplePrompt("Give me a list of content ideas")}
             disabled={isOverallLoading}
           >
-              <span class="prompt-text">What is Svelte?</span>
+            <span class="prompt-text">Give me a list of content ideas</span>
           </button>
 
           <button
             class="prompt-card"
-              on:click={() => handleExamplePrompt(">take a screenshot")}
+            on:click={() => handleExamplePrompt("How do I create a successful TikTok strategy?")}
             disabled={isOverallLoading}
           >
-              <span class="prompt-text">>take a screenshot</span>
-          </button>
-
-            <!-- Duplicates for seamless loop -->
-          <button
-            class="prompt-card"
-              on:click={() => handleExamplePrompt("@find Vitalii Dodonov's LinkedIn profile")}
-            disabled={isOverallLoading}
-          >
-              <span class="prompt-text">@find Vitalii Dodonov's LinkedIn profile</span>
-          </button>
-
-          <button
-            class="prompt-card"
-              on:click={() => handleExamplePrompt(">search for AI news")}
-            disabled={isOverallLoading}
-          >
-              <span class="prompt-text">>search for AI news</span>
-          </button>
-
-          <button
-            class="prompt-card"
-              on:click={() => handleExamplePrompt(">go to OpenAI's website")}
-            disabled={isOverallLoading}
-          >
-              <span class="prompt-text">>go to OpenAI's website</span>
-          </button>
-
-          <button
-            class="prompt-card"
-              on:click={() => handleExamplePrompt("What is Svelte?")}
-            disabled={isOverallLoading}
-          >
-              <span class="prompt-text">What is Svelte?</span>
-          </button>
-
-          <button
-            class="prompt-card"
-              on:click={() => handleExamplePrompt(">take a screenshot")}
-            disabled={isOverallLoading}
-          >
-              <span class="prompt-text">>take a screenshot</span>
+            <span class="prompt-text">How do I create a successful TikTok strategy?</span>
           </button>
         </div>
 
+        <!-- Gradient overlays -->
+        <div class="carousel-gradient carousel-gradient-left"></div>
+        <div class="carousel-gradient carousel-gradient-right"></div>
+      </div>
+
+      <!-- Second carousel row - scrolls right to left -->
+      <div class="carousel-container">
+        <div class="carousel-track carousel-right-to-left">
+          <!-- Original cards -->
+          <button
+            class="prompt-card"
+            on:click={() => handleExamplePrompt("Create an outline for a 4-module course on UGC")}
+            disabled={isOverallLoading}
+          >
+            <span class="prompt-text">Create an outline for a 4-module course on UGC</span>
+          </button>
+
+          <button
+            class="prompt-card"
+            on:click={() => handleExamplePrompt("How do I get started making money online?")}
+            disabled={isOverallLoading}
+          >
+            <span class="prompt-text">How do I get started making money online?</span>
+          </button>
+
+          <button
+            class="prompt-card"
+            on:click={() => handleExamplePrompt("What are the best practices for email marketing?")}
+            disabled={isOverallLoading}
+          >
+            <span class="prompt-text">What are the best practices for email marketing?</span>
+          </button>
+
+          <!-- Duplicate cards for seamless loop -->
+          <button
+            class="prompt-card"
+            on:click={() => handleExamplePrompt("Create an outline for a 4-module course on UGC")}
+            disabled={isOverallLoading}
+          >
+            <span class="prompt-text">Create an outline for a 4-module course on UGC</span>
+          </button>
+
+          <button
+            class="prompt-card"
+            on:click={() => handleExamplePrompt("How do I get started making money online?")}
+            disabled={isOverallLoading}
+          >
+            <span class="prompt-text">How do I get started making money online?</span>
+          </button>
+
+          <button
+            class="prompt-card"
+            on:click={() => handleExamplePrompt("What are the best practices for email marketing?")}
+            disabled={isOverallLoading}
+          >
+            <span class="prompt-text">What are the best practices for email marketing?</span>
+          </button>
+        </div>
+
+        <!-- Gradient overlays -->
         <div class="carousel-gradient carousel-gradient-left"></div>
         <div class="carousel-gradient carousel-gradient-right"></div>
       </div>
@@ -1028,123 +1321,65 @@
       />
   </div>
 {:else}
-    <div id="chat-page" in:fade={{ duration: 300 }}>
-    <div class="chat-messages-container" bind:this={chatContainer} in:fade={{ duration: 250, delay: 100 }}>
+  <div id="chat-page"  in:fade={{ duration: 300 }}> <!-- Re-evaluate if this ID should be more generic -->
+
+
+    <div
+      class="chat-messages-container"
+      bind:this={chatContainer}
+      on:scroll={handleScroll}
+      in:fade={{ duration: 250, delay: 100 }}
+    >
       {#each messages as message (message.id)}
-          <div class="message-wrapper {message.role}" in:fly={{ y: message.role === 'user' ? 10 : -10, duration: 300, delay: 150 }}>
+        <div class="message-wrapper {message.role}" in:fly={{ y: message.role === 'user' ? 10 : -10, duration: 300, delay:150 }}>
           {#if message.role === 'user'}
             <div class="message-content-area">
-              <div class="message-bubble user-bubble">
-                <p>{message.content}</p>
+
+
+            <div class="message-bubble user-bubble">
+              <p>{message.content}</p>
               </div>
+
               <button
-                class="message-copy-btn"
-                title="Copy message"
-                on:click={(event) => copyMessage(message.content, event.currentTarget)}
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-                </svg>
-              </button>
+              class="message-copy-btn"
+              title="Copy message"
+              on:click={(event) => copyMessage(message.content, event.currentTarget)}
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+              </svg>
+            </button>
+
             </div>
           {:else if message.role === 'assistant'}
             <div class="message-content-area">
               <div class="message-bubble assistant-bubble" style={message.isStreaming ? `min-height: 32px; transition: min-height 0.3s;` : ''}>
                 <div class="markdown-container animated-text-container" bind:this={markdownContainers[message.id]}>
-                    <Markdown content={message.content} />
+                  <Markdown
+                    content={message.content}
+                    on:rendered={() => {
+                      highlightCodeBlocks(markdownContainers[message.id]);
+                      if (message.isStreaming) {
+                        setupStreamingContentObserver(markdownContainers[message.id], message.id);
+                        applyRealtimeWordAnimation(markdownContainers[message.id], message.id);
+                      }
+                    }}
+                  />
+                  <!-- Cursor and thinking text container -->
+                  <span class="cursor-and-thinking-container">
+                    {#if message.isLoading || message.isStreaming}
 
+
+                      <div class="spinner">
+                        <div class="loader"></div>
+                      </div>
+                    {/if}
+
+
+                  </span>
                 </div>
-
-                {#if message.eventLog && message.eventLog.length > 0}
-                  <div class="event-log-container">
-                    {#each message.eventLog as event, i (event.id)}
-                      {#if event.type === 'reasoning'}
-                        <div class="reasoning-pill" in:fly={{ y: 50, duration: 300, delay: 50, easing: cubicOut }}>
-                           <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#00AEEF" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="reasoning-pill-icon"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
-                          <span class="reasoning-pill-text">{event.description}</span>
-                        </div>
-                      {:else if event.type === 'action'}
-                        <div class="action-pill" in:fly={{ y: 50, duration: 300, delay: 50, easing: cubicOut }}>
-                          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="action-pill-icon"><polyline points="20 6 9 17 4 12"></polyline></svg>
-                          <span class="action-pill-text">
-                            { parseLog(event.description)  }
-                          </span>
-                        </div>
-                      {:else if event.type === 'summary'}
-                        <details class="summary-pill" in:fly={{ y: 50, duration: 300, delay: 50, easing: cubicOut }}>
-                          <summary class="summary-pill-header">
-                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="summary-pill-icon">
-                              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-                              <polyline points="14,2 14,8 20,8"></polyline>
-                              <line x1="16" y1="13" x2="8" y2="13"></line>
-                              <line x1="16" y1="17" x2="8" y2="17"></line>
-                              <polyline points="10,9 9,9 8,9"></polyline>
-                            </svg>
-                            <span class="summary-pill-text">{event.description}</span>
-                            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="summary-chevron">
-                              <polyline points="6 9 12 15 18 9"></polyline>
-                            </svg>
-                          </summary>
-                          <div class="summary-pill-content">
-                            <div class="summary-actions">
-                              <h4>Actions Performed ({event.fullDetails.actionsPerformed?.length || 0})</h4>
-                              {#if event.fullDetails.actionsPerformed && event.fullDetails.actionsPerformed.length > 0}
-                                <div class="action-list">
-                                  {#each event.fullDetails.actionsPerformed as action, i}
-                                    <div class="action-item">
-                                      <div class="action-number">{i + 1}</div>
-                                      <div class="action-details">
-                                        <div class="action-description">
-                                          {#if action.description}
-                                            {action.description}
-                                          {:else if action.type}
-                                            {action.type}: {action.parameters || 'No parameters'}
-                                          {:else}
-                                            Unknown action
-                                          {/if}
-                                        </div>
-                                        {#if action.reasoning}
-                                          <div class="action-reasoning">💭 {action.reasoning}</div>
-                                        {/if}
-                                        {#if action.taskCompleted !== undefined}
-                                          <div class="action-status {action.taskCompleted ? 'completed' : 'pending'}">
-                                            {action.taskCompleted ? '✓ Completed' : '⏳ Pending'}
-                                          </div>
-                                        {/if}
-                                      </div>
-                                    </div>
-                                  {/each}
-                                </div>
-                              {:else}
-                                <p class="no-actions">No actions recorded</p>
-                              {/if}
-                            </div>
-                            {#if event.fullDetails.data}
-                              <div class="summary-data">
-                                <h4>Extracted Data</h4>
-                                <pre><code>{JSON.stringify(event.fullDetails.data, null, 2)}</code></pre>
-                              </div>
-                            {/if}
-                          </div>
-                        </details>
-                      {/if}
-                    {/each}
-                  </div>
-                {/if}
-
-                {#if message.isLoading || message.isStreaming}
-                <div class = 'spinner'>
-                  <div class="loader"></div>
-                </div>
-              {/if}
-
                 <div class="assistant-message-footer">
-                  {#if message.modelUsed && !message.isStreaming && !message.isLoading}
-                    <div class="assistant-model-info">
-                      Sent by {getModelLabel(message.modelUsed)}
-                    </div>
-                  {/if}
                   {#if message.error}
                     <div class="error-placeholder" style="min-height: auto; padding: 5px 0; text-align: left;">
                       <span style="font-size: 0.9em; color: #ff8a8a;">Error: {message.error}</span>
@@ -1152,6 +1387,7 @@
                   {/if}
                 </div>
               </div>
+              <!-- Always show copy button, but control opacity -->
               <button
                 class="message-copy-btn"
                 title="Copy response"
@@ -1169,6 +1405,21 @@
       {/each}
     </div>
 
+    <!-- scroll-to-bottom button now rendered inside Omnibar component -->
+
+    <video
+        muted
+        loop
+        preload="auto"
+        autoPlay
+        playsInline
+        src='stanley-5.mp4'
+        id='stanley-thinking'
+        in:fly={{ y: 20, duration: 300, delay:300 }}
+    ></video>
+
+
+
     <Omnibar
       settingType="text"
       bind:additionalContext={omnibarPrompt}
@@ -1180,33 +1431,27 @@
       followUpQuestions={currentFollowUpQuestions}
       onFollowUpClick={handleFollowUpClick}
       parentDisabled={false}
+      showScrollButton={!isStartState && showScrollButton}
+      onScrollToBottom={() => { $shouldAutoScroll = true; scrollToBottom(); }}
     />
+
   </div>
 {/if}
-
-
-<div id = 'panel'>
-  <!-- Live Browser Viewport (refactored) -->
-  <Browserbase
-    show={showBrowserViewport && (Boolean(browserLiveViewUrl) || Boolean(browserScreenshot) || isBrowserLoading || Boolean(browserSessionId))}
-    liveViewUrl={browserLiveViewUrl}
-    screenshot={browserScreenshot}
-    sessionId={browserSessionId}
-    loading={isBrowserLoading}
-    on:close={async () => {
-      await closeBrowserSession();
-      showBrowserViewport = false;
-    }}
-  />
-  <div class = 'log'>
-
-  </div>
-</div>
-
-
 </div>
 
 <style lang="scss">
+
+#stanley-thinking{
+  position: fixed;
+  display: block;
+  bottom: 120px;
+  left: 40px;
+  height: 140px;
+  @media screen and (max-width: 800px) {
+    display: none;
+  }
+}
+
   .spinner{
     filter: drop-shadow(-2px 4px 4px rgba(#030025, .15));
     margin: 20px 0;
@@ -1260,6 +1505,8 @@
     -webkit-overflow-scrolling: touch;
     display: flex;
   }
+
+
 
   #panel{
     display: flex;
@@ -1339,7 +1586,12 @@
 
     img {
       height: 140px;
-      filter: drop-shadow(-8px 16px 24px rgba(#030025, 0.1));
+      // filter: drop-shadow(-8px 16px 24px rgba(#030025, 0.1));
+    }
+
+    video{
+      height: 200px;
+      filter: brightness(101%);
     }
 
     h2 {
@@ -1359,7 +1611,11 @@
     max-width: 720px;
     display: flex;
     flex-direction: column;
-    gap: 0px;
+    gap: 8px;
+
+    @media screen and (max-width: 800px) {
+      gap: 20px;
+    }
 
     .carousel-container {
       position: relative;
@@ -1367,22 +1623,31 @@
       overflow: hidden;
       height: 60px;
       touch-action: pan-y;
+      margin: 0;
+      padding: 0;
+
+      &:nth-child(2) {
+        margin-top: -8px;
+      }
     }
 
     .carousel-track {
       display: flex;
-      flex-wrap: wrap;
-      gap: 16px;
-      padding: 4px 0;
+      gap: 12px;
+      padding: 0px 0;
       width: fit-content;
-      animation-duration: 40s;
+      animation-duration: 30s;
       animation-timing-function: linear;
       animation-iteration-count: infinite;
       will-change: transform;
       touch-action: pan-y;
 
       &.carousel-left-to-right {
-        //animation-name: scrollLeftToRight;
+        animation-name: scrollLeftToRight;
+      }
+
+      &.carousel-right-to-left {
+        animation-name: scrollRightToLeft;
       }
 
       &:hover {
@@ -1399,56 +1664,64 @@
       }
     }
 
+    @keyframes scrollRightToLeft {
+      0% {
+        transform: translateX(0%);
+      }
+      100% {
+        transform: translateX(-50%);
+      }
+    }
+
     .carousel-gradient {
       position: absolute;
       top: 0;
       bottom: 0;
-      width: 80px;
+      width: 120px;
       pointer-events: none;
       z-index: 2;
 
       &.carousel-gradient-left {
         left: 0;
-       // background: linear-gradient(to right, rgba(white, 1) 0%, rgba(white, 0.8) 50%, rgba(white, 0) 100%);
+        background: linear-gradient(to right, rgba(255, 255, 255, 1) 0%, rgba(255, 255, 255, 0.8) 50%, rgba(255, 255, 255, 0) 100%);
       }
 
       &.carousel-gradient-right {
         right: 0;
-       // background: linear-gradient(to left, rgba(white, 1) 0%, rgba(white, 0.8) 50%, rgba(white, 0) 100%);
+        background: linear-gradient(to left, rgba(255, 255, 255, 1) 0%, rgba(255, 255, 255, 0.8) 50%, rgba(255, 255, 255, 0) 100%);
       }
     }
 
-
     .prompt-card {
-      background: rgba(#030025, .05);
+      background: rgba(#6355FF, .05);
       border-radius: 12px;
       padding: 10px 18px;
       cursor: pointer;
       width: fit-content;
-      min-width: 100px; // Ensure consistent card sizes
+      min-width: 180px; // Ensure consistent card sizes
       transition: all 0.2s cubic-bezier(0.4,0,0.2,1);
       flex-shrink: 0; // Prevent cards from shrinking
       border: 1px solid rgba(#00106D, .1);
+      margin: 0;
+      height: 44px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
 
-
-      &:hover{
+      &:hover {
         background: rgba(#4a6bfd, .15);
-        //border-color: rgba(#6355FF, .2);
-        transform: translateY(-1px);
+        //transform: translateY(-1px);
       }
-
 
       &:active {
         transform: translateY(0);
       }
-
 
       &:disabled {
         opacity: 0.6;
         cursor: not-allowed;
         transform: none;
       }
-
 
       .prompt-text {
         font-family: "ivypresto-headline", sans-serif;
@@ -1459,12 +1732,10 @@
         text-shadow: -.5px 0 0 #00106D;
         line-height: 140%;
         display: block;
-        text-align: left;
+        text-align: center;
+        white-space: nowrap;
       }
-
-
     }
-
 
     @media (max-width: 800px) {
       .carousel-track {
@@ -1472,39 +1743,36 @@
         height: 100%;
       }
 
-
-      .carousel-container{
+      .carousel-container {
         height: 90px;
       }
-
 
       .carousel-gradient {
         width: 60px; // Smaller gradients on mobile
       }
 
-
       .prompt-card {
-        width: 160px;
+        width: 120px;
         padding: 12px 16px;
         margin: 0;
-
+        height: auto;
 
         .prompt-text {
           width: 100%;
           text-wrap: wrap;
+          white-space: normal;
+          text-align: left;
           line-height: 120%;
         }
       }
     }
 
-
-    // Hide second row of prompts when screen height is less than 500px
+    // Hide second row of prompts when screen height is less than 720px
     @media (max-height: 720px) {
-      .carousel-container{
-        margin-bottom: 24px;
-      }
-      .second {
-        display: none;
+      .carousel-container {
+        &:nth-child(2) {
+          display: none;
+        }
       }
     }
   }
@@ -1568,9 +1836,12 @@
     overflow-y: auto;
     height: 100%;
     max-height: 100vh;
-    padding: 16px 24px 180px 24px;
+    padding: 16px 24px 200px 24px;
 
     max-width: 100%;
+
+    margin: auto;
+
 
     touch-action: pan-y;
     -webkit-overflow-scrolling: touch;
@@ -1600,11 +1871,21 @@
 
 
     &.user {
-      margin: 12px auto;
+      margin: 32px auto 12px auto;
       .message-content-area{
         justify-content: flex-start;
         align-items: center;
         gap: 12px;
+      }
+
+      .message-copy-btn{
+       opacity: 0;
+      }
+
+      &:hover{
+        .message-copy-btn{
+          opacity: 1;
+        }
       }
     }
 
@@ -1632,7 +1913,6 @@
 
   .message-bubble {
     padding: 10px 15px;
-    border-radius: 18px;
     line-height: 1.6;
     font-size: 15px;
 
@@ -1651,15 +1931,19 @@
 
 
     &.user-bubble {
-      background-color: rgba(black, .05);
+      background-color: rgba(#6355FF, .12);
       font-family: "ivypresto-headline", 'Newsreader', serif;
       text-shadow: -.4px 0 0 #030025;
       font-size: 16px;
       font-weight: 500;
       letter-spacing: .5px;
       position: relative;
-      padding: 12px 18px 14px 18px;
+      padding: 10px 16px 12px 16px;
+      border-radius: 14px;
       color: #030025;
+      margin-left: 12px;
+
+      box-shadow: inset -2px -4px 8px rgba(#6355FF, .05);
     }
 
 
@@ -1772,18 +2056,17 @@
   .message-copy-btn {
     background: transparent;
     border: none;
-    color: rgba(255, 255, 255, 0.5);
+    color: rgba(#030025, 0.25);
     cursor: pointer;
     padding: 4px;
     display: flex;
     align-items: center;
     justify-content: center;
     border-radius: 4px;
-    transition: color 0.2s, background-color 0.2s;
+    transition: .2s ease;
 
-
-      &:hover {
-      color: white;
+    &:hover {
+      color: rgba(#030025, 0.9);
       background-color: rgba(255, 255, 255, 0.1);
     }
 
@@ -1955,12 +2238,12 @@
 
 
     :global(ul), :global(ol) {
-      padding-left: 1.5em;
+      margin: 12px 0;
+      padding-left: 18px;
     }
 
-
     :global(li) {
-      margin-bottom: 0.5em;
+      margin: 8px 0;
     }
 
 
@@ -2668,6 +2951,42 @@
     }
   }
 
+  /* Word animation styles */
+  :global(.animated-word) {
+    display: inline;
+    /* transition: opacity 50ms linear; */ /* REMOVE THIS LINE */
+  }
+
+  :global(.word-animated) {
+    display: inline;
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  /* Remove the old streaming-word-fade-in class since we're not using it anymore */
+
+  .scroll-to-bottom-btn {
+    /* Styles moved to Omnibar component */
+  }
+
+  .auto-scroll-status {
+    display: none;
+    position: fixed;
+    top: 16px;
+    right: 16px;
+    background-color: rgba(0, 0, 0, 0.6);
+    color: white;
+    padding: 6px 12px;
+    border-radius: 16px;
+    font-size: 12px;
+    font-weight: 500;
+    z-index: 1000;
+    pointer-events: none; // Don't interfere with clicks
+    transition: all 0.3s ease;
+
+    &.active {
+      background-color: var(--highlight);
+      box-shadow: 0 0 8px rgba(99, 85, 255, 0.5);
+    }
+  }
 </style>
-
-

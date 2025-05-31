@@ -107,10 +107,10 @@
         flex: 1;
         box-sizing: border-box;
         border-radius: 8px;
-        box-shadow: 6px 24px 48px rgba(#030025, 0.2);
+        box-shadow: -12px 36px 48px rgba(#030025, 0.4);
         position: relative;
         background: var(--background-color);
-        background: #F2F2F2;
+        background: #fbfcff;
         transition: all 0.4s cubic-bezier(0.25, 0.46, 0.45, 0.94);
         min-width: 0; /* Allows flex item to shrink below its content size */
     }

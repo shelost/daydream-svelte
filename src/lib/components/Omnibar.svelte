@@ -453,8 +453,8 @@
     width: 640px;
     max-width: 90vw;
     padding: 0;
-    position: fixed; /* This might need to be relative if Omnibar is placed by parent */
-    bottom: 12px;   /* Or controlled by parent's layout */
+    position: absolute; /* This might need to be relative if Omnibar is placed by parent */
+    bottom: 6px;   /* Or controlled by parent's layout */
     left: calc(50% - 320px); /* Or controlled by parent's layout */
     display: flex;
     flex-direction: column;
