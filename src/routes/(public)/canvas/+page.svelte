@@ -4171,18 +4171,24 @@ Guidelines:
       align-items: center;
       box-sizing: border-box;
       flex: 1;
-      gap: 0;
-      min-width: 400px;
+      gap: 12px;
+
       padding: 8px 16px;
-      height: 100%;
+
+      margin-bottom: 72px;
       position: relative;
-      width: 1400px;
+
+      min-width: 400px;
+      width: 1280px;
       max-width: 100%;
 
 
+      height: fit-content;
+      max-height: 90%;
+
       .area{
         flex: 1;
-        height: 100%;
+        height: fit-content;
         padding: 4px;
 
       }
@@ -4291,7 +4297,7 @@ Guidelines:
         box-shadow: none;
         border-radius: 8px; // Was 8px, can be 0 if canvas elements themselves have border-radius
         margin: auto;
-        border: 1px solid rgba(#030025, .1);
+        //border: 1px solid rgba(#030025, .1);
 
         box-shadow: -12px 24px 36px rgba(#030025, 0.1);
 

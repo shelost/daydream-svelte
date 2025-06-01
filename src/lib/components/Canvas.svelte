@@ -229,9 +229,6 @@
     fabricLib.fabric.Text.prototype.dynamicMinWidth = true;
   }
 
-  // Add background color constant
-  const DEFAULT_BACKGROUND_COLOR = '#ffffff';
-
   // Main component initialization
   onMount(async () => {
     const initPromise = async () => {
@@ -274,7 +271,7 @@
           setupFabricGlobals(fabricLib);
 
           canvas = new fabricLib.fabric.Canvas(canvasEl, {
-            backgroundColor: DEFAULT_BACKGROUND_COLOR,
+            backgroundColor: '#ffffff',
             preserveObjectStacking: true,
             stopContextMenu: true,
             fireRightClick: true,
@@ -282,11 +279,6 @@
             renderOnAddRemove: true,
             stateful: true,
             imageSmoothingEnabled: true // Better rendering quality
-          });
-
-          // Force immediate render of background
-          canvas.setBackgroundColor(DEFAULT_BACKGROUND_COLOR, () => {
-            canvas.renderAll();
           });
 
           // Set default control appearance for all objects
@@ -4295,7 +4287,7 @@
     width: 100%;
     height: 100%;
     overflow: hidden;
-    background: #ffffff; // Set white background for container
+    background: #f5f5f5;
     display: flex;
 
     /* This forces all fabric.js containers to have consistent positioning */
@@ -4303,7 +4295,6 @@
       position: absolute !important;
       top: 0;
       left: 0;
-      background: #ffffff; // Also ensure nested canvas containers are white
     }
 
     .canvas-wrapper {

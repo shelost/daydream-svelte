@@ -454,7 +454,7 @@
     max-width: 90vw;
     padding: 0;
     position: absolute; /* This might need to be relative if Omnibar is placed by parent */
-    bottom: 6px;   /* Or controlled by parent's layout */
+    bottom: 12px;   /* Or controlled by parent's layout */
     left: calc(50% - 320px); /* Or controlled by parent's layout */
     display: flex;
     flex-direction: column;
@@ -463,6 +463,8 @@
     gap: 8px;
     z-index: 10; /* Ensure it's above other content if fixed */
     box-sizing: border-box;
+
+
 
 
 
@@ -478,7 +480,6 @@
       align-items: flex-end;
       width: 100%;
       background: rgba(20, 20, 22, 0.7);
-      border: 1px solid rgba(255, 255, 255, 0.1);
       border-radius: 16px;
       padding: 8px;
       box-shadow: 0 16px 32px 8px rgba(black, 0.3);
@@ -492,8 +493,8 @@
       flex-grow: 1;
       background: transparent;
       border: none;
-      color: white;
-      font-family: "ivypresto-headline", serif;
+     // color: white;
+      font-family: "Canela", "ivypresto-headline", serif;
       font-size: 20px;
       font-weight: 500;
       line-height: 130%;
@@ -508,6 +509,8 @@
       text-shadow: -.5px 0px 0px #030025;
       scrollbar-width: thin;
       scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
+
+
 
       &::placeholder {
         color: #999;
@@ -636,7 +639,8 @@
     &.light{
       .input-form{
         background: white;
-        box-shadow: -6px 24px 24px rgba(#030025, 0.12);
+        box-shadow: 0px 32px 48px rgba(#030025, 0.2), inset -2px -4px 4px rgba(#030025, .06);
+        border: 0px solid white;
         textarea{
           color: #030025;
         }

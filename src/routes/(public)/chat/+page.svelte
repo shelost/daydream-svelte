@@ -1148,7 +1148,7 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
 </script>
 
 <svelte:head>
-  <title>Stanley</title>
+  <title>Chat</title>
   <link href = 'stan-avatar.png' rel = 'icon'>
 </svelte:head>
 
@@ -1183,7 +1183,7 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
             playsInline
             src='stanley-3.mp4'
          ></video>
-      <h2> Stanley </h2>
+      <h2> Opal </h2>
     </div>
 
     <!-- Example Prompts Section -->
@@ -1405,18 +1405,6 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
       {/each}
     </div>
 
-    <!-- scroll-to-bottom button now rendered inside Omnibar component -->
-
-    <video
-        muted
-        loop
-        preload="auto"
-        autoPlay
-        playsInline
-        src='stanley-5.mp4'
-        id='stanley-thinking'
-        in:fly={{ y: 20, duration: 300, delay:300 }}
-    ></video>
 
 
 
@@ -1441,16 +1429,6 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
 
 <style lang="scss">
 
-#stanley-thinking{
-  position: fixed;
-  display: block;
-  bottom: 120px;
-  left: 40px;
-  height: 140px;
-  @media screen and (max-width: 800px) {
-    display: none;
-  }
-}
 
   .spinner{
     filter: drop-shadow(-2px 4px 4px rgba(#030025, .15));
@@ -1931,7 +1909,7 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
 
 
     &.user-bubble {
-      background-color: rgba(#6355FF, .12);
+      background: white;
       font-family: "ivypresto-headline", 'Newsreader', serif;
       text-shadow: -.4px 0 0 #030025;
       font-size: 16px;
@@ -1943,7 +1921,7 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
       color: #030025;
       margin-left: 12px;
 
-      box-shadow: inset -2px -4px 8px rgba(#6355FF, .05);
+      box-shadow: -4px 12px 18px rgba(#030025, .03);
     }
 
 

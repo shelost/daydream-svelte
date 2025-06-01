@@ -170,8 +170,12 @@
     gap: 8px;
     margin: 0;
     margin-top: 12px;
-    background: #030020;
+    background: white;
     border-radius: 12px;
+
+    position: fixed;
+    left: 24px;
+    bottom: 24px;
   }
 
   .tool-button {
@@ -206,7 +210,7 @@
 
     // Active state for tool buttons
     &.active {
-      background: var(--highlight);
+      background: rgba(black, .1);
 
       span {
         color: white;
