@@ -145,10 +145,10 @@
   let pendingAnalysis = false;
 
   // Subscribe to store changes
-  strokeOptions.subscribe(options => {
-    strokeColor = options.color;
-    strokeSize = options.size;
-    strokeOpacity = options.opacity;
+  strokeOptions.subscribe(opts => {
+    strokeColor = opts.color;
+    strokeSize = opts.size;
+    strokeOpacity = opts.opacity;
 
     // If pen tool is active and options change, update currentStroke if any
     if ($selectedTool === 'pen' && currentStroke) {
@@ -1125,15 +1125,12 @@
     pointTimes = [timestamp];
     const hasHardwarePressure = e.pointerType === 'pen' && e.pressure > 0 && e.pressure !== 0.5;
 
-    let currentOptionsValues;
-    strokeOptions.subscribe(options => { currentOptionsValues = options; })();
-
     currentStroke = {
       tool: 'pen',
       points: [point],
-      color: currentOptionsValues.color,
-      size: currentOptionsValues.size,
-      opacity: currentOptionsValues.opacity,
+      color: cachedStrokeOptions.color,
+      size: cachedStrokeOptions.size,
+      opacity: cachedStrokeOptions.opacity,
       hasHardwarePressure: hasHardwarePressure
     };
     inputCanvas.setPointerCapture(e.pointerId);
@@ -1159,7 +1156,7 @@
       }
     }
     currentStroke.points.push(point);
-    renderStrokes();
+    scheduleRender();
   }
 
   function endPenStroke(e: PointerEvent) {
@@ -1187,19 +1184,16 @@
     }
 
     if (currentStroke.points.length > 1) {
-      let currentOptionsValues;
-      strokeOptions.subscribe(options => { currentOptionsValues = options; })();
-
       const freehandStrokeOptions = {
         size: currentStroke.size,
-        thinning: currentOptionsValues.thinning,
-        smoothing: currentOptionsValues.smoothing,
-        streamline: currentOptionsValues.streamline,
-        easing: currentOptionsValues.easing,
+        thinning: cachedStrokeOptions.thinning,
+        smoothing: cachedStrokeOptions.smoothing,
+        streamline: cachedStrokeOptions.streamline,
+        easing: cachedStrokeOptions.easing,
         simulatePressure: !currentStroke.hasHardwarePressure,
         last: true,
-        start: currentOptionsValues.start,
-        end: currentOptionsValues.end,
+        start: cachedStrokeOptions.start,
+        end: cachedStrokeOptions.end,
       };
 
       const enhancedPoints = currentStroke.points.map(p => [p.x, p.y, p.pressure || 0.5]);
@@ -1298,19 +1292,16 @@
     inputCtx.clearRect(0, 0, inputCanvas.width, inputCanvas.height);
 
     if (currentStroke && currentStroke.points.length > 1 && $selectedTool === 'pen') { // Only render for pen tool
-      let currentOptionsValues;
-      strokeOptions.subscribe(options => { currentOptionsValues = options; })();
-
       const options = {
         size: currentStroke.size,
-        thinning: currentOptionsValues.thinning,
-        smoothing: currentOptionsValues.smoothing,
-        streamline: currentOptionsValues.streamline,
-        easing: currentOptionsValues.easing,
+        thinning: cachedStrokeOptions.thinning,
+        smoothing: cachedStrokeOptions.smoothing,
+        streamline: cachedStrokeOptions.streamline,
+        easing: cachedStrokeOptions.easing,
         simulatePressure: !(currentStroke as EnhancedStroke).hasHardwarePressure,
         last: false, // Temporary stroke is never "last" in the context of the final path
-        start: currentOptionsValues.start,
-        end: currentOptionsValues.end,
+        start: cachedStrokeOptions.start,
+        end: cachedStrokeOptions.end,
       };
 
       const enhancedPoints = currentStroke.points.map(p => [p.x, p.y, p.pressure || 0.5]);
@@ -3591,6 +3582,41 @@ Guidelines:
       updateImageData();
       saveCanvasState();
     }
+  }
+
+  // Cache stroke options for performance; update reactively once instead of resubscribing in each pointer event
+  let cachedStrokeOptions = {
+    color: '#000000',
+    size: 4,
+    opacity: 1,
+    thinning: 0.5,
+    smoothing: 0.5,
+    streamline: 0.5,
+    easing: (t: number) => t,
+    start: {
+      taper: 0,
+      cap: true
+    },
+    end: {
+      taper: 0,
+      cap: true
+    }
+  };
+
+  strokeOptions.subscribe(opts => {
+    cachedStrokeOptions = { ...cachedStrokeOptions, ...opts };
+  });
+
+  // RAF batching flag for temporary stroke rendering
+  let rafPending = false;
+
+  function scheduleRender() {
+    if (rafPending) return;
+    rafPending = true;
+    requestAnimationFrame(() => {
+      rafPending = false;
+      renderStrokes();
+    });
   }
 
 </script>
