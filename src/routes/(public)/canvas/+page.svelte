@@ -4316,6 +4316,7 @@ Guidelines:
         box-shadow: none;
         border-radius: 8px; // Was 8px, can be 0 if canvas elements themselves have border-radius
         margin: auto;
+        user-select: none;
         //border: 1px solid rgba(#030025, .1);
 
         box-shadow: -12px 24px 36px rgba(#030025, 0.1);
