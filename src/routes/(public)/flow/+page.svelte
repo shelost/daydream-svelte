@@ -32,6 +32,7 @@
     import GPTNode from '$lib/components/flow/GPTNode.svelte';
     import FlowToolbar from '$lib/components/flow/FlowToolbar.svelte';
     import AppModal from '$lib/components/shared/AppModal.svelte';
+    import RefreshButton from '$lib/components/shared/RefreshButton.svelte';
 
     const nodeTypes: NodeTypes = {
       text: TextNode,
@@ -499,10 +500,7 @@
       <MiniMap />
       <Controls />
 
-      <button class="reset-flow-button" on:click={resetFlowCanvas} title="Reset Flow Canvas">
-          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
-          <span>Reset</span>
-      </button>
+
 
       <div class="ui-elements-container">
           <div class="save-status" class:idle={$saveStatus === 'idle'} class:saving={$saveStatus === 'saving'} class:saved={$saveStatus === 'saved'} class:error={$saveStatus === 'error'}>
@@ -531,6 +529,13 @@
           on:addNode={handleAddNode}
       />
     </SvelteFlow>
+
+    <RefreshButton
+    className="reset-flow-button"
+    title="Reset Flow Canvas"
+    on:click={resetFlowCanvas}
+>
+</RefreshButton>
 
     <AppModal title="Svelte Flow State" show={showSourceModal} on:close={() => showSourceModal = false}>
         <div class="source-data-container">
@@ -569,40 +574,6 @@
           cursor: grab;
         }
       }
-    }
-
-    .reset-flow-button {
-        display: flex;
-        align-items: center;
-        gap: 6px;
-        padding: 8px 10px;
-        font-size: 12px;
-        font-weight: 500;
-        background-color: hsla(0, 0%, 100%, 0.8);
-        border: 1px solid #e0e0e0;
-        border-radius: 6px;
-        color: #333;
-        cursor: pointer;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-        transition: background-color 0.2s, box-shadow 0.2s;
-        z-index: 10 !important;
-        width: fit-content;
-        height: fit-content;
-        position: absolute;
-        top: 8px;
-        left: 8px;
-        svg {
-            stroke: #555;
-        }
-        &:hover {
-            background-color: white;
-            border-color: #ccc;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.15);
-        }
-        &:active {
-            background-color: #f5f5f5;
-            box-shadow: inset 0 1px 2px rgba(0,0,0,0.1);
-        }
     }
 
     .ui-elements-container {

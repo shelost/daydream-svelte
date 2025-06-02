@@ -6,6 +6,7 @@
   import Omnibar from '$lib/components/Omnibar.svelte'; // Import Omnibar
   import { Markdown } from 'svelte-rune-markdown'; // Add this line to import the Markdown component
   import { fetchAndLog } from '$lib/utils/fetchAndLog'; // Import fetchAndLog for API logging
+  import RefreshButton from '$lib/components/shared/RefreshButton.svelte'; // Reusable refresh button
 
   // Import Prism.js for syntax highlighting - make it conditional for production builds
   let Prism: any = null; // Keep at top-level, initialize to null
@@ -1158,18 +1159,18 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
     Auto-scroll: {$shouldAutoScroll ? 'ON' : 'OFF'}
   </div>
 
-  <button
-    class="global-refresh-button"
+  <RefreshButton
+    className="global-refresh-button"
     title="Clear Chat and History"
-    on:click={clearChatAndStorage}
     disabled={isOverallLoading}
+    on:click={clearChatAndStorage}
   >
     <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
       <polyline points="23 4 23 10 17 10"></polyline>
       <polyline points="1 20 1 14 7 14"></polyline>
       <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
     </svg>
-  </button>
+  </RefreshButton>
 
 {#if isStartState}
   <div id="start-state-container" >
@@ -1507,42 +1508,6 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
     top: 0;
     left: 0;
 
-  }
-
-  .global-refresh-button {
-    position: absolute;
-    top: 16px;
-    left: 16px;
-    z-index: 1000;
-    padding: 8px;
-    width: 32px;
-    height: 32px;
-    border-radius: 50%;
-    border: none;
-    background-color: var(--highlight);
-    color: white;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: .2s ease;
-    box-shadow: 0 4px 10px rgba(0,0,0,0.15);
-    touch-action: manipulation;
-
-    svg {
-      height: 14px;
-      width: 14px;
-    }
-
-    &:hover {
-      background-color: #4938fb;
-      transform: scale(1.03);
-    }
-    &:disabled {
-      background-color: rgba(50, 50, 50, 0.5);
-      cursor: not-allowed;
-      transform: scale(1);
-    }
   }
 
   #start-state-container {

@@ -8,6 +8,7 @@
   import { fetchAndLog } from '$lib/utils/fetchAndLog.js'; // <-- ADD THIS IMPORT
   import Omnibar from '$lib/components/Omnibar.svelte'; // <-- IMPORT Omnibar
   import CanvasToolbar from '$lib/components/CanvasToolbar.svelte'; // <-- IMPORT CanvasToolbar
+  import RefreshButton from '$lib/components/shared/RefreshButton.svelte'; // <-- IMPORT RefreshButton
   import {
     gptImagePrompt,
     gptEditPrompt,
@@ -3715,9 +3716,11 @@ Guidelines:
               <!-- Or just the clear button which is outside this if/else block -->
             {/if}
 
-            <button class="tool-button clear-button" on:click={clearCanvas}>
-              <span class="material-icons">delete_outline</span>
-            </button>
+            <RefreshButton
+              title="Clear Canvas"
+              on:click={clearCanvas}
+            >
+            </RefreshButton>
 
           </div>
         </div>
@@ -4866,24 +4869,6 @@ Guidelines:
     &:active{
       transform: none;
     }
-
-    &.clear-button {
-      background: rgba(red, .1);
-
-      span {
-        color: red;
-        text-shadow: 0 0 2px 2px rgba(black, 1);
-      }
-
-      &:hover {
-        background: rgba(red, .3);
-
-        span {
-          color: red;
-        }
-      }
-    }
-
     // Active state for tool buttons
     &.active {
       background: rgba(#a0ffc8, 1);
