@@ -176,6 +176,7 @@
     position: fixed;
     left: 24px;
     bottom: 24px;
+    user-select: none;
   }
 
   .tool-button {
