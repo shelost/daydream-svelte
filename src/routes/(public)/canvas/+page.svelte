@@ -3580,7 +3580,7 @@ Guidelines:
 </script>
 
 <svelte:head>
-  <title>Daydream</title>
+  <title>Opal Canvas </title>
   <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet" />
   <!-- Ensure this specific one for outlined symbols is present -->
   <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet" />

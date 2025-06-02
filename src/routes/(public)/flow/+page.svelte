@@ -491,7 +491,11 @@
         on:wheel={handleFlowWheel}
         bind:this={flowInstance}
     >
-      <Background variant={BackgroundVariant.Dots} />
+      <Background
+        variant={BackgroundVariant.Dots}
+        bgColor="var(--flow-background-color)"
+        patternColor="var(--flow-pattern-color)"
+      />
       <MiniMap />
       <Controls />
 
@@ -794,5 +798,10 @@
             padding: 0 !important;
             text-shadow: none !important;
         }
+    }
+
+    :global(:root) {
+        --flow-background-color: white;
+        --flow-pattern-color: #dee2e6; // A light grey for the dot pattern
     }
  </style>

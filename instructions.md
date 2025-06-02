@@ -587,3 +587,22 @@ Placing the button inside the Omnibar component keeps related UI together, simpl
 - [x] Add button markup and SCSS inside Omnibar.
 - [x] Pass props from `+page.svelte` and remove old button block.
 - [x] Remove duplicate style rules from page file.
+
+## Svelte Flow Background Customization (public/flow page)
+
+- **Objective:** Make the Svelte Flow background white by default and controllable via CSS variables.
+- **File:** `src/routes/(public)/flow/+page.svelte`
+- **Changes:**
+    1. Define CSS variables `--flow-background-color` (default: `white`) and `--flow-pattern-color` (default: a light grey like `#e0e0e0` or SvelteFlow's default) in the global scope of the page's styles.
+    2. Update the `<Background>` component to use these CSS variables for its `bgColor` and `patternColor` props.
+      - `bgColor="var(--flow-background-color)"`
+      - `patternColor="var(--flow-pattern-color)"`
+
+## RefreshButton Component Refactor
+
+- **Objective:** Abstract reset/refresh buttons used on multiple pages into a reusable `RefreshButton.svelte` component.
+- **Files to create/edit:**
+  1. `src/lib/components/shared/RefreshButton.svelte` — new component exposing props (`title`, `disabled`, `className`) and forwarding click events while rendering provided children via `<slot>`.
+  2. `src/routes/(public)/flow/+page.svelte` — import `RefreshButton`, replace existing reset button with the component, preserving click handler `resetFlowCanvas`.
+  3. `src/routes/(public)/chat/+page.svelte` — import `RefreshButton`, replace existing global refresh button with the component, preserving click handler `clearChatAndStorage` and disabled state logic.
+- **Notes:** Existing CSS classes (`reset-flow-button`, `global-refresh-button`) remain defined in their respective pages and are passed to the component via the `className` prop to maintain current styling. The component forwards `click` events using `createEventDispatcher`, enabling pages to attach their own `on:click` handlers.

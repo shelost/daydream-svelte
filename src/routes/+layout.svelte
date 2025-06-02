@@ -20,7 +20,6 @@
   <link href="https://fonts.googleapis.com/css2?family=Hedvig+Letters+Serif:opsz@12..24&display=swap" rel="stylesheet">
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,wght@0,400..700;1,400..700&family=Inter:wght@100..900&family=Newsreader:ital,wght@0,200..800;1,200..800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://use.typekit.net/kqx0rwr.css">
-  <link rel="stylesheet" href="https://use.typekit.net/kqx0rwr.css">
   <script src="/fabric.js"></script>
 </svelte:head>
 
@@ -35,5 +34,12 @@
     height: 100%;
     padding: 0;
     margin: 0;
+    overscroll-behavior: none;
+
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
   }
 </style>

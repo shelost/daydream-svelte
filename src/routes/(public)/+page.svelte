@@ -73,7 +73,7 @@
 </script>
 
 <svelte:head>
-  <title>Opal Computer</title>
+  <title>Opal</title>
   <meta name="description" content="Create beautiful drawings and canvas compositions with Daydream" />
 </svelte:head>
 

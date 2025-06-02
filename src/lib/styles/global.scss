@@ -102,7 +102,7 @@ p {
 
 
 ::selection {
-  background-color: rgba(white, 1);
+  background: rgba($highlight, .08);
   color: black;
 }
 

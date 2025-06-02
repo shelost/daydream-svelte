@@ -1148,8 +1148,7 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
 </script>
 
 <svelte:head>
-  <title>Chat</title>
-  <link href = 'stan-avatar.png' rel = 'icon'>
+  <title>Opal Chat</title>
 </svelte:head>
 
 
@@ -1482,6 +1481,8 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
     touch-action: pan-y pan-x;
     -webkit-overflow-scrolling: touch;
     display: flex;
+
+    $highlight: var(--highlight);
   }
 
 
@@ -1670,16 +1671,17 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
       }
     }
 
+
     .prompt-card {
-      background: rgba(#6355FF, .05);
-      border-radius: 12px;
+      background: rgba(red, .08);
+      border-radius: 10px;
       padding: 10px 18px;
       cursor: pointer;
       width: fit-content;
       min-width: 180px; // Ensure consistent card sizes
       transition: all 0.2s cubic-bezier(0.4,0,0.2,1);
       flex-shrink: 0; // Prevent cards from shrinking
-      border: 1px solid rgba(#00106D, .1);
+      //border: 1px solid rgba(#00106D, .1);
       margin: 0;
       height: 44px;
       display: flex;
@@ -1687,7 +1689,7 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
       justify-content: center;
 
       &:hover {
-        background: rgba(#4a6bfd, .15);
+        background: rgba(red, .12);
         //transform: translateY(-1px);
       }
 
@@ -1702,10 +1704,10 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
       }
 
       .prompt-text {
-        font-family: "ivypresto-headline", sans-serif;
-        font-size: 15px;
-        font-weight: 500;
-        letter-spacing: .4px;
+        font-family: "Inter", "ivypresto-headline", sans-serif;
+        font-size: 14px;
+        font-weight: 400;
+        letter-spacing: -.25px;
         color: #003025;
         text-shadow: -.5px 0 0 #00106D;
         line-height: 140%;
@@ -1842,7 +1844,7 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
   .message-wrapper {
     display: flex;
     width: 85%;
-    max-width: 1000px;
+    max-width: 900px;
     box-sizing: border-box;
     flex-grow: 0;
     margin: 0 auto;
@@ -2075,32 +2077,81 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
     }
 
 
-    :global(p), :global(ul), :global(ol), :global(h5), :global(h6) {
+    :global(p), :global(ul), :global(ol), :global(h5), :global(h6), :global(td) {
       font-size: 14px;
       font-weight: 500;
       line-height: 1.5;
       letter-spacing: -.25px;
       color: rgba(#030025, 1);
       margin: 12px 0;
+
       font-family: "Hedvig Letters Serif", serif;
+
+      font-family:  'Inter', sans-serif;
+      letter-spacing: -.5px;
+      font-weight: 450;
+
+    }
+
+    :global(th){
+      padding-top: 20px !important;
+    }
+
+    :global(th:first-child){
+      padding-left: 24px !important;
+    }
+
+    :global(th:last-child){
+      padding-right: 24px !important;
+    }
+
+    :global(tr td:first-child){
+      padding-left: 24px !important;
+    }
+
+    :global(tr td:last-child){
+      padding-right: 24px !important;
+    }
+
+    :global(tr:last-child td){
+      padding-bottom: 24px !important;
+    }
+
+
+    :global(table){
+      background: white;
+      box-shadow: -12px 18px 48px rgba(#030025, 0.1);
+      border-radius: 12px;
+      margin: 24px 0 36px 0 !important;
+     // margin-bottom: 24px !important;
     }
 
 
     :global(h1){
       font-family: "ivypresto-headline", serif;
-      font-size: 28px;
+      font-size: 24px;
       font-weight: 500;
       letter-spacing: .3px;
       line-height: 1.1;
       text-shadow: -.5px 0 0 #030025;
       margin: 32px 0 18px 0;
+
+      font-family: 'Hedvig Letters Serif', 'DM Serif Display', serif;
+      font-family: 'Inter', sans-serif;
+      letter-spacing: -.5px;
+      font-weight: 650;
     }
     :global(h2){
       font-family: "ivypresto-headline", serif;
-      font-size: 20px;
+      font-size: 18px;
       font-weight: 500;
       letter-spacing: 0.2px;
       line-height: 1.1;
+
+      font-family: 'Hedvig Letters Serif', 'DM Serif Display', serif;
+      font-family: 'Inter', sans-serif;
+      letter-spacing: -.6px;
+      font-weight: 650;
     }
     :global(h3){
       font-size: 18px;
@@ -2136,11 +2187,11 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
 
     :global(pre) {
       width: 100%;
-      background-color: rgba(#030025, 1);
+      background-color: rgba(#030020, 1);
       padding: 38px 24px 20px 24px;
       border-radius: 12px;
       margin: 32px 0 40px 0;
-      box-shadow: -8px 16px 32px rgba(#030025, .3);
+      box-shadow: -8px 12px 48px rgba(#030025, .36);
       overflow-x: auto;
       position: relative;
     }
