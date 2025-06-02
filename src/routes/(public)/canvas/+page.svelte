@@ -4203,6 +4203,8 @@ Guidelines:
       height: fit-content;
       max-height: 90%;
 
+      user-select: none;
+
       .area{
         flex: 1;
         height: fit-content;
