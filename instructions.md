@@ -616,20 +616,3 @@ Placing the button inside the Omnibar component keeps related UI together, simpl
     2. **Targeted `preventDefault`:** Add `if (e.pointerType === 'touch' || e.pointerType === 'pen') { e.preventDefault(); }` at the beginning of `startPenStroke` and `continuePenStroke` functions. This prevents default browser actions (like scrolling or page zoom) only when the pen tool is active and receiving touch/stylus input.
     3. **Remove `pointerleave` Listener:** Ensure the `on:pointerleave={onPointerUp}` directive is completely removed from the `inputCanvas` element (`<canvas class="drawing-canvas">`). This event often causes premature stroke termination with styluses.
     4. **CSS `touch-action`:** Confirm that the `.canvas-container-overlay` (the parent of `inputCanvas`) has `touch-action: none;` applied in its CSS to disable browser-native touch gestures over the canvas area.
-
-## Mobile Drawing Performance Optimization (Apple Pencil Lag)
-
-- **Objective:** Drastically improve drawing responsiveness and reduce input lag for stylus (e.g., Apple Pencil) interactions on mobile devices in `src/routes/(public)/canvas/+page.svelte`.
-- **File:** `src/routes/(public)/canvas/+page.svelte`
-- **Key Changes:**
-    1.  **Enable Desynchronized Canvas for `inputCanvas`**:
-        *   When initializing `inputCtx` (the 2D context for the temporary perfect-freehand strokes), request it with the `{ desynchronized: true, alpha: true }` option. `alpha: true` is necessary for transparency over the main Fabric.js canvas. This can significantly reduce rendering latency.
-    2.  **Process Coalesced Pointer Events for Pen Tool**:
-        *   In the `continuePenStroke` function:
-            *   Check if `e.getCoalescedEvents` is available.
-            *   If so, iterate over the array returned by `e.getCoalescedEvents()`. These are intermediate pointer positions reported by the hardware.
-            *   For each coalesced event (and the main `e` event), extract its pointer position and pressure, and add it to the `currentStroke.points` array.
-            *   Call `renderStrokes()` *once* after processing all available points for that `pointermove` frame.
-    3.  **CSS `will-change` Property**:
-        *   In the SCSS, add `will-change: contents;` to the `.drawing-canvas` and `.fabric-canvas` CSS classes to hint browser optimizations.
-    4.  **Optimized Pressure Handling**: Ensure pressure (hardware or calculated) is applied efficiently to all points, including coalesced ones.

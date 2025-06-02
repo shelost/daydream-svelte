@@ -656,12 +656,7 @@
   // Separate initialization function
   async function initializeComponent() {
     if (inputCanvas) {
-      // Request desynchronized context for lower latency, alpha for transparency
-      inputCtx = inputCanvas.getContext('2d', { desynchronized: true, alpha: true });
-      if (!inputCtx) {
-        console.warn("Desynchronized 2D context not supported, falling back to standard context.");
-        inputCtx = inputCanvas.getContext('2d', { alpha: true }); // Ensure alpha is true for transparency
-      }
+      inputCtx = inputCanvas.getContext('2d');
     }
 
     // First, load Fabric.js
@@ -1149,41 +1144,22 @@
       e.preventDefault();
     }
     if (!isDrawing || !currentStroke || !inputCtx) return;
+    const point = getPointerPosition(e);
+    const timestamp = Date.now();
+    pointTimes.push(timestamp);
 
-    // Process the main event and any coalesced events for higher fidelity input
-    const eventsToProcess: PointerEvent[] = e.getCoalescedEvents ? [e, ...e.getCoalescedEvents()] : [e];
-
-    for (const event of eventsToProcess) {
-      const point = getPointerPosition(event);
-      const timestamp = Date.now(); // Use a fresh timestamp for each processed event point
-
-      // Determine pressure: Use hardware pressure if available and valid, otherwise calculate or default.
-      if (event.pointerType === 'pen' && event.pressure > 0 && event.pressure !== 0.5) {
-        point.pressure = event.pressure;
-        currentStroke.hasHardwarePressure = true; // Mark stroke as having hardware pressure if at least one point has it
+    if (!currentStroke.hasHardwarePressure || (e.pointerType === 'pen' && e.pressure === 0.5)) {
+       if (currentStroke.points.length > 1) {
+        const calculatedPressure = calculatePressureFromVelocity(
+          currentStroke.points, currentStroke.points.length - 1, 0.2, true, pointTimes
+        );
+        point.pressure = calculatedPressure;
       } else {
-        // If no direct hardware pressure, or if it's the default 0.5 (might indicate no true pressure reading)
-        if (currentStroke.points.length > 0 && pointTimes.length > 0) {
-          // Calculate pressure based on velocity if we have previous points and times
-          const calculatedPressure = calculatePressureFromVelocity(
-            currentStroke.points, // Points collected so far for the current stroke
-            currentStroke.points.length - 1, // Index of the last point
-            0.2, // Smoothing factor
-            true, // Use previous pressure in calculation
-            pointTimes // Timestamps for the points collected so far
-          );
-          point.pressure = calculatedPressure;
-        } else {
-          // Fallback for the very first point or if times are missing
-          point.pressure = event.pointerType === 'pen' ? event.pressure : 0.5;
-        }
+        point.pressure = 0.5;
       }
-
-      currentStroke.points.push(point);
-      pointTimes.push(timestamp); // Add timestamp for the point just added
     }
-
-    renderStrokes(); // Render once after processing all available events for this frame
+    currentStroke.points.push(point);
+    renderStrokes();
   }
 
   function endPenStroke(e: PointerEvent) {
@@ -4340,7 +4316,6 @@ Guidelines:
         box-shadow: none;
         border-radius: 8px; // Was 8px, can be 0 if canvas elements themselves have border-radius
         margin: auto;
-        user-select: none;
         //border: 1px solid rgba(#030025, .1);
 
         box-shadow: -12px 24px 36px rgba(#030025, 0.1);
@@ -4381,7 +4356,6 @@ Guidelines:
           .fabric-canvas, .drawing-canvas {
             border-radius: 4px; // Apply border-radius to canvas elements themselves
             margin: 0;
-            will-change: contents; /* Hint for browser optimizations */
             display: block;
             max-width: 100%;
             max-height: 100%;
@@ -4400,7 +4374,6 @@ Guidelines:
           .drawing-canvas { // perfect-freehand overlay
             z-index: 1; // Drawing canvas on top
             background-color: transparent;
-            will-change: contents; /* Hint for browser optimizations */
             cursor: crosshair;
             // pointer-events will be managed by JS
           }
