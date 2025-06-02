@@ -616,3 +616,10 @@ Placing the button inside the Omnibar component keeps related UI together, simpl
     2. **Targeted `preventDefault`:** Add `if (e.pointerType === 'touch' || e.pointerType === 'pen') { e.preventDefault(); }` at the beginning of `startPenStroke` and `continuePenStroke` functions. This prevents default browser actions (like scrolling or page zoom) only when the pen tool is active and receiving touch/stylus input.
     3. **Remove `pointerleave` Listener:** Ensure the `on:pointerleave={onPointerUp}` directive is completely removed from the `inputCanvas` element (`<canvas class="drawing-canvas">`). This event often causes premature stroke termination with styluses.
     4. **CSS `touch-action`:** Confirm that the `.canvas-container-overlay` (the parent of `inputCanvas`) has `touch-action: none;` applied in its CSS to disable browser-native touch gestures over the canvas area.
+
+## Disable Text Selection on Canvas Page
+
+- **Objective:** Prevent accidental text selection/highlighting on the canvas page to improve drawing experience, especially on mobile.
+- **File:** `src/routes/(public)/canvas/+page.svelte`
+- **Changes:**
+    - Apply CSS `user-select: none;` (and vendor prefixes: `-webkit-user-select`, `-ms-user-select`) to a high-level container element (e.g., the main `div` with `id="app"` or `.draw-demo-container`) to prevent text selection globally on that page.
