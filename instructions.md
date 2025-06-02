@@ -606,3 +606,13 @@ Placing the button inside the Omnibar component keeps related UI together, simpl
   2. `src/routes/(public)/flow/+page.svelte` — import `RefreshButton`, replace existing reset button with the component, preserving click handler `resetFlowCanvas`.
   3. `src/routes/(public)/chat/+page.svelte` — import `RefreshButton`, replace existing global refresh button with the component, preserving click handler `clearChatAndStorage` and disabled state logic.
 - **Notes:** Existing CSS classes (`reset-flow-button`, `global-refresh-button`) remain defined in their respective pages and are passed to the component via the `className` prop to maintain current styling. The component forwards `click` events using `createEventDispatcher`, enabling pages to attach their own `on:click` handlers.
+
+## Canvas Touch/Stylus Input Fix (public/canvas page)
+
+- **Objective:** Resolve premature stroke ending with touch/Apple Pencil on the drawing canvas.
+- **File:** `src/routes/(public)/canvas/+page.svelte`
+- **Key Changes:**
+    1. **Restore Event Dispatch Logic:** Ensure `onPointerDown`, `onPointerMove`, and `onPointerUp` correctly call tool-specific functions (like `startPenStroke`, `addTextObject`, etc.) based on the `$selectedTool`.
+    2. **Targeted `preventDefault`:** Add `if (e.pointerType === 'touch' || e.pointerType === 'pen') { e.preventDefault(); }` at the beginning of `startPenStroke` and `continuePenStroke` functions. This prevents default browser actions (like scrolling or page zoom) only when the pen tool is active and receiving touch/stylus input.
+    3. **Remove `pointerleave` Listener:** Ensure the `on:pointerleave={onPointerUp}` directive is completely removed from the `inputCanvas` element (`<canvas class="drawing-canvas">`). This event often causes premature stroke termination with styluses.
+    4. **CSS `touch-action`:** Confirm that the `.canvas-container-overlay` (the parent of `inputCanvas`) has `touch-action: none;` applied in its CSS to disable browser-native touch gestures over the canvas area.

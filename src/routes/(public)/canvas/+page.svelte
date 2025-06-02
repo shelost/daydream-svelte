@@ -1077,7 +1077,8 @@
 
   // --- Unified Event Handlers ---
   function onPointerDown(e: PointerEvent) {
-    if (e.button !== 0) return;
+    if (e.button !== 0 && e.button !== undefined) return; // Ignore right-clicks or other non-primary buttons
+
     if ($selectedTool === 'pen') {
         startPenStroke(e);
     } else if ($selectedTool === 'text') {
@@ -1087,6 +1088,7 @@
     } else if ($selectedTool === 'image') {
         activateImageUpload();
     }
+    // Eraser and Select tools are largely handled by Fabric.js drawing mode changes
   }
 
   function onPointerMove(e: PointerEvent) {
@@ -1099,12 +1101,22 @@
     if ($selectedTool === 'pen') {
         endPenStroke(e);
     }
+    // Eraser and Select tools might have specific logic on pointer up beyond Fabric's default.
+    else if ($selectedTool === 'eraser') {
+        endEraserStroke(e);
+    }
+    else if ($selectedTool === 'select') {
+        endSelection(e);
+    }
   }
 
   // --- Tool Specific Functions ---
 
   // PEN TOOL
   function startPenStroke(e: PointerEvent) {
+    if (e.pointerType === 'touch' || e.pointerType === 'pen') {
+      e.preventDefault();
+    }
     isDrawing = true;
     console.log(`Pen Draw Started. Pointer type: ${e.pointerType}, Pressure: ${e.pressure}`);
 
@@ -1128,6 +1140,9 @@
   }
 
   function continuePenStroke(e: PointerEvent) {
+    if (e.pointerType === 'touch' || e.pointerType === 'pen') {
+      e.preventDefault();
+    }
     if (!isDrawing || !currentStroke || !inputCtx) return;
     const point = getPointerPosition(e);
     const timestamp = Date.now();
@@ -3750,7 +3765,6 @@ Guidelines:
             on:pointermove={onPointerMove}
             on:pointerup={onPointerUp}
             on:pointercancel={onPointerUp}
-            on:pointerleave={onPointerUp}
           ></canvas>
 
             <!-- Drag overlay message -->
@@ -4334,23 +4348,7 @@ Guidelines:
             position: relative;
             width: 100%;
             height: 100%;
-            overflow: visible;
-            border-radius: 8px;
-
-            &.dragging-over {
-              &::before {
-                content: '';
-                position: absolute;
-                top: 0;
-                left: 0;
-                width: 100%;
-                height: 100%;
-                background: rgba(0, 0, 0, 0.5);
-                border-radius: 8px;
-                z-index: 10;
-                pointer-events: none;
-              }
-            }
+            touch-action: none; /* Prevent browser touch actions like scrolling/zooming */
           }
 
           .fabric-canvas, .drawing-canvas {
