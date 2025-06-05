@@ -1,36 +1,21 @@
-import { PUBLIC_SUPABASE_URL, PUBLIC_SUPABASE_ANON_KEY } from '$env/static/public';
-import { createServerClient } from '@supabase/ssr';
 import type { Handle } from '@sveltejs/kit';
+import { building, dev } from '$app/environment';
+import { initializeSocketServer } from '$lib/server/socket';
+
+let socketInitialized = false;
 
 export const handle: Handle = async ({ event, resolve }) => {
-  event.locals.supabase = createServerClient(PUBLIC_SUPABASE_URL, PUBLIC_SUPABASE_ANON_KEY, {
-    cookies: {
-      get: (key) => event.cookies.get(key),
-      set: (key, value, options) => {
-        event.cookies.set(key, value, {
-          ...options,
-          path: '/',
-        });
-      },
-      remove: (key, options) => {
-        event.cookies.delete(key, {
-          ...options,
-          path: '/',
-        });
-      },
-    },
-  });
+  // Initialize Socket.io server in development
+  if (dev && !building && !socketInitialized) {
+    // @ts-ignore - Vite dev server global
+    if (globalThis.__viteDevServer) {
+      console.log('Initializing Socket.io server...');
+      // @ts-ignore
+      initializeSocketServer(globalThis.__viteDevServer);
+      socketInitialized = true;
+    }
+  }
 
-  event.locals.getSession = async () => {
-    const {
-      data: { session },
-    } = await event.locals.supabase.auth.getSession();
-    return session;
-  };
-
-  return resolve(event, {
-    filterSerializedResponseHeaders(name) {
-      return name === 'content-range';
-    },
-  });
+  const response = await resolve(event);
+  return response;
 };

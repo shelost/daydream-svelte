@@ -160,23 +160,21 @@
 </div>
 
 <style lang="scss">
+
   .toolbar {
     display: flex;
     align-items: center;
-    justify-content: center;
+    justify-content: flex-start;
     width: fit-content;
     height: 48px;
     padding: 0 8px;
     gap: 8px;
     margin: 0;
-    margin-top: 12px;
-    background: white;
-    border-radius: 12px;
-
-    position: fixed;
-    left: 24px;
-    bottom: 24px;
+    //margin-top: 12px;
+    //background: white;
+    //border-radius: 12px;
     user-select: none;
+    width: 100%;
   }
 
   .tool-button {
@@ -193,12 +191,13 @@
     span {
       font-size: 20px;
       font-weight: 400;
-      color: #ccc; // Lighter icon color
+      color: #030025; // Lighter icon color
       transition: color 0.2s, background-color 0.2s;
     }
 
     &:hover {
       background: rgba(white, 0.1);
+      background: rgba(red, .05);
 
       span {
         color: var(--highlight);
@@ -211,10 +210,10 @@
 
     // Active state for tool buttons
     &.active {
-      background: rgba(black, .1);
+      background: rgba(red, .12);
 
       span {
-        color: white;
+        color: var(--highlight);
       }
     }
   }

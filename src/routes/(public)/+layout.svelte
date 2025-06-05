@@ -10,6 +10,7 @@
 
 <svelte:head>
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&e" />
     <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, interactive-widget=resizes-content">
 </svelte:head>
@@ -98,7 +99,6 @@
         overscroll-behavior: none;
         //background: rgb(29, 29, 32);
         //background: var(--background-color);
-        background: #fbfcff;
         gap: 8px;
         //padding: 12px 4px 12px 12px;
         transition: all 0.4s cubic-bezier(0.25, 0.46, 0.45, 0.94);
@@ -111,7 +111,6 @@
         //box-shadow: -12px 36px 48px rgba(#030025, 0.4);
         position: relative;
         background: var(--background-color);
-        background: #fbfcff;
         transition: all 0.4s cubic-bezier(0.25, 0.46, 0.45, 0.94);
         min-width: 0; /* Allows flex item to shrink below its content size */
     }

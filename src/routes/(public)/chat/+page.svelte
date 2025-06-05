@@ -1425,50 +1425,6 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
 <style lang="scss">
 
 
-  .spinner{
-    filter: drop-shadow(-2px 4px 4px rgba(#030025, .15));
-    margin: 20px 0;
-    transform-origin: center center;
-    width: fit-content;
-    animation: bouncer .5s infinite alternate-reverse ease-in-out;
-  }
-  .loader {
-    width: 17px;
-    aspect-ratio: 1;
-    border-radius: 50%;
-    background: var(--highlight);
-    display: grid;
-    box-shadow: inset -2px -2px 8px rgba(black, .1), inset 1px 1px 3px rgba(white, .5);
-    animation: l22-0 2s infinite linear;
-  }
-  .loader:before,
-  .loader:after {
-    content: "";
-    grid-area: 1/1;
-    margin: 15%;
-    border-radius: 50%;
-    background: inherit;
-    transform: rotate(0deg) translate(150%);
-    animation: l22 1s infinite;
-  }
-  .loader:after {
-    animation-delay: -.5s
-  }
-  @keyframes l22-0 {
-    100% {transform: rotate(1turn) scale(1)}
-  }
-  @keyframes l22 {
-    100% {transform: rotate(1turn) translate(150%)}
-  }
-  @keyframes bouncer{
-    0%{
-      transform: scale(1);
-    }
-    100%{
-      transform: scale(.8);
-    }
-
-  }
 
   #main {
     height: 100%;

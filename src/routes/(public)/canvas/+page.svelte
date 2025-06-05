@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy, tick } from 'svelte'; // Added tick
-  import { fade, scale } from 'svelte/transition';
+  import { fade, scale, fly } from 'svelte/transition';
   import type { Tool, Stroke, StrokePoint } from '$lib/types';
   import { getStroke } from 'perfect-freehand';
   import { getSvgPathFromStroke, calculatePressureFromVelocity, calculateMultiStrokeBoundingBox, findRelatedStrokes, normalizeBoundingBox } from '$lib/utils/drawingUtils.js';
@@ -9,6 +9,9 @@
   import Omnibar from '$lib/components/Omnibar.svelte'; // <-- IMPORT Omnibar
   import CanvasToolbar from '$lib/components/CanvasToolbar.svelte'; // <-- IMPORT CanvasToolbar
   import RefreshButton from '$lib/components/shared/RefreshButton.svelte'; // <-- IMPORT RefreshButton
+  import RealtimeStatusIndicator from '$lib/components/shared/RealtimeStatusIndicator.svelte'; // <-- IMPORT RealtimeStatusIndicator
+  import VerticalToolbar from '$lib/components/VerticalToolbar.svelte'; // <-- IMPORT VerticalToolbar
+  import { io, type Socket } from 'socket.io-client';
   import {
     gptImagePrompt,
     gptEditPrompt,
@@ -38,11 +41,12 @@
       if (typeof window !== 'undefined') {
         const prismModule = await import('prismjs');
         await import('prismjs/components/prism-markup.js');
+        await import('prismjs/components/prism-json.js'); // Add JSON language support
         const prismInstance = prismModule.default || prismModule;
 
         if (prismInstance && typeof prismInstance.highlightElement === 'function') {
-          Prism = prismInstance; // Assign to top-level Prism
-          PrismLoaded = true;    // Assign to top-level PrismLoaded
+          Prism = prismInstance;
+          PrismLoaded = true;
           console.log('Prism.js loaded successfully and assigned.');
         } else {
           console.warn('Prism.js loaded but highlightElement method not available or instance invalid.');
@@ -62,9 +66,11 @@
         }
 
         // After Prism is confirmed loaded (or failed), trigger highlighting if conditions met
-        if (outputView === 'code' && generatedSvgCode && svgCodeElement) {
-            console.log('onMount: Code view active with SVG code. Triggering processCodeIfNecessary.');
-            processCodeIfNecessary(); // New helper function
+        if ((outputView === 'code' && generatedSvgCode && svgCodeElement) ||
+            (inputView === 'code' && fabricInstance && inputCodeElement)) {
+          console.log('onMount: Code view active. Triggering processCodeIfNecessary.');
+          processCodeIfNecessary();
+          updateInputCodeView(); // Also update input code view if needed
         }
       }
     } catch (error) {
@@ -139,7 +145,7 @@
   let strokeColor: string;
   let strokeSize: number;
   let strokeOpacity: number;
-  let canvasBackgroundColor: string = '#f8f8f8'; // Default background color
+  let canvasBackgroundColor: string = '#ffffff'; // Default background color
 
   let lastUserEditTime = 0;
   let pendingAnalysis = false;
@@ -179,6 +185,7 @@
   const imageGenerationModels = [
     { value: 'gpt-image-1', label: 'GPT-Image-1' },
     { value: 'gpt-4o', label: 'GPT-4o' },
+    { value: 'flux-schnell', label: 'Flux Schnell (Realtime)' },
     { value: 'flux-canny-pro', label: 'Flux Canny Pro' },
     { value: 'controlnet-scribble', label: 'ControlNet Scribble' },
     { value: 'stable-diffusion', label: 'Stable Diffusion' },
@@ -1389,6 +1396,13 @@ Again, return ONLY the SVG code with no additional text.`;
 
   // Now update the SVG generation portion of the generateImage function
   async function generateImage() {
+    // If Flux Schnell is selected, real-time generation is active, so the omnibar submit button should do nothing.
+    if ($selectedModel === 'flux-schnell') {
+      console.log('Flux Schnell (Realtime) is active. Image generation is handled via Socket.io on canvas updates.');
+      // Optionally, provide some user feedback if desired, e.g., a toast message.
+      return; // Prevent further execution for this model
+    }
+
     // ... inside generateImage(), replace the SVG branch logic
     if (selectedFormat === 'svg') {
       const hasSketch = fabricInstance && fabricInstance.getObjects().length > 0;
@@ -3619,6 +3633,216 @@ Guidelines:
     });
   }
 
+  // Socket.io for real-time generation
+  let socket: Socket | null = null;
+  let realtimeGenerationEnabled = false;
+  let isRealtimeGenerating = false;
+  let realtimeImageUrl: string | null = null;
+  let realtimeModel: string | null = null;
+  let socketConnectionStatus: 'Connecting' | 'Connected' | 'Disconnected' = 'Disconnected';
+  let realtimeImagesReceivedCount = 0;
+
+  // Enable realtime generation when Flux Schnell is selected
+  $: realtimeGenerationEnabled = $selectedModel === 'flux-schnell';
+
+  // Initialize or disconnect socket based on model selection
+  $: {
+    if (browser && realtimeGenerationEnabled && !socket) {
+      // Connect to Socket.io server
+      socketConnectionStatus = 'Connecting'; // Set status before attempting connection
+      console.log('[SOCKET.IO] Attempting to connect...');
+      socket = io('/', {
+        transports: ['websocket', 'polling'], // Be explicit, though these are defaults
+        // timeout: 5000, // Optional: connection timeout
+        // reconnectionAttempts: 3 // Optional: limit reconnection attempts
+      });
+
+      socket.on('connect', () => {
+        console.log('[SOCKET.IO] Successfully connected. Socket ID:', socket?.id);
+        socketConnectionStatus = 'Connected';
+      });
+
+      socket.on('connect_error', (err) => {
+        console.error('[SOCKET.IO] Connection Error:', err);
+        console.error('[SOCKET.IO] Error Name:', err.name);
+        console.error('[SOCKET.IO] Error Message:', err.message);
+        // err.data is not a standard property of Error. Additional context is usually in err.message or specific fields for some error types.
+        // if (err.data) console.error('[SOCKET.IO] Error Data:', err.data);
+        socketConnectionStatus = 'Disconnected'; // Or 'Error' if you add that state
+        // No need to set isRealtimeGenerating to false here, only on actual disconnect or generation error
+      });
+
+      socket.on('disconnect', (reason) => {
+        console.log('[SOCKET.IO] Disconnected. Reason:', reason);
+        socketConnectionStatus = 'Disconnected';
+        isRealtimeGenerating = false; // Reset generating state on disconnect
+        if (reason === 'io server disconnect') {
+          // the server manually disconnected the socket
+          socket.connect(); // attempt to reconnect
+        }
+      });
+
+      socket.on('reconnect_attempt', (attempt) => {
+        console.log(`[SOCKET.IO] Reconnect attempt #${attempt}`);
+        socketConnectionStatus = 'Connecting';
+      });
+
+      socket.on('reconnect_error', (err) => {
+        console.error('[SOCKET.IO] Reconnect Error:', err);
+        // socketConnectionStatus will likely remain 'Connecting' or become 'Disconnected' via 'connect_error'
+      });
+
+      socket.on('reconnect_failed', () => {
+        console.error('[SOCKET.IO] Failed to reconnect after multiple attempts.');
+        socketConnectionStatus = 'Disconnected';
+      });
+
+      socket.on('error', (err) => {
+        console.error('[SOCKET.IO] General socket error:', err);
+        // This can catch errors not caught by connect_error, like issues after connection
+      });
+
+      socket.on('generation-started', (data) => {
+        console.log('Realtime generation started:', data.model);
+        isRealtimeGenerating = true;
+        realtimeModel = data.model;
+      });
+
+      socket.on('generation-progress', (data) => {
+        console.log(`Generation progress: ${data.progress}%`);
+      });
+
+      socket.on('generation-complete', (data) => {
+        console.log('[REALTIME] generation-complete event received. Data:', data);
+        if (data && data.imageUrl) {
+          console.log('[REALTIME] Image URL received:', data.imageUrl);
+          realtimeImageUrl = data.imageUrl; // Keep this for potential direct use if needed
+          editedImageUrl.set(data.imageUrl); // THIS IS THE KEY for display
+          editedByModel.set(data.model || 'flux-schnell');
+          realtimeImagesReceivedCount++;
+          console.log('[REALTIME] editedImageUrl store updated. New count:', realtimeImagesReceivedCount);
+        } else {
+          console.warn('[REALTIME] generation-complete event received, but no imageUrl in data:', data);
+        }
+        isRealtimeGenerating = false;
+      });
+
+      socket.on('generation-error', (data) => {
+        console.error('Realtime generation error:', data.error);
+        errorMessage = data.error;
+        isRealtimeGenerating = false;
+        socketConnectionStatus = 'Connected'; // Still connected, but an error occurred with generation
+        setTimeout(() => { errorMessage = null; }, 3000);
+      });
+    } else if (!realtimeGenerationEnabled && socket) {
+      // Disconnect when switching away from Flux Schnell
+      socket.emit('stop-generation');
+      socket.disconnect();
+      socket = null;
+      isRealtimeGenerating = false;
+      realtimeImageUrl = null;
+      socketConnectionStatus = 'Disconnected';
+      realtimeImagesReceivedCount = 0; // Reset count when disabled
+    }
+  }
+
+  // Send canvas updates to server when in realtime mode
+  let canvasUpdateTimer: NodeJS.Timeout | null = null;
+
+  function sendCanvasUpdate() {
+    if (!socket || !socket.connected || !realtimeGenerationEnabled) return;
+
+    updateImageData();
+    if (!imageData) return;
+
+    const prompt = additionalContext || 'A drawing';
+
+    socket.emit('canvas-update', {
+      imageData,
+      prompt,
+      aspectRatio: selectedAspectRatio
+    });
+  }
+
+  // Watch for canvas changes and send updates
+  $: {
+    if (browser && realtimeGenerationEnabled && imageData && socket) {
+      // Clear existing timer
+      if (canvasUpdateTimer) {
+        clearTimeout(canvasUpdateTimer);
+      }
+
+      // Set new timer to debounce updates
+      canvasUpdateTimer = setTimeout(() => {
+        sendCanvasUpdate();
+      }, 300); // 300ms debounce
+    }
+  }
+
+  // New variables for input canvas code view
+  let inputView: string = 'canvas';
+  let inputCodeElement: HTMLElement;
+  let lastFormattedInputCode: string | null = null;
+  let inputCodeUpdateTimeout: NodeJS.Timeout | null = null;
+
+  // Function to update input canvas code view
+  function updateInputCodeView() {
+    if (!fabricInstance || !inputCodeElement || inputView !== 'code') return;
+
+    try {
+      const canvasJson = fabricInstance.toJSON();
+      const formattedJson = JSON.stringify(canvasJson, null, 2);
+
+      if (formattedJson === lastFormattedInputCode) return; // No changes
+      lastFormattedInputCode = formattedJson;
+
+      inputCodeElement.textContent = formattedJson;
+
+      // Apply Prism highlighting if available
+      if (PrismLoaded && Prism && typeof Prism.highlightElement === 'function') {
+        Prism.highlightElement(inputCodeElement);
+      }
+    } catch (err) {
+      console.error('Error updating input code view:', err);
+    }
+  }
+
+  // Watch for canvas changes to update code view
+  $: if (browser && fabricInstance) {
+    fabricInstance.on('object:added', updateInputCodeView);
+    fabricInstance.on('object:removed', updateInputCodeView);
+    fabricInstance.on('object:modified', updateInputCodeView);
+    fabricInstance.on('object:skewing', updateInputCodeView);
+    fabricInstance.on('object:scaling', updateInputCodeView);
+    fabricInstance.on('object:rotating', updateInputCodeView);
+    fabricInstance.on('object:moving', () => {
+      // Debounce updates during movement for better performance
+      if (inputCodeUpdateTimeout) clearTimeout(inputCodeUpdateTimeout);
+      inputCodeUpdateTimeout = setTimeout(updateInputCodeView, 100);
+    });
+  }
+
+  // Watch for tab changes
+  $: if (inputView === 'code') {
+    updateInputCodeView();
+  }
+
+  // Clean up event listeners in onDestroy
+  onDestroy(() => {
+    if (fabricInstance) {
+      fabricInstance.off('object:added', updateInputCodeView);
+      fabricInstance.off('object:removed', updateInputCodeView);
+      fabricInstance.off('object:modified', updateInputCodeView);
+      fabricInstance.off('object:skewing', updateInputCodeView);
+      fabricInstance.off('object:scaling', updateInputCodeView);
+      fabricInstance.off('object:rotating', updateInputCodeView);
+      fabricInstance.off('object:moving', updateInputCodeView);
+    }
+    if (inputCodeUpdateTimeout) {
+      clearTimeout(inputCodeUpdateTimeout);
+    }
+  });
+
 </script>
 
 <svelte:head>
@@ -3632,148 +3856,60 @@ Guidelines:
 
 </svelte:head>
 
-<div id = 'app' in:scale={{ start: .98, opacity: 0.5}}>
+<div id = 'app' in:scale={{ start: .98, opacity: 0.5, duration: 200}}>
+  {#if realtimeGenerationEnabled}
+    <RealtimeStatusIndicator connectionStatus={socketConnectionStatus} imagesReceived={realtimeImagesReceivedCount} />
+  {/if}
   <div class="draw-demo-container">
 
 
     <div id="main">
-      <div class="toolbars-wrapper">
+      <div class="toolbars-wrapper"  in:fly={{y: 25, opacity: 0, duration: 500, delay: 200}}>
         <!-- New Tool Selection Toolbar -->
 
         <!-- Existing Stroke Options Toolbar -->
-        <div class="vertical-toolbar options-toolbar">
-          <div class="tools-group">
-
-            {#if $selectedTool === 'pen' || $selectedTool === 'eraser'}
-              <!-- PEN/ERASER Tool Options -->
-              <div class="tool-group">
-                <input
-                  type="color"
-                  bind:value={strokeColor}
-                  on:input={() => {
-                    strokeOptions.update(opts => ({...opts, color: strokeColor}));
-                  }}
-                />
-              </div>
-              <div class="tool-group">
-                <VerticalSlider
-                  min={1}
-                  max={30}
-                  step={0.5}
-                  bind:value={strokeSize}
-                  color="#6355FF"
-                  height="120px"
-                  onChange={() => {
-                    strokeOptions.update(opts => ({...opts, size: strokeSize}));
-                    if ($selectedTool === 'eraser') eraserSize = strokeSize;
-                  }}
-                  showValue={true}
-                />
-              </div>
-              <div class="tool-group">
-                <VerticalSlider
-                  min={0.1}
-                  max={1}
-                  step={0.1}
-                  bind:value={strokeOpacity}
-                  color="#6355FF"
-                  height="120px"
-                  onChange={() => {
-                    strokeOptions.update(opts => ({...opts, opacity: strokeOpacity}));
-                  }}
-                  showValue={true}
-                />
-              </div>
-
-            {:else if $selectedTool === 'select'}
-              {#if activeFabricObject && (activeFabricObject.type === 'rect' || activeFabricObject.type === 'circle' || activeFabricObject.type === 'triangle' || activeFabricObject.type === 'ellipse')}
-                <!-- SELECTED SHAPE Object Options -->
-                <div class="tool-group">
-                  <input type="color" value={selectedShapeFillProxy}
-                    on:input={(e) => {
-                      selectedShapeFillProxy = e.currentTarget.value;
-                      updateSelectedObjectProperty('fill', selectedShapeFillProxy);
-                    }} />
-                </div>
-                <div class="tool-group">
-                  <input type="color" value={selectedShapeStrokeProxy}
-                    on:input={(e) => {
-                      selectedShapeStrokeProxy = e.currentTarget.value;
-                      updateSelectedObjectProperty('stroke', selectedShapeStrokeProxy);
-                    }} />
-                </div>
-                <div class="tool-group">
-                  <VerticalSlider
-                    min={0}
-                    max={30}
-                    step={1}
-                    bind:value={selectedShapeStrokeWidthProxy}
-                    color="#6355FF"
-                    height="120px"
-                    onChange={() => {
-                      if (activeFabricObject && activeFabricObject.strokeWidth !== selectedShapeStrokeWidthProxy) {
-                        updateSelectedObjectProperty('strokeWidth', selectedShapeStrokeWidthProxy);
-                      }
-                    }}
-                    showValue={true}
-                  />
-                </div>
-              {:else}
-                <!-- CANVAS BACKGROUND COLOR when no shape is selected -->
-                <div class="tool-group">
-                  <input
-                    type="color"
-                    value={canvasBackgroundColor}
-                    on:input={(e) => updateCanvasBackgroundColor(e.currentTarget.value)}
-                  />
-                </div>
-              {/if}
-            {:else if $selectedTool === 'shape'}
-              <!-- SHAPE Tool (for new shape) Options -->
-              <div class="tool-group">
-                <input type="color" bind:value={shapeFillColor} />
-              </div>
-              <div class="tool-group">
-                <input type="color" bind:value={shapeStrokeColor} />
-              </div>
-
-              <div class="tool-group">
-                <VerticalSlider min={0} max={30} step={1} bind:value={shapeStrokeWidth} color="#6355FF" height="120px" showValue={true} />
-              </div>
-            {:else if $selectedTool === 'text'}
-
-              <div class="tool-group">
-                <input type="color" bind:value={textColor} />
-              </div>
-              <!-- Future: Font Size (Slider/Input), Font Family (Dropdown) -->
-
-              <div class="tool-group">
-                  <VerticalSlider min={8} max={128} step={1} bind:value={fontSize} color="#6355FF" height="100px" showValue={true} />
-              </div>
-              <!-- Placeholder for font family dropdown -->
-
-            {:else}
-              <!-- Default: Could be empty or show global options if any -->
-              <!-- Or just the clear button which is outside this if/else block -->
-            {/if}
-
-            <RefreshButton
-              title="Clear Canvas"
-              on:click={clearCanvas}
-            >
-            </RefreshButton>
-
-          </div>
-        </div>
+        <VerticalToolbar
+          {activeFabricObject}
+          bind:strokeColor
+          bind:strokeSize
+          bind:strokeOpacity
+          bind:eraserSize
+          bind:canvasBackgroundColor
+          bind:shapeFillColor
+          bind:shapeStrokeColor
+          bind:shapeStrokeWidth
+          bind:textColor
+          bind:fontSize
+          bind:selectedShapeFillProxy
+          bind:selectedShapeStrokeProxy
+          bind:selectedShapeStrokeWidthProxy
+          onStrokeColorChange={() => {}}
+          onStrokeSizeChange={() => {}}
+          onStrokeOpacityChange={() => {}}
+          onEraserSizeChange={() => {}}
+          onCanvasBackgroundColorChange={updateCanvasBackgroundColor}
+          onSelectedObjectPropertyChange={updateSelectedObjectProperty}
+          onClearCanvas={clearCanvas}
+        />
       </div>
 
 
-      <div class = 'area'>
+      <div class = 'area'  in:fly={{y: 25, opacity: 0, duration: 500, delay: 300}}>
         <div class="canvas-wrapper input-canvas" class:ratio-1-1={selectedAspectRatio === '1:1'} class:ratio-portrait={selectedAspectRatio === 'portrait'} class:ratio-landscape={selectedAspectRatio === 'landscape'}>
+          <!-- Add tab buttons for input canvas -->
+          <div class="output-tabs">
+            <button class="tab-button {inputView === 'canvas' ? 'active' : ''}" on:click={() => inputView = 'canvas'}>
+              Canvas
+            </button>
+            <button class="tab-button {inputView === 'code' ? 'active' : ''}" on:click={() => inputView = 'code'}>
+              Code
+            </button>
+          </div>
+
           <!-- Canvas container to properly position all canvases together -->
           <div
             class="canvas-container-overlay"
-            style="position: relative; width: 100%; height: 100%;"
+            style="display: {inputView === 'canvas' ? 'block' : 'none'};"
             class:dragging-over={isDraggingOver}
             on:dragover={handleDragOver}
             on:dragleave={handleDragLeave}
@@ -3781,17 +3917,17 @@ Guidelines:
           >
             <!-- Fabric.js canvas (lower canvas) -->
             <canvas class='fabric-canvas' bind:this={fabricCanvasHTML}>
-          </canvas>
+            </canvas>
 
             <!-- Perfect-freehand canvas (temporary drawing, transparent overlay) -->
-          <canvas
-            bind:this={inputCanvas}
-            class="drawing-canvas"
-            on:pointerdown={onPointerDown}
-            on:pointermove={onPointerMove}
-            on:pointerup={onPointerUp}
-            on:pointercancel={onPointerUp}
-          ></canvas>
+            <canvas
+              bind:this={inputCanvas}
+              class="drawing-canvas"
+              on:pointerdown={onPointerDown}
+              on:pointermove={onPointerMove}
+              on:pointerup={onPointerUp}
+              on:pointercancel={onPointerUp}
+            ></canvas>
 
             <!-- Drag overlay message -->
             {#if isDraggingOver}
@@ -3800,6 +3936,11 @@ Guidelines:
               <p>Drop image to upload</p>
             </div>
             {/if}
+          </div>
+
+          <!-- Add code view container -->
+          <div class="output-view code-view" style="display: {inputView === 'code' ? 'block' : 'none'}; width: 100%; height: 100%;">
+            <pre class="svg-code-display language-json"><code bind:this={inputCodeElement} class="language-json"></code></pre>
           </div>
         </div>
 
@@ -3820,7 +3961,7 @@ Guidelines:
         style="display: none;"
       />
 
-      <div class = 'area'>
+      <div class = 'area'  in:fly={{y: 25, opacity: 0, duration: 500, delay: 400}}>
         <div class="canvas-wrapper output-canvas" class:ratio-1-1={generatedImageAspectRatio === '1:1'} class:ratio-portrait={generatedImageAspectRatio === 'portrait'} class:ratio-landscape={generatedImageAspectRatio === 'landscape'}>
           <div class="output-display" class:ratio-1-1={generatedImageAspectRatio === '1:1'} class:ratio-portrait={generatedImageAspectRatio === 'portrait'} class:ratio-landscape={generatedImageAspectRatio === 'landscape'}>
             {#if generatedSvgCode}
@@ -3843,19 +3984,21 @@ Guidelines:
                 <pre class="svg-code-display language-markup"><code bind:this={svgCodeElement} class="language-markup"></code></pre>
               </div>
 
-              {#if $isGenerating}
+              {#if $isGenerating && !realtimeGenerationEnabled} <!-- Show loader for SVG if generating and not realtime -->
                 <div class="ai-scanning-animation">
-                  <div class='loader'></div>
+                  <div class = "spinner">
+                    <div class = "loader"></div>
+                  </div>
                 </div>
               {/if}
-            {:else if $editedImageUrl}
+            {:else if $editedImageUrl} <!-- Primary display for any generated image (Flux Schnell or other models) -->
               <img src={$editedImageUrl} alt="AI generated image" class="output-image" />
               <button
                 class="model-badge download-button"
                 on:click={() => {
                   const link = document.createElement('a');
-                  link.href = $editedImageUrl;
-                  link.download = `daydream-image-${Date.now()}.png`;
+                  link.href = $editedImageUrl; // Use $editedImageUrl for download
+                  link.download = `daydream-image-${$selectedModel}-${Date.now()}.png`;
                   document.body.appendChild(link);
                   link.click();
                   document.body.removeChild(link);
@@ -3863,25 +4006,48 @@ Guidelines:
               >
                 <span class="material-icons" style="font-size: 16px; margin-right: 4px;">download</span> Download
               </button>
+              {#if $editedByModel}
+                <div class="model-badge" style="left: 10px; right: auto; background: {$selectedModel === 'flux-schnell' ? 'rgba(99, 85, 255, 0.9)' : 'rgba(0,0,0,0.7)'}; backdrop-filter: blur(5px);">
+                  {$editedByModel}
+                </div>
+              {/if}
             {:else}
+              <!-- Placeholder logic -->
               <div class="drawing-preview" style="aspect-ratio: {(fabricCanvasHTML?.width || inputCanvas?.width)}/{(fabricCanvasHTML?.height || inputCanvas?.height)}">
-                {#if imageData}
-                  <img src={imageData} alt="Drawing preview" class="drawing-preview-image" style="width: 100%; height: 100%; object-fit: contain;" />
-
-                  {#if $isGenerating}
-                    <div class="ai-scanning-animation">
-                      <div class = 'loader'></div>
-                      <div class="scanning-status">
-                        <h2> Creating</h2>
-                        <div class='dots'>
-                          <div class='dot'></div>
-                          <div class='dot'></div>
-                          <div class='dot'></div>
-                        </div>
-                      </div>
-                    </div>
-                  {/if}
+                {#if realtimeGenerationEnabled && isRealtimeGenerating}
+                  <!-- Flux-schnell actively generating -->
+                  <div class="realtime-loading">
+                    <div class="loader"></div>
+                    <h3>Generating with {realtimeModel || 'Flux Schnell'}...</h3>
+                    <p>Draw to update in real-time</p>
+                  </div>
+                {:else if realtimeGenerationEnabled && !$editedImageUrl && !isRealtimeGenerating}
+                  <!-- Flux-schnell selected, waiting for first image/draw action -->
+                  {#if imageData}
+                    <img src={imageData} alt="Drawing preview" class="drawing-preview-image" style="width: 100%; height: 100%; object-fit: contain; opacity: 0.5;" />
+                    <p style="position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); color: #ccc; font-size: 14px;">Draw to see real-time generation with Flux Schnell</p>
                   {:else}
+                    <p>Start drawing to see real-time generation with Flux Schnell</p>
+                  {/if}
+                {:else if $isGenerating && !realtimeGenerationEnabled}
+                  <!-- Standard model actively generating, show sketch underneath -->
+                  {#if imageData}
+                    <img src={imageData} alt="Drawing preview" class="drawing-preview-image" style="width: 100%; height: 100%; object-fit: contain; opacity: 0.3;" />
+                  {/if}
+                  <div class="ai-scanning-animation">
+                    <div class = 'loader'></div>
+                    <div class="scanning-status">
+                      <h2> Creating</h2>
+                      <div class='dots'> <div class='dot'></div> <div class='dot'></div> <div class='dot'></div> </div>
+                    </div>
+                  </div>
+                {:else if imageData} <!-- General case: something is drawn, no generation active, no $editedImageUrl yet -->
+                   <img src={imageData} alt="Drawing preview" class="drawing-preview-image" style="width: 100%; height: 100%; object-fit: contain; opacity: 0.3;" />
+                   <p style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: #888; font-size: 1rem; text-align: center;">
+                    AI-generated image will appear here
+                  </p>
+                {:else}
+                  <!-- Fallback, truly empty state -->
                   <p>Your AI-generated image will appear here</p>
                 {/if}
               </div>
@@ -3909,6 +4075,9 @@ Guidelines:
 
 
 <style lang="scss">
+// Import variables explicitly at the top of the style block
+@import '../../../lib/styles/_variables.scss';
+
 // Styles are unchanged as per instructions.
   #app {
     height: 100%;
@@ -3919,35 +4088,8 @@ Guidelines:
     user-select: none; /* Standard syntax */
   }
 
-  .loader{
-    width: 40px;
-    aspect-ratio: 1;
-    --c:no-repeat linear-gradient(white 0 0);
-    background:
-      var(--c) 0    0,
-      var(--c) 0    100%,
-      var(--c) 50%  0,
-      var(--c) 50%  100%,
-      var(--c) 100% 0,
-      var(--c) 100% 100%;
-    background-size: 8px 50%;
-    animation: l7-0 1s infinite;
-    position: relative;
-    overflow: hidden;
 
-    &:before{
-      content: "";
-      position: absolute;
-      width: 8px;
-      height: 8px;
-      border-radius: 50%;
-      background: white;
-      top: calc(50% - 4px);
-      left: -8px;
-      animation: inherit;
-      animation-name: l7-1;
-    }
-  }
+
 
   @keyframes l7-0 {
     16.67% {background-size:8px 30%, 8px 30%, 8px 50%, 8px 50%, 8px 50%, 8px 50%}
@@ -4237,8 +4379,13 @@ Guidelines:
       .area{
         flex: 1;
         height: fit-content;
-        padding: 4px;
+        gap: 0;
+        background: $card-bg;
+        border-radius: $border-radius-lg;
+        overflow: hidden;
+        box-shadow:-24px 24px 60px rgba(#030025, .1);
 
+        //border: 1px solid rgba(black, .08);
       }
 
       // New wrapper for toolbars
@@ -4249,89 +4396,6 @@ Guidelines:
         height: fit-content; // Adjust height to content
         z-index: 5;
         position: relative; // Needed for dropdown positioning
-
-        // Toolbar styles
-        .vertical-toolbar {
-          background: #030020;
-          border-radius: 12px;
-          box-shadow: -4px 16px 24px rgba(black, 0.25);
-          padding: 8px 4px; // Adjusted padding
-          box-sizing: border-box;
-          width: 48px; // Slightly narrower
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          gap: 8px;
-
-          &.tool-selector-toolbar {
-            // Specific styles for the tool selector if needed
-            gap: 6px;
-            position: relative; // Parent for dropdown if needed
-          }
-
-          &.options-toolbar {
-            // Specific styles for the options toolbar if needed
-            gap: 20px; // Keep original gap for options
-            flex: 1;
-          }
-
-          .tools-group {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            gap: 6px;
-            width: 100%; // Ensure tool groups take width
-
-            .tool-group {
-              input[type="color"] {
-                -webkit-appearance: none;
-                border: none;
-                outline: none;
-                width: 28px;
-                height: 28px;
-                padding: 0;
-                border-radius: 20px;
-                cursor: pointer;
-                overflow: hidden;
-                margin-bottom: 4px;
-                position: relative;
-                box-shadow: -2px 8px 12px rgba(black, .5);
-
-                &::after {
-                  content: '';
-                  position: absolute;
-                  top: 0;
-                  left: 0;
-                  width: 100%;
-                  height: 100%;
-                  background: none;
-                  border-radius: 20px;
-                  border: 0px solid rgba(white, 0);
-                  box-shadow: inset 1px 2px 3px rgba(white, .25), inset -1px -2px 3px rgba(black, .25);
-                }
-
-                &::-webkit-color-swatch-wrapper {
-                  padding: 0;
-                }
-
-                &::-webkit-color-swatch {
-                  border: none;
-                  border-radius: 20px;
-                }
-              }
-
-              .tool-label {
-                display: block;
-                text-align: center;
-                color: #ccc;
-                font-size: 12px;
-                margin-bottom: 4px;
-                font-weight: 500;
-                text-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
-              }
-            }
-          }
-        }
       }
 
       .canvas-wrapper {
@@ -4343,11 +4407,11 @@ Guidelines:
         overflow: hidden; // Changed from hidden to visible for Fabric controls
         transition: all 0.3s ease;
         box-shadow: none;
-        border-radius: 8px; // Was 8px, can be 0 if canvas elements themselves have border-radius
+        //border-radius: 8px; // Was 8px, can be 0 if canvas elements themselves have border-radius
         margin: auto;
         //border: 1px solid rgba(#030025, .1);
 
-        box-shadow: -12px 24px 36px rgba(#030025, 0.1);
+        //box-shadow: -12px 24px 36px rgba(#030025, 0.1);
 
         &.input-canvas { // This wrapper contains both fabric and perfect-freehand canvases
           position: relative;
@@ -4486,10 +4550,12 @@ Guidelines:
               cursor: pointer;
               display: flex;
               align-items: center;
-              transition: background-color 0.2s ease;
+              transition: .2s ease;
               font-family: inherit;
               font-weight: 600;
-              box-shadow: 6px 10px 16px rgba(black, .4);
+              box-shadow: 4px 8px 12px rgba(black, .12);
+              border-radius: 24px;
+              background: var(--highlight);
               transition: .2s ease;
 
               span{
@@ -5298,7 +5364,7 @@ Guidelines:
       height: 30px;
       padding: 0;
       border-radius: 24px;
-      background: var(--highlight);
+      background: $highlight;
       color: white;
       border: none;
       display: flex;
@@ -5313,7 +5379,7 @@ Guidelines:
       }
 
       &:hover:not(:disabled) {
-        background: #ff3974;
+        background: $highlight2;
       }
 
       &:disabled {
@@ -5345,27 +5411,34 @@ Guidelines:
     top: 8px;
     left: 8px;
     display: flex;
-    gap: 4px;
+    gap: 0;
     z-index: 25;
+    background: rgba(black, .9);
+    border-radius: 24px;
+
+    .tab-button {
+      padding: 6px 12px;
+      font-size: 12px;
+      border-radius: 12px;
+      background: none;
+      color: #eee;
+      cursor: pointer;
+      transition: .2s ease;
+
+      &.active{
+        background: var(--highlight);
+        color: #fff;
+
+      }
+
+      &:hover{
+        //background: #6355FF;
+        color: rgba(white, .75);
+        transform: none;
+      }
+    }
   }
 
-  .output-tabs .tab-button {
-    padding: 4px 12px;
-    font-size: 12px;
-    border-radius: 12px;
-    border: 1px solid rgba(255, 255, 255, 0.15);
-    background: rgba(0, 0, 0, 0.5);
-    color: #eee;
-    cursor: pointer;
-    backdrop-filter: blur(6px);
-    transition: background-color 0.2s;
-  }
-
-  .output-tabs .tab-button.active,
-  .output-tabs .tab-button:hover {
-    background: #6355FF;
-    color: #fff;
-  }
 
   .svg-code-display {
     width: 100%;
@@ -5376,7 +5449,7 @@ Guidelines:
     font-size: 12px;
     line-height: 150%;
     color: #ddd; /* Fallback color if theme doesn't cover everything */
-    background: #272822; /* Default background for Okaidia theme */
+    background: #181723; /* Default background for Okaidia theme */
     overflow: auto;
     border: none;
     border-radius: 4px;
@@ -5407,6 +5480,54 @@ Guidelines:
       left: 0;
       width: 100% !important;
       height: 100% !important;
+    }
+  }
+
+  /* Realtime generation indicator */
+  .realtime-indicator {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: rgba(99, 85, 255, 0.9);
+    color: white;
+    padding: 6px 12px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 600;
+    backdrop-filter: blur(8px);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+    animation: pulse 2s ease-in-out infinite;
+
+    @keyframes pulse {
+      0%, 100% { opacity: 0.9; transform: scale(1); }
+      50% { opacity: 1; transform: scale(1.05); }
+    }
+  }
+
+  .realtime-loading {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    height: 100%;
+    color: rgba(255, 255, 255, 0.8);
+    text-align: center;
+
+    h3 {
+      font-size: 20px;
+      font-weight: 600;
+      margin: 0;
+      color: white;
+    }
+
+    p {
+      font-size: 14px;
+      opacity: 0.7;
+      margin: 0;
     }
   }
 </style>

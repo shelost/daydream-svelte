@@ -102,8 +102,8 @@ p {
 
 
 ::selection {
-  background: rgba($highlight, .08);
-  color: black;
+  background: $highlight;
+  color: white;
 }
 
 a {
@@ -470,23 +470,27 @@ input[type="range"] {
 
 .node{
   padding: 8px 6px;
-  background: rgba(black, .5);
+  background: rgba(white, 1);
   background-image: linear-gradient(-20deg, rgba(white, 0) 25%, rgba(white, .01) 50%, rgba(white, 0) 75%);
-  border: .5px solid rgba(white, .05);
+  //border: .5px solid rgba(black, .2);
   border-radius: 12px;
   backdrop-filter: blur(20px);
   transition: none;
 
-  color: white;
+  color: black;
 
-  box-shadow: -8px 16px 32px rgba(black, .3);
+  box-shadow: -8px 16px 48px rgba(black, .1);
+
+  input{
+    color: black;
+  }
 
   textarea {
    // font-family: "ivypresto-headline", "Inter", sans-serif !important;
     font-size: 12px;
     font-weight: 500;
     letter-spacing: -0.25px;
-    color: white;
+    color: black;
     background: none;
     border-radius: 4px;
     border: none !important;
@@ -495,3 +499,50 @@ input[type="range"] {
     box-sizing: border-box;
   }
 }
+
+
+
+  .spinner{
+    filter: drop-shadow(-2px 4px 4px rgba(#030025, .15));
+    margin: 20px 0;
+    transform-origin: center center;
+    width: fit-content;
+    animation: bouncer .5s infinite alternate-reverse ease-in-out;
+  }
+  .loader {
+    width: 17px;
+    aspect-ratio: 1;
+    border-radius: 50%;
+    background: var(--highlight);
+    display: grid;
+    box-shadow: inset -2px -2px 8px rgba(black, .1), inset 1px 1px 3px rgba(white, .5);
+    animation: l22-0 2s infinite linear;
+  }
+  .loader:before,
+  .loader:after {
+    content: "";
+    grid-area: 1/1;
+    margin: 0;
+    border-radius: 50%;
+    background: inherit;
+    transform: rotate(0deg) translate(120%) scale(.8);
+    animation: l22 1s infinite;
+  }
+  .loader:after {
+    animation-delay: -.5s
+  }
+  @keyframes l22-0 {
+    100% {transform: rotate(1turn) scale(1)}
+  }
+  @keyframes l22 {
+    100% {transform: rotate(1turn) translate(120%) scale(.8)}
+  }
+  @keyframes bouncer{
+    0%{
+      transform: scale(1);
+    }
+    100%{
+      transform: scale(.8);
+    }
+
+  }

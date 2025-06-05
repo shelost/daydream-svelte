@@ -213,7 +213,8 @@
     position: relative;
     height: 100%;
     width: 32px;
-    background-color: rgba(white, .08);
+    border-radius: 6px;
+    background-color: rgba(#030025, .05);
     cursor: pointer;
 
     &::before{
@@ -251,8 +252,8 @@
     width: 100%;
     border-radius: 6px;
     z-index: 2;
-    box-shadow: inset -1px -2px 4px rgba(black, .15);
-    background-color: rgba(white, .2) !important;
+    box-shadow: inset -1px -2px 4px rgba(black, .0);
+    background-color: #fddde6 !important;
   }
 
   .vertical-slider-thumb {
@@ -264,7 +265,7 @@
     background-color: rgba(white, 1);
     //border: 2px solid white !important;
     border-radius: 20px;
-    box-shadow: 0 4px 8px rgba(black, 0.15), inset -1px -2px 2px rgba(black, .25);
+    box-shadow: 0 4px 8px rgba(black, 0.15), inset -1px -2px 2px rgba(black, .05);
     transition: transform 0.15s ease;
     z-index: 2;
 
@@ -291,7 +292,7 @@
 
     &.active {
       transform: translate(-50%, 50%) scale(1.05);
-      box-shadow: 0 4px 8px rgba(black, 0.25), inset -1px -2px 2px rgba(black, .25);
+      box-shadow: 0 4px 8px rgba(black, 0.25), inset -1px -2px 2px rgba(black, .1);
 
       .thumb-highlight {
         opacity: 0.2;
@@ -304,7 +305,7 @@
     font-variant-numeric: tabular-nums;
 
     h3{
-      color: white;
+      color: #030025;
       font-size: 13px;
       font-weight: 600;
       text-align: center;

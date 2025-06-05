@@ -5,6 +5,7 @@ import { fileURLToPath } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const absoluteScssPath = resolve(__dirname, 'src/app.scss').replace(/\\/g, '/');
+const absoluteVariablesPath = resolve(__dirname, 'src/lib/styles/_variables.scss').replace(/\\/g, '/');
 
 /** @type {import('@sveltejs/kit').Config} */
 const config = {
@@ -12,7 +13,7 @@ const config = {
 	// for more information about preprocessors
 	preprocess: vitePreprocess({
 		scss: {
-			prependData: `@import '${absoluteScssPath}';`
+			prependData: `@import '${absoluteVariablesPath}'; @import '${absoluteScssPath}';`
 		}
 	}),
 

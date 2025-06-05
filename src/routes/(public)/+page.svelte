@@ -81,15 +81,17 @@
 
   <div class="hero-container">
 
-    <img src="opal.png" id = 'wing' alt="Arachne Logo" class="logo" />
+    <img in:fly={{y: 20, opacity: 0, duration: 600, delay: 100}} src="wing.png" id = 'wing' alt="Arachne Logo" class="logo" />
 
     <div class = 'mast'>
-      <h1>
-        Opal
+      <img in:fly={{y: 20, opacity: 0, duration: 600, delay: 100}} src="opal-text.svg" id = 'wordmark' alt="Arachne Logo" class="logo" />
+      <h1 in:fly={{y: 20, opacity: 0, duration: 600, delay: 150}}>
+        Your Personal <i> Atelier </i>
       </h1>
-      <p>
-        Copyright &copy; 2025 ahw. All rights reserved.
-      </p>
+      <h2 in:fly={{y: 20, opacity: 0, duration: 600, delay: 200}}>
+        Multiply Yourself, with Generative AI.
+      </h2>
+
     </div>
 
 
@@ -185,7 +187,7 @@
   .hero-container {
     text-align: center;
     padding: 0;
-    max-width: 800px;
+    max-width: 1000px;
     margin: 0 auto;
 
     height: 100%;
@@ -197,42 +199,85 @@
     align-items: center;
 
     #wing{
-      height: 160px;
+      height: 180px;
       border-radius: 18px;
       filter: drop-shadow(-12px 36px 16px rgba(#030025, 0.05));
+      display: none;
     }
 
-    #ahw{
-      height: 20px;
+    #wordmark{
+      height: 360px;
       border-radius: 0;
-      opacity: .2;
     }
 
     .mast{
       margin: 12px 0 48px 0;
       color: white;
-      h1{
+      text-align: center;
+      h4{
         font-family: "ivypresto-headline", serif;
-        font-size: 84px;
-        font-weight: 500;
-        letter-spacing: -.5px;
+        font-size: 300px;
+        font-weight: 600;
+        letter-spacing: -8px;
+        color: #030020;
+        margin: -4px 16px 28px 0;
+        line-height: 85%;
+        z-index: 2;
+
+        text-shadow: -6px 12px 24px rgba(#030025, .1);
+      }
+      h1{
+        display: none;
+        font-family: "ivypresto-headline", serif;
+        font-size: 90px;
+        font-weight: 600;
+        letter-spacing: -1.8px;
         color: #030025;
+        margin: -4px 0 28px 0;
+        line-height: 85%;
+        z-index: 2;
+
+        text-shadow: -6px 16px 16px rgba(#030025, .08);
+
+        i{
+          font-size: 90p
+        }
+
+        span{
+          position: relative;
+          &::before{
+            content: '';
+            width: 100px;
+            height: 70px;
+            background: rgba(yellow, .4);;
+            position: absolute;
+            top: 0;
+            left: 0;
+            z-index: 1;
+            display: none;
+          }
+          //background: yellow;
+          //font-weight: 600;
+        }
       }
       h2{
-        font-size: 18px;
+
+        margin: -10px 0 0 340px;
+
+        font-family: "ivypresto-text", serif;
+        font-size: 22px;
         font-weight: 500;
-        letter-spacing: -.3px;
-        color: rgba(white, .2);
-        margin-left: 240px;
-        margin-top: -12px;
+        letter-spacing: -1.4px;
+        color: rgba(black, .8);
+
       }
       p {
         font-size: 14px;
         font-weight: 400;
         letter-spacing: -0.25px;
-        color: rgba(white, .7);
+        color: rgba(black,.7);
         margin: 12px 0;
-        display: none;
+        //display: none;
       }
     }
   }
@@ -309,7 +354,7 @@
   }
 
   .sec{
-    display: none;
+   //s display: none;
   }
 
   .signup-button {

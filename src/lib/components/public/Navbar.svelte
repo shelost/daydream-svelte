@@ -6,11 +6,10 @@
 
 	let navElement; // bind:this to <nav>
 	let pillElement; // bind:this to the pill div
-	let navButtons = []; // Will be populated with <a> elements
 
 	// Function to update pill position and size
 	const updatePill = () => {
-		if (!navElement || !pillElement || navButtons.length === 0) {
+		if (!navElement || !pillElement) {
 			if (pillElement) {
 				pillElement.style.opacity = '0';
 				pillElement.style.width = '0px';
@@ -18,15 +17,7 @@
 			return;
 		}
 
-		const currentPath = $page.url.pathname;
-		let activeButton = null;
-
-		for (const btn of navButtons) {
-			if (btn.getAttribute('href') === currentPath) {
-				activeButton = btn;
-				break;
-			}
-		}
+		const activeButton = navElement.querySelector('.navbtn.active');
 
 		if (activeButton) {
 			const navRect = navElement.getBoundingClientRect();
@@ -50,16 +41,22 @@
 	};
 
 	onMount(() => {
-		if (navElement) {
-			navButtons = Array.from(navElement.querySelectorAll('a'));
-		}
 		// Timeout to allow DOM to fully render and bind:this to complete
-		setTimeout(updatePill, 0);
+		setTimeout(updatePill, 10);
+	});
+
+	// Reactive effect - update pill whenever the current page changes
+	$effect(() => {
+		// This will run whenever $page.url.pathname changes
+		const currentPath = $page.url.pathname;
+
+		// Timeout to ensure reactive class bindings have updated the DOM
+		setTimeout(updatePill, 20);
 	});
 
 	afterNavigate(() => {
-		// Timeout might also be good here if there are complex DOM changes triggering navigation
-		setTimeout(updatePill, 0);
+		// Backup timeout for edge cases
+		setTimeout(updatePill, 20);
 	});
 </script>
 <header>
@@ -73,7 +70,7 @@
         <div class="nav-pill" bind:this={pillElement}></div>
 
         <div class = 'navbtn' class:active={$page.url.pathname === '/'} on:click={() => {goto('/')}} >
-            <span class='material-icons'>
+            <span class='material-symbols-rounded'>
                 home
             </span>
         </div>
@@ -87,25 +84,25 @@
         -->
 
         <div class = 'navbtn' class:active={$page.url.pathname === '/canvas'} on:click={() => {goto('/canvas')}} >
-            <span class='material-icons'>
-                web_stories
+            <span class='material-symbols-rounded'>
+               edit_square
             </span>
         </div>
 
-        <div class = 'navbtn disabled' class:active={$page.url.pathname === '/flow'} on:click={() => {goto('/flow')}} >
-            <span class='material-symbols-outlined'>
-                automation
+        <div class = 'navbtn disable' class:active={$page.url.pathname === '/flow'} on:click={() => {goto('/flow')}} >
+            <span class='material-symbols-rounded'>
+                near_me
             </span>
         </div>
 
         <div class = 'navbtn' class:active={$page.url.pathname === '/chat'} on:click={() => {goto('/chat')}} >
-            <span class='material-symbols-outlined'>
-                chat_bubble
+            <span class='material-symbols-rounded'>
+               maps_ugc
             </span>
         </div>
 
         <div class = 'navbtn disabled' class:active={$page.url.pathname === '/profile'} on:click={() => {goto('/profile')}} >
-            <span class='material-symbols-outlined'>
+            <span class='material-symbols-rounded'>
                 person
             </span>
         </div>
@@ -131,6 +128,16 @@
 <style lang="scss">
 
     header{
+        position: fixed;
+
+        padding: 12px 0;
+        top: 0;
+        right: 12px;
+
+
+        height: 100vh;
+        width: 44px;
+
         display: flex;
         flex-direction: column;
         justify-content: space-between;
@@ -139,11 +146,7 @@
         box-sizing: border-box;
         flex-shrink: 0;
         flex-grow: 0;
-        padding: 12px 0;
-        top: 0;
-        left: 0;
-        height: 100vh;
-        width: 48px;
+
         z-index: 2;
        // border-left: 1px solid rgba(white, .2);
     }
@@ -169,27 +172,34 @@
         flex-direction: column;
         align-items: center;
         box-sizing: border-box;
-        gap: 8px;
+        gap: 6px;
         background: none;
-        padding: 6px;
+        padding: 4px;
         border-radius: 0 16px 16px 0;
+        background: rgba(#e0e0e0, .75);
+        backdrop-filter: blur(24px);
+        border-radius: 16px;
+        box-shadow: 6px 24px 24px rgba(black, .05);
+        width: 100%;
 
 
         .nav-pill {
             position: absolute;
             left: 0;
             top: 0%;
-            background-color: rgba(white, .1);
-            border-radius: 10px; // Half of height for perfect pill
-            box-shadow: -2px 4px 8px rgba(black, .2);
+            background: white;
+            border-radius: 12px; // Half of height for perfect pill
+            //box-shadow: -2px 4px 8px rgba(black, .2);
             border: none;
             //transform: translateY(-50%); // Vertically center
             z-index: 0; // Behind nav items
-            opacity: 0; // Start hidden
+            box-shadow: -2px 4px 12px rgba(#030025, .1);
             transition: 0.2s cubic-bezier(0.65, 0, 0.35, 1);
         }
 
         .navbtn{
+                position: relative;
+                z-index: 1;
                 cursor: pointer;
                 width: 36px;
                 height: 36px;
@@ -217,12 +227,12 @@
                    // background: rgba(#030025, .1);
                     border-radius: 12px;
                     span{
-                        color: rgba(#030025, 1);
+                        color: rgba(#030025, .4);
                         filter: none;
                     }
                 }
                 &.disabled{
-                    //display: none;
+                    display: none;
 
                 }
                 &.active{

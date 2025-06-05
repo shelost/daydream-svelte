@@ -71,6 +71,8 @@
 		"prismjs": "^1.30.0",
 		"replicate": "^1.0.1",
 		"sass": "^1.86.3",
+		"socket.io": "^4.8.1",
+		"socket.io-client": "^4.8.1",
 		"svelte-rune-markdown": "^0.0.2",
 		"svgo": "^3.3.2",
 		"tiktoken": "^1.0.21",

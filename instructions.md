@@ -2,6 +2,56 @@
 
 ## All AI-generated code instructions go here.
 
+## Real-Time Diffusion Generation for Canvas with Socket.io + Flux Schnell
+
+### Problem
+User wants to add real-time diffusion generation that updates as the user draws, providing immediate visual feedback with AI-generated images that refresh continuously. This feature should be activated when the user selects "Flux Schnell" from the model dropdown in the /canvas page.
+
+### Solution Implemented
+1. **Socket.io Integration**:
+   - Added Socket.io client and server packages
+   - Created `/src/lib/server/socket.ts` for WebSocket server handling
+   - Modified `src/hooks.server.ts` to initialize Socket.io server on app start
+   - Integrated Socket.io client in canvas component
+
+2. **Model Integration**:
+   - Added "Flux Schnell (Realtime)" to the model dropdown
+   - Implemented conditional Socket.io connection based on model selection
+   - Added support for Flux Schnell and Flux Pro models via Replicate API
+
+3. **Debouncing Strategy**:
+   - 300ms initial delay after drawing stops (configurable)
+   - Progressive quality improvements: Flux Schnell first, then Flux Pro after 2s
+   - Cancellable generation via AbortController
+   - Smart canvas update tracking with debounced emission
+
+4. **Real-time Features**:
+   - Automatic WebSocket connection when Flux Schnell is selected
+   - Real-time progress updates during generation
+   - Automatic disconnection when switching to other models
+   - Error handling with user-friendly messages
+
+5. **Technical Implementation**:
+   - Server: TypeScript Socket.io server with Replicate integration
+   - Client: Reactive Svelte integration with auto-connect/disconnect
+   - Uses existing SSE infrastructure alongside new WebSocket support
+   - Preserves all existing model functionality
+
+### How It Works
+1. User selects "Flux Schnell (Realtime)" from the model dropdown
+2. Socket.io connection is automatically established
+3. As user draws, canvas updates are debounced and sent to server
+4. Server generates preview with Flux Schnell (4 steps, ~1-3s)
+5. If user remains idle for 2s, server upgrades to Flux Pro for quality
+6. Generated images stream back in real-time
+7. Connection automatically closes when switching models
+
+### Key Files Modified
+- `src/routes/(public)/canvas/+page.svelte` - Added Socket.io client integration
+- `src/lib/server/socket.ts` - New Socket.io server implementation
+- `src/hooks.server.ts` - Socket.io server initialization
+- `package.json` - Added socket.io and socket.io-client dependencies
+
 ## Chat Interface UX Improvements
 
 ### Problem
@@ -287,10 +337,6 @@ This change ensures that we truly edit the user's drawing instead of generating 
     *   `recognizeStrokes` uses the (unerased) data from `drawingContent.strokes`. Overlays may have slight inaccuracies.
 8.  **Preserve Styles & Layout:** No changes to CSS or HTML structure (except canvas ID).
 
-
-
-
-
 ## Add Sliding Pill Background to Header Navigation
 
 **Problem:** The main site header navigation lacks a visual indicator for the currently active navigation item.
@@ -479,143 +525,7 @@ Setting up Fabric.js canvas: Initialize a Fabric.js canvas, which will inherentl
 Integrating perfect-freehand: Strokes drawn with perfect-freehand should be converted into fabric.Path objects and added to the Fabric.js canvas. This implies a temporary canvas for perfect-freehand drawing, and then transferring the completed stroke to Fabric.js.
 Implementing Tools:
  Pen Tool: Uses perfect-freehand for drawing, then adds the stroke as a fabric.Path.
- Eraser Tool: Uses Fabric.js's EraserBrush. This means isDrawingMode will be true, and the brush will be set to fabric.EraserBrush.
- Select Tool: Standard Fabric.js object selection and manipulation. isDrawingMode will be false.
-UI Updates: Add an eraser button to the toolbar.
-Store Usage: Use canvasStore.ts instead of drawStore.ts.
-File Constraints: ONLY src/routes/(public)/canvas/+page.svelte and src/lib/stores/canvasStore.ts should be modified. src/routes/(public)/draw/+page.svelte must remain unchanged.
-EraserBrush Functionality: Ensure true raster-style erasing using EraserBrush, not simulated with white strokes.
-Existing Styles: Keep all existing SCSS styles in +page.svelte unchanged.
-Clarification on EraserBrush with perfect-freehand strokes:The user wants perfect-freehand strokes to be rendered as fabric.Path objects. The EraserBrush in Fabric.js works on Fabric objects. So, when a perfect-freehand stroke is completed and converted to a fabric.Path, it becomes erasable by the EraserBrush. The "temporary real-time strokes" on the perfect-freehand canvas will not be directly erasable by the EraserBrush until they are committed to the Fabric canvas as objects.Plan Outline:
-Identify and Explain Problem:
-   The current src/routes/(public)/canvas/+page.svelte uses perfect-freehand on a single HTML5 canvas for drawing. This setup doesn't support object-based manipulation or advanced features like Fabric.js's EraserBrush for true raster erasing. The goal is to integrate Fabric.js to manage drawn objects (converted from perfect-freehand strokes) and enable its EraserBrush functionality, while keeping perfect-freehand for the drawing experience.
-Detailed Outline for Solution & instructions.md Update:
- HTML Structure:
- Keep the existing canvas element (inputCanvas) which will now serve as the Fabric.js lower-canvas. Fabric.js will automatically create an upper-canvas on top of it.
- We might not need a separate dedicated third canvas for perfect-freehand if we draw perfect-freehand strokes directly onto the Fabric.js upper-canvas while isDrawingMode is false, and then, upon stroke completion, convert these points into a fabric.Path and add it to the main Fabric.js canvas collection. This avoids managing an extra canvas overlay. Alternatively, draw on a temporary off-screen canvas or directly on the upper-canvas and clear it after transferring the path. For simplicity and immediate feedback, drawing onto the upper-canvas seems feasible.
- Fabric.js Setup (+page.svelte):
- Import Fabric.js from public/fabric.js.
- In onMount, initialize fabric.Canvas on the inputCanvas element. Store the Fabric.js canvas instance (e.g., fabCanvas).
- Ensure fabCanvas.isDrawingMode is initially false.
- Store Migration (+page.svelte):
- Change all imports from drawStore.ts to canvasStore.ts.
- Tool Implementation (+page.svelte):
- selectedTool store: This store will now dictate Fabric.js canvas behavior.
- Pen Tool (selectedTool === 'pen'):
- Set fabCanvas.isDrawingMode = false;.
- The existing perfect-freehand logic (startPenStroke, continuePenStroke, endPenStroke) will be adapted.
- startPenStroke: Initialize currentStrokePoints (local array for perfect-freehand points).
- continuePenStroke: Add points to currentStrokePoints. Render the live stroke using perfect-freehand's getStroke and getSvgPathFromStroke directly onto the Fabric.js upper-canvas ( fabCanvas.contextTop). This requires clearing the upper canvas appropriately before rendering the current stroke segment.
- endPenStroke:
- Take currentStrokePoints.
- Convert these points into an SVG path string using getSvgPathFromStroke(getStroke(points, options)).
- Create a new fabric.Path(svgPathString, pathOptions) where pathOptions include color, strokeWidth, etc., from strokeOptions store. The path should have fill: null and stroke: strokeColor.
- Add this fabric.Path object to fabCanvas.add(fabPath).
- Clear currentStrokePoints and the temporary drawing on the upper canvas.
- Call fabCanvas.requestRenderAll().
- Eraser Tool (selectedTool === 'eraser'):
- Set fabCanvas.isDrawingMode = true;.
- Set fabCanvas.freeDrawingBrush = new fabric.EraserBrush(fabCanvas);.
- Configure fabCanvas.freeDrawingBrush.width (e.g., from eraserSize or a new store value).
- Fabric.js will handle eraser interactions on its upper canvas.
- Select Tool (selectedTool === 'select'):
- Set fabCanvas.isDrawingMode = false;.
- Fabric.js default behavior for object selection/manipulation will be active.
- Toolbar Update (+page.svelte):
- The existing toolbar for pen/eraser/select will be made visible (remove style="display: none").
- Ensure the selectedTool store correctly updates fabCanvas.isDrawingMode and the brush type.
- State Management:
- drawingContent.strokes will now store fabric.Object instances (specifically fabric.Path for pen strokes) or Fabric's representation of erased areas. The current structure of drawingContent might need to change or be supplemented by Fabric's own object management. For now, let's assume fabCanvas.getObjects() will be the source of truth for drawn objects.
- The functions analyzeSketch and recognizeStrokes currently use drawingContent.strokes (which are perfect-freehand stroke objects). They will need to be adapted:
- Instead of drawingContent.strokes, they should now get data from fabCanvas.getObjects().
- To get an image for analysis, use fabCanvas.toDataURL().
- To get stroke data for analyze-strokes endpoint, if the objects are fabric.Path, their path property (which is an array of commands) can be used. This might require a new utility to convert Fabric path commands to the format expected by analyze-strokes or simplify them to a series of points. This is a complex part and might require a placeholder or simplification for this step. Initial approach: focus on getting objects onto Fabric canvas and basic erasing. Full analysis adaptation might be a follow-up.
- Fabric.js Object Properties:
- When creating fabric.Path objects, ensure properties like selectable: true, evented: true, and importantly erasable: true (or as per desired behavior) are set.
- Clearing Canvas:
- clearCanvas function should now use fabCanvas.clear() and also reset any perfect-freehand related state.
- Rendering (+page.svelte):
- The renderStrokes function will largely be replaced by Fabric.js's rendering.
- perfect-freehand strokes will be rendered on the upper-canvas during drawing. Once a stroke is complete, it's added as a Fabric object, and Fabric handles rendering it on the lower-canvas.
- Overlays (AIOverlay, StrokeOverlay, TFOverlay) will need to be adjusted to work with Fabric.js canvas dimensions and object coordinates if they interact with object positions. This might be complex. Initial approach: Ensure overlays still position correctly relative to the overall canvas area.
- Linter Errors: Address the linter errors, especially the Fabric.js import and drawingContent usage.
- canvasStore.ts: No changes seem immediately necessary to canvasStore.ts itself based on the prompt, as it's a duplicate and the modifications are in +page.svelte. The user specified to work on canvasStore.ts only from now on, which means +page.svelte should import from it.
-Implementation:
- Modify src/routes/(public)/canvas/+page.svelte.
- Ensure Fabric.js is correctly imported and initialized.
- Implement the tool switching logic.
- Implement the Pen tool: drawing with perfect-freehand on upper-canvas, converting to fabric.Path on fabCanvas.
- Implement the Eraser tool using EraserBrush.
- Implement the Select tool.
- Adapt generateImage, analyzeSketch, recognizeStrokes, and clearCanvas.
- Fix linter errors.
-Addressing Potential Issues:
- Perfect-freehand on Upper Canvas: Drawing live perfect-freehand strokes on the Fabric.js upper canvas (fabCanvas.contextTop) requires careful clearing and redrawing. Each pointermove event during a pen stroke would mean:
-Save context state.
-Clear the part of the upper canvas where the previous segment of the current stroke was. (Or clear entire upper canvas if simpler, but less performant).
-Draw the new, updated current stroke.
-Restore context state.
-   Alternatively, render the live stroke on a separate, temporary transparent canvas positioned exactly over the Fabric canvas, and clear this temporary canvas entirely on each update. This might be cleaner. Let's try drawing on the upper-canvas first and clearing it.
- Coordinate Systems: Perfect-freehand points are relative to
-
-## Move Scroll-to-Bottom Button into Omnibar Component (2025-05-31)
-
-### Problem
-The floating "scroll-to-bottom" arrow button was defined inside `src/routes/(public)/stan/+page.svelte`.  This broke the desired encapsulation — the button visually belongs to the Omnibar and should travel with it.  Keeping the markup in the page file also meant any other parent that re-uses `<Omnibar>` would need to re-implement the same button logic.
-
-### Solution Outline
-1. **Propagate State Downward**
-   • Keep all scroll-tracking logic (`showScrollButton`, `handleScroll`, `$shouldAutoScroll`) in `+page.svelte`.
-   • Pass the current boolean together with a callback (`onScrollToBottom`) as props to `<Omnibar>`.
-2. **Render Inside Omnibar**
-   • Add two new props to `src/lib/components/Omnibar.svelte`:
-     `export let showScrollButton = false;`
-     `export let onScrollToBottom = () => {};`
-   • Insert the button markup just above the existing follow-up questions / omnibar UI.
-   • Copy the previous SCSS into Omnibar's `<style>` block so the button keeps its look & feel.
-3. **Clean Up Page File**
-   • Remove the old button markup and its now-duplicate style block from `+page.svelte`.
-   • Update the Omnibar instantiation to:
-     `showScrollButton={!isStartState && showScrollButton}`
-     `onScrollToBottom={() => { $shouldAutoScroll = true; scrollToBottom(); }}`
-
-### Why This Solves the Problem
-Placing the button inside the Omnibar component keeps related UI together, simplifies the page template, and allows any future pages using `<Omnibar>` to gain the feature automatically without duplicating code.
-
-### Checklist
-- [x] Export new props in `Omnibar.svelte`.
-- [x] Add button markup and SCSS inside Omnibar.
-- [x] Pass props from `+page.svelte` and remove old button block.
-- [x] Remove duplicate style rules from page file.
-
-## Svelte Flow Background Customization (public/flow page)
-
-- **Objective:** Make the Svelte Flow background white by default and controllable via CSS variables.
-- **File:** `src/routes/(public)/flow/+page.svelte`
-- **Changes:**
-    1. Define CSS variables `--flow-background-color` (default: `white`) and `--flow-pattern-color` (default: a light grey like `#e0e0e0` or SvelteFlow's default) in the global scope of the page's styles.
-    2. Update the `<Background>` component to use these CSS variables for its `bgColor` and `patternColor` props.
-      - `bgColor="var(--flow-background-color)"`
-      - `patternColor="var(--flow-pattern-color)"`
-
-## RefreshButton Component Refactor
-
-- **Objective:** Abstract reset/refresh buttons used on multiple pages into a reusable `RefreshButton.svelte` component.
-- **Files to create/edit:**
-  1. `src/lib/components/shared/RefreshButton.svelte` — new component exposing props (`title`, `disabled`, `className`) and forwarding click events while rendering provided children via `<slot>`.
-  2. `src/routes/(public)/flow/+page.svelte` — import `RefreshButton`, replace existing reset button with the component, preserving click handler `resetFlowCanvas`.
-  3. `src/routes/(public)/chat/+page.svelte` — import `RefreshButton`, replace existing global refresh button with the component, preserving click handler `clearChatAndStorage` and disabled state logic.
-- **Notes:** Existing CSS classes (`reset-flow-button`, `global-refresh-button`) remain defined in their respective pages and are passed to the component via the `className` prop to maintain current styling. The component forwards `click` events using `createEventDispatcher`, enabling pages to attach their own `on:click` handlers.
-
-## Canvas Touch/Stylus Input Fix (public/canvas page)
-
-- **Objective:** Resolve premature stroke ending with touch/Apple Pencil on the drawing canvas.
-- **File:** `src/routes/(public)/canvas/+page.svelte`
-- **Key Changes:**
-    1. **Restore Event Dispatch Logic:** Ensure `onPointerDown`, `onPointerMove`, and `onPointerUp` correctly call tool-specific functions (like `startPenStroke`, `addTextObject`, etc.) based on the `$selectedTool`.
-    2. **Targeted `preventDefault`:** Add `if (e.pointerType === 'touch' || e.pointerType === 'pen') { e.preventDefault(); }` at the beginning of `startPenStroke` and `continuePenStroke` functions. This prevents default browser actions (like scrolling or page zoom) only when the pen tool is active and receiving touch/stylus input.
-    3. **Remove `pointerleave` Listener:** Ensure the `on:pointerleave={onPointerUp}` directive is completely removed from the `inputCanvas` element (`<canvas class="drawing-canvas">`). This event often causes premature stroke termination with styluses.
-    4. **CSS `touch-action`:** Confirm that the `.canvas-container-overlay` (the parent of `inputCanvas`) has `touch-action: none;` applied in its CSS to disable browser-native touch gestures over the canvas area.
+ Eraser Tool: Uses Fabric.js's EraserBrush. This means isDrawingMode will be true, and the brush will be set
 
 ## Disable Text Selection on Canvas Page
 
@@ -623,3 +533,65 @@ Placing the button inside the Omnibar component keeps related UI together, simpl
 - **File:** `src/routes/(public)/canvas/+page.svelte`
 - **Changes:**
     - Apply CSS `user-select: none;` (and vendor prefixes: `-webkit-user-select`, `-ms-user-select`) to a high-level container element (e.g., the main `div` with `id="app"` or `.draw-demo-container`) to prevent text selection globally on that page.
+
+## Fix for "Unsupported model: flux-schnell" Error
+
+- **Objective:** Prevent the `generateImage` function from making an HTTP POST to `/api/ai/edit-replicate` when "Flux Schnell (Realtime)" is selected, as this model is handled via Socket.io.
+- **File:** `src/routes/(public)/canvas/+page.svelte`
+- **Changes:**
+    - In the `generateImage` function, add a condition at the beginning: if `$selectedModel === 'flux-schnell'`, the function should log that real-time generation is active and then return immediately, bypassing the rest of the HTTP request logic. This ensures the Omnibar's submit button doesn't cause an error for this specific real-time model.
+
+## Fix for Realtime Flux Schnell Images Not Displaying & Add Status Indicator
+
+- **Objective:** Ensure images generated by "Flux Schnell" (real-time) are displayed, and add a status indicator for the real-time connection and image count.
+- **Files:**
+    - `src/routes/(public)/canvas/+page.svelte`
+    - `src/lib/components/shared/RealtimeStatusIndicator.svelte`
+- **Changes in `canvas/+page.svelte` (Client-Side):**
+    1.  **Debugging Image Display**:
+        - Add `console.log` statements inside the `socket.on('generation-complete', ...)` event handler to trace `data.imageUrl` and confirm `editedImageUrl.set()` is called.
+    2.  **Status Indicator State**:
+        - Create reactive variable `socketConnectionStatus: string` (e.g., 'Disconnected', 'Connecting', 'Connected').
+        - Update `socketConnectionStatus` based on `socket.on('connect')`, `socket.on('disconnect')`, `socket.on('connect_error')` and during socket initialization.
+        - Create reactive variable `realtimeImagesReceivedCount: number`, initialized to 0.
+        - Increment `realtimeImagesReceivedCount` within `socket.on('generation-complete')` after successfully processing `data.imageUrl`.
+    3.  **Integrate Status Indicator Component**:
+        - Import `RealtimeStatusIndicator.svelte`.
+        - Conditionally render `<RealtimeStatusIndicator>` when `realtimeGenerationEnabled` is true.
+        - Pass `socketConnectionStatus` and `realtimeImagesReceivedCount` as props to the indicator.
+    4.  **Socket.IO Connection Diagnostics (Client-Side)**:
+        - Add a `socket.on('connect_error', (err) => { ... });` handler to log detailed connection errors to the console. This will show reasons like "xhr poll error", "websocket error", etc.
+        - Add `socket.on('reconnect_attempt', (attempt) => { ... });` to log reconnection attempts.
+        - Consider changing `io('/')` to `io({ transports: ['websocket', 'polling'] })` to be explicit, though these are defaults.
+- **New Component `RealtimeStatusIndicator.svelte`**:
+    - (Already created in previous step)
+- **Verify Reactivity**:
+    - (Ongoing)
+
+- **Backend Socket.IO Setup (Guidance for User):**
+    - **Requirement**: A functioning Socket.IO server is needed on the backend to handle client connections and real-time model interactions for "Flux Schnell".
+    - **SvelteKit Integration**: This typically involves:
+        - **Vite Dev Server (Development)**: Configuring the Vite dev server to handle WebSocket upgrades for Socket.IO. This might involve Vite plugins or custom server setup.
+        - **`src/hooks.server.ts`**: Attaching Socket.IO to the HTTP server instance provided by SvelteKit. This is a common place to initialize Socket.IO.
+        - **Dedicated Endpoint**: Alternatively, a SvelteKit endpoint (e.g., a `+server.ts` file) could be used to set up Socket.IO, though this is less common for persistent WebSocket connections.
+    - **Server-Side Event Handlers**: The Socket.IO server must implement handlers for:
+        - `connection`: To manage new client connections.
+        - `disconnect`: To handle client disconnections.
+        - `canvas-update`: An event the client will emit with drawing data. The server should then:
+            - Call the Flux Schnell model (e.g., using Replicate's API: `replicate.run('black-forest-labs/flux-schnell', ...)`).
+            - Emit `generation-started` back to the client.
+            - Upon receiving results from the model, emit `generation-complete` (with `imageUrl`) or `generation-error` back to the client.
+    - **CORS Configuration**: Ensure appropriate CORS settings are in place on the server if the client and server are considered different origins (less likely with `io('/')` but important for production).
+
+## Socket.IO Server Setup (for Real-time Canvas)
+
+- **Objective:** Implement a Socket.IO server on the backend to handle real-time communication for the Flux Schnell feature on the canvas page, resolving client connection timeouts.
+- **Files to Create/Modify:**
+    - `src/lib/server/socket-handler.js` (New): Contains the Socket.IO server initialization and event handling logic (e.g., `connection`, `canvas-update`, `disconnect`).
+    - `vite.config.ts` (Modify): Import the server handler and add a custom Vite plugin to integrate Socket.IO with the SvelteKit development server.
+    - `package.json` (Verify/Update): Ensure `socket.io` is listed as a dependency.
+    - `src/routes/(public)/canvas/+page.svelte` (Modify): Fix a minor linter error related to error handling.
+- **Details:**
+    - The Socket.IO server will listen for connections from the canvas page.
+    - It will handle `canvas-update` events, (eventually) process the image data, and emit `generation-started`, `generation-complete`, or `generation-error` events back to the client.
+    - This setup is primarily for the local development environment. Standard Vercel serverless functions do not support persistent WebSocket connections, which will require a different solution for production deployment (e.g., dedicated WebSocket service, or Vercel's Edge Functions with specific configurations if compatible).
