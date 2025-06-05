@@ -25,38 +25,7 @@
       return;
     }
 
-    // Animation with GSAP
-    try {
-      const tl = gsap.timeline();
 
-      tl.from(mainHeading, {
-        y: 50,
-        opacity: 0,
-        duration: 0.8,
-        ease: "power3.out"
-      })
-      .from(subHeading, {
-        y: 30,
-        opacity: 0,
-        duration: 0.8,
-        ease: "power3.out"
-      }, "-=0.5")
-      .from([loginButton, signupButton, demoButton], {
-        y: 20,
-        opacity: 0,
-        duration: 0.5,
-        stagger: 0.2,
-        ease: "power3.out",
-        onStart: () => {
-          // Ensure buttons are visible when animation starts
-          buttonsVisible = true;
-        }
-      }, "-=0.3");
-    } catch (error) {
-      console.error("GSAP animation error:", error);
-      // Ensure buttons are visible even if GSAP fails
-      buttonsVisible = true;
-    }
   });
 
   const handleLogin = () => {
@@ -77,20 +46,27 @@
   <meta name="description" content="Create beautiful drawings and canvas compositions with Daydream" />
 </svelte:head>
 
-<main class="landing-page" in:scale={{start: 0.95, opacity: 0.5}}>
+<main id = 'main' in:scale={{start: 0.95, opacity: 0.5}}>
+
 
   <div class="hero-container">
+
+    <video id = 'video' autoplay loop muted playsinline src = 'walls_4.mp4'></video>
+
 
     <img in:fly={{y: 20, opacity: 0, duration: 600, delay: 100}} src="wing.png" id = 'wing' alt="Arachne Logo" class="logo" />
 
     <div class = 'mast'>
+
       <img in:fly={{y: 20, opacity: 0, duration: 600, delay: 100}} src="opal-text.svg" id = 'wordmark' alt="Arachne Logo" class="logo" />
+
       <h1 in:fly={{y: 20, opacity: 0, duration: 600, delay: 150}}>
-        Your Personal <i> Atelier </i>
+        Your AI <i> Studio </i>
       </h1>
       <h2 in:fly={{y: 20, opacity: 0, duration: 600, delay: 200}}>
         Multiply Yourself, with Generative AI.
       </h2>
+
 
     </div>
 
@@ -178,11 +154,26 @@
 
 <style lang="scss">
 
-  .landing-page {
+  #main {
     height: 100%;
     overflow-y: scroll;
+    position: relative;
    // background-color: $background-color;
   }
+
+  #video{
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      z-index: 0;
+      opacity: .34;
+      mask-image: linear-gradient(to bottom, black 70%, transparent 100%);
+      -webkit-mask-image: linear-gradient(to bottom, black 70%, transparent 100%);
+    }
+
 
   .hero-container {
     text-align: center;
@@ -190,13 +181,16 @@
     max-width: 1000px;
     margin: 0 auto;
 
-    height: 100%;
-
+    background: none;
+    height: 90%;
 
     display: flex;
     flex-direction: column;
     justify-content: center;
     align-items: center;
+
+    z-index: 2;
+
 
     #wing{
       height: 180px;
@@ -206,14 +200,16 @@
     }
 
     #wordmark{
-      height: 360px;
+      height: 40px;
       border-radius: 0;
+      opacity: .3;
     }
 
     .mast{
       margin: 12px 0 48px 0;
       color: white;
       text-align: center;
+      z-index: 10;
       h4{
         font-family: "ivypresto-headline", serif;
         font-size: 300px;
@@ -222,25 +218,25 @@
         color: #030020;
         margin: -4px 16px 28px 0;
         line-height: 85%;
-        z-index: 2;
+        z-index: 10;
+
 
         text-shadow: -6px 12px 24px rgba(#030025, .1);
       }
       h1{
-        display: none;
         font-family: "ivypresto-headline", serif;
-        font-size: 90px;
+        font-size: 130px;
         font-weight: 600;
-        letter-spacing: -1.8px;
+        letter-spacing: -5px;
         color: #030025;
-        margin: -4px 0 28px 0;
+        margin: 8px 0 28px 0;
         line-height: 85%;
         z-index: 2;
 
         text-shadow: -6px 16px 16px rgba(#030025, .08);
 
         i{
-          font-size: 90p
+          font-weight: 700;;
         }
 
         span{
@@ -261,12 +257,14 @@
         }
       }
       h2{
+       //display: none;
+        //margin: -40px 0 0 360px;
 
-        margin: -10px 0 0 340px;
+        margin: 0 0 24px 0;
 
         font-family: "ivypresto-text", serif;
         font-size: 22px;
-        font-weight: 500;
+        font-weight: 600;
         letter-spacing: -1.4px;
         color: rgba(black, .8);
 
@@ -303,23 +301,25 @@
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 24px;
-    margin: 40px 0;
+    margin: 40px auto;
+    width: 800px;
 
     .feature{
-      background: rgba(black, .5);
+      background: rgba(#030020, 1);
       border-radius: 12px;
       padding: 24px;
-      box-shadow: -4px 16px 32px rgba(black, 0.3);
+      height: 320px;
+      box-shadow: -12px 24px 32px rgba(#030025, 0.35);
 
       .expo{
         text-align: left;
 
         h2{
-          font-family: "ivypresto-headline", serif;
+          font-family: "ivypresto-text", serif;
           font-size: 32px;
-          font-weight: 500;
-          letter-spacing: 0px;
-          color: rgba(white, .6);
+          font-weight: 600;
+          letter-spacing: -1.5px;
+          color: rgba(white, .9);
           margin-bottom: 8px;
         }
 
@@ -354,6 +354,7 @@
   }
 
   .sec{
+    z-index: 2;
    //s display: none;
   }
 

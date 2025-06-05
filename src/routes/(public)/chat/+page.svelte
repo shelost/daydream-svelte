@@ -1169,16 +1169,8 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
 
 {#if isStartState}
   <div id="start-state-container" >
-    <div class="welcome-header" in:fade={{ delay: 300, duration: 500 }}>
-      <video
-            muted
-            loop
-            preload="auto"
-            autoPlay
-            playsInline
-            src='stanley-3.mp4'
-         ></video>
-      <h2> Opal </h2>
+    <div class="welcome-header">
+      <img in:fly={{y: 25, opacity: 0, duration: 400, delay: 100}} src="opal-text.svg" id = 'wordmark' alt="Arachne Logo" class="logo" />
     </div>
 
     <!-- Example Prompts Section -->
@@ -1538,11 +1530,11 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
       touch-action: pan-y;
 
       &.carousel-left-to-right {
-        animation-name: scrollLeftToRight;
+        //animation-name: scrollLeftToRight;
       }
 
       &.carousel-right-to-left {
-        animation-name: scrollRightToLeft;
+       // animation-name: scrollRightToLeft;
       }
 
       &:hover {
@@ -1578,12 +1570,12 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
 
       &.carousel-gradient-left {
         left: 0;
-        background: linear-gradient(to right, rgba(255, 255, 255, 1) 0%, rgba(255, 255, 255, 0.8) 50%, rgba(255, 255, 255, 0) 100%);
+      //  background: linear-gradient(to right, rgba(255, 255, 255, 1) 0%, rgba(255, 255, 255, 0.8) 50%, rgba(255, 255, 255, 0) 100%);
       }
 
       &.carousel-gradient-right {
         right: 0;
-        background: linear-gradient(to left, rgba(255, 255, 255, 1) 0%, rgba(255, 255, 255, 0.8) 50%, rgba(255, 255, 255, 0) 100%);
+      //  background: linear-gradient(to left, rgba(255, 255, 255, 1) 0%, rgba(255, 255, 255, 0.8) 50%, rgba(255, 255, 255, 0) 100%);
       }
     }
 

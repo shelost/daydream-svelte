@@ -292,162 +292,6 @@ This change ensures that we truly edit the user's drawing instead of generating 
 
 **Result:** Users now see detailed real-time observation logs as they happen, plus a clean, collapsible summary of all actions that doesn't overwhelm the chat interface. The summary pill preserves all the detailed Stagehand response data while presenting it in an organized, user-friendly format.
 
-# Instructions / Plan
-
-## Fabric.js Integration for `/canvas` Route
-
-**Goal:** Replace the basic HTML Canvas 2D implementation in `src/routes/(public)/canvas/+page.svelte` with Fabric.js to enable true vector erasing and better object management, while retaining Perfect Freehand for stroke generation aesthetics.
-
-**Steps:**
-
-1.  **Initialize Fabric Canvas:**
-    *   Add `id="fabric-canvas"` to the `<canvas>` element.
-    *   In `onMount`, initialize `new fabric.Canvas('fabric-canvas')`.
-    *   Remove `CanvasRenderingContext2D` usage (`inputCtx`).
-2.  **Integrate Perfect Freehand & Fabric Paths:**
-    *   Keep `drawingContent: EnhancedDrawingContent` state to store original point data for the `analyze-strokes` API.
-    *   In `endPenStroke`:
-        *   Continue adding stroke data to `drawingContent.strokes`.
-        *   Generate SVG path data using Perfect Freehand (`getStroke`, `getSvgPathFromStroke`).
-        *   Create `new fabric.Path(pathData, { ... })` with fill, opacity, etc.
-        *   Add a custom property `originalStrokeIndex` to the Fabric path.
-        *   Add the `fabric.Path` to the `fabricCanvas`.
-3.  **Implement Fabric Eraser:**
-    *   In `startEraserStroke`, set `fabricCanvas.isDrawingMode = true` and `fabricCanvas.freeDrawingBrush = new fabric.EraserBrush(...)` with appropriate width.
-    *   Remove logic creating background-colored strokes.
-    *   In `endEraserStroke`, set `fabricCanvas.isDrawingMode = false`.
-4.  **Implement Fabric Selection:**
-    *   Remove manual selection box drawing code.
-    *   Set `fabricCanvas.isDrawingMode = false` for the 'select' tool.
-    *   Listen to Fabric selection events (`selection:created`, `selection:updated`, `selection:cleared`).
-    *   Update `selectedStrokeIndices` based on the `originalStrokeIndex` of selected Fabric objects (`fabricCanvas.getActiveObjects()`).
-5.  **Refactor Rendering & Canvas Management:**
-    *   Replace `renderStrokes()` calls with `fabricCanvas.requestRenderAll()`. Remove `renderStrokes`'s internal logic.
-    *   Update `clearCanvas` to use `fabricCanvas.clear()` and clear `drawingContent.strokes`.
-    *   Update `resizeCanvas` to use `fabricCanvas.setDimensions()`, `fabricCanvas.renderAll()`.
-    *   Update `getPointerPosition` to use `fabricCanvas.getPointer(e)`.
-    *   Update `captureCanvasSnapshot` to use `fabricCanvas.toDataURL()`.
-6.  **Adapt Tool Switching & Options:**
-    *   Modify tool selection logic to manage `fabricCanvas.isDrawingMode` and `fabricCanvas.freeDrawingBrush`.
-    *   Apply stroke options (color, opacity) to `fabric.Path` on creation.
-    *   Apply eraser width to `EraserBrush`.
-7.  **Maintain AI Integration (Compromise):**
-    *   Keep AI analysis functions and UI components.
-    *   `analyzeSketch` uses Fabric canvas snapshot.
-    *   `recognizeStrokes` uses the (unerased) data from `drawingContent.strokes`. Overlays may have slight inaccuracies.
-8.  **Preserve Styles & Layout:** No changes to CSS or HTML structure (except canvas ID).
-
-## Add Sliding Pill Background to Header Navigation
-
-**Problem:** The main site header navigation lacks a visual indicator for the currently active navigation item.
-
-**Goal:** Implement a sliding "pill" background that smoothly animates to highlight the active navigation tab, similar to the style seen on krea.ai.
-
-**Plan:**
-
-1.  **Modify `src/lib/components/public/Header.svelte`:**
-    *   **HTML Structure:**
-        *   Add a `div` element with class `nav-pill` inside the `<nav>` container. This div will serve as the sliding background.
-        *   Use `bind:this` to get references to the `<nav>` element itself (`navElement`) and the new pill `div` (`pillElement`).
-    *   **JavaScript Logic (within `<script>` tags):**
-        *   Import `page` from `$app/stores` to access the current URL.
-        *   Import `onMount` and `afterNavigate` from Svelte and `$app/navigation` respectively.
-        *   In `onMount`:
-            *   Query all navigation links (`<a>` tags within the `<nav>`) and store them in an array (`navButtons`).
-            *   Call a function `updatePill()` to set the initial position of the pill.
-        *   Use `afterNavigate`:
-            *   Call `updatePill()` to ensure the pill moves correctly after client-side navigations.
-        *   Implement `updatePill()` function:
-            *   This function will find the active navigation link by comparing its `href` attribute with the current `$page.url.pathname`.
-            *   If an active link is found:
-                *   Calculate its position and width relative to the `nav` container using `getBoundingClientRect()` for accuracy.
-                *   Update the `nav-pill`'s `style.transform` to `translateX(...) translateY(-50%)` and `style.width` to match the active link.
-                *   Ensure the pill is visible (e.g., `opacity: 1`).
-            *   If no active link matches the current path, hide the pill (e.g., `opacity: 0`, `width: 0px`).
-    *   **SCSS Styling (within `<style lang="scss">` tags):**
-        *   **`nav` element:**
-            *   Set `position: relative;` to act as the positioning context for the absolutely positioned pill.
-        *   **`.nav-pill` element:**
-            *   `position: absolute;`
-            *   `left: 0;`
-            *   `top: 50%;`
-            *   `height: 32px;`
-            *   `border-radius: 16px;` (for the pill shape)
-            *   `background-color: white;`
-            *   `transform: translateY(-50%);` (initial Y transform for vertical centering)
-            *   `z-index: 0;` (to be behind the navigation link text/icons).
-            *   `transition: transform 0.35s cubic-bezier(0.65, 0, 0.35, 1), width 0.35s cubic-bezier(0.65, 0, 0.35, 1), opacity 0.35s ease;` for smooth animation.
-            *   `opacity: 0;` (initially hidden, fades in when active).
-        *   **`nav a` elements (navigation links):**
-            *   `position: relative; z-index: 1;` to ensure their content (icons, text) is rendered above the pill.
-            *   Ensure `text-decoration: none;`.
-
-2.  **Testing:**
-    *   Verify the pill appears correctly on initial page load for all navigation routes (`/`, `/draw`, `/image`).
-    *   Verify the pill smoothly slides to the correct navigation item when navigating between these pages.
-    *   Verify the pill is hidden or appropriately handled if navigating to a URL not represented in the header navigation.
-
-## Real-Time Stagehand Log Streaming Implementation
-
-**Date:** 2025-05-29
-
-**Goal:** Stream Stagehand execution logs in real-time to display pills as the agent works, rather than waiting for completion.
-
-**Implementation Plan:**
-
-1. **Backend SSE Support (`/api/stagehand/+server.ts`)**:
-   - Add Server-Sent Events endpoint for streaming logs
-   - Capture Stagehand's console output in real-time
-   - Parse logs to extract category, reasoning, and action details
-   - Send formatted events to frontend immediately
-
-2. **Frontend EventSource (`+page.svelte`)**:
-   - Replace fetch with EventSource for real-time communication
-   - Handle incoming log events and add pills immediately
-   - Maintain existing pill styling and animation
-   - Handle completion and error states
-
-3. **Log Format Parsing**:
-   - Parse Stagehand logs with timestamps, categories, and action details
-   - Format into appropriate pill types (reasoning vs action)
-   - Stream pills in chronological order
-
-4. **Testing Requirements**:
-   - Verify pills appear in real-time during Stagehand execution
-   - Ensure proper error handling for disconnections
-   - Test on various command types (navigation, search, clicks, etc.)
-
-## Seamless Chat Integration for Stagehand Responses
-
-**Date:** 2025-05-29
-
-**Problem:** Stagehand responses were displaying as "[object Object]" instead of the actual message content, breaking the natural flow of the chat interface.
-
-**Solution Implemented:**
-
-1. **Message Extraction Logic**:
-   - Fixed streaming response processing to properly extract `finalData.message` as string content
-   - Added type checking and fallback handling for message content
-   - Ensured consistent behavior between streaming and fallback modes
-
-2. **Action Pills Generation**:
-   - Generate action pills from the `actionsPerformed` array returned by Stagehand
-   - Map Stagehand action types (goto, click, type, close) to user-friendly descriptions
-   - Include completion status indicators (✓ for completed, ⏳ for in-progress)
-   - Stream pills after the main message content for better UX
-
-3. **Content Flow Integration**:
-   - Stagehand summaries and responses now flow naturally as markdown-rendered chat messages
-   - Action sequence pills appear below the main response for detailed execution logs
-   - Preserved existing chat functionality while adding browser automation capabilities
-
-4. **Debug Improvements**:
-   - Added detailed logging to track message processing
-   - Better error handling for malformed responses
-   - Consistent handling between streaming and non-streaming modes
-
-**Result:** Browser automation responses now seamlessly integrate with the chat interface, showing AI summaries and analyses as natural conversation while providing detailed action logs as interactive pills.
-
 ## Enhanced Real-Time Stagehand Log Streaming
 
 **Date:** 2025-05-29
@@ -595,3 +439,24 @@ Implementing Tools:
     - The Socket.IO server will listen for connections from the canvas page.
     - It will handle `canvas-update` events, (eventually) process the image data, and emit `generation-started`, `generation-complete`, or `generation-error` events back to the client.
     - This setup is primarily for the local development environment. Standard Vercel serverless functions do not support persistent WebSocket connections, which will require a different solution for production deployment (e.g., dedicated WebSocket service, or Vercel's Edge Functions with specific configurations if compatible).
+
+## Video Gradient Mask on Landing Page
+
+### Problem
+The background video on the landing page (`/`) has a hard edge at the bottom, which can be visually jarring. A smooth fade-to-transparent effect is needed to blend it better with the content below it.
+
+### Solution Outline
+1.  **Target File:** `src/routes/(public)/+page.svelte`
+2.  **CSS Modification:**
+    *   Locate the `#video` CSS selector.
+    *   Apply a `mask-image` property to create a vertical gradient mask.
+    *   The gradient will be `linear-gradient(to bottom, black 70%, transparent 100%)`. This makes the top 70% of the video fully opaque, with the bottom 30% fading smoothly to full transparency.
+    *   Add the `-webkit-mask-image` property with the same value to ensure compatibility with WebKit-based browsers (like Safari and Chrome).
+
+### Implementation Details
+- No new files or dependencies are needed.
+- The change is purely cosmetic and achieved with a few lines of CSS.
+
+### Testing
+- Verify on the landing page that the video at the top fades out at the bottom.
+- Check on different browsers (if possible) to ensure the `-webkit-` prefix works as expected.

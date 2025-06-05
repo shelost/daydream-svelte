@@ -120,12 +120,36 @@
     <div id = 'menu' class = 'corner'>
 
 
+        <div id = 'pfp'  class:active={$page.url.pathname === '/profile'} on:click={() => {goto('/profile')}}>
+            <h2>CA</h2>
+        </div>
 
     </div>
 
 </header>
 
 <style lang="scss">
+
+    #pfp{
+        width: 36px;
+        height: 36px;
+        background: #e0e0e0;
+        border-radius: 48px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        transition: .2s ease;
+
+        h2{
+            font-size: 16px;
+            font-weight: 600;
+            color: #030025;
+        }
+        &:hover{
+            background: #d0d0d0;
+        }
+    }
 
     header{
         position: fixed;
@@ -193,7 +217,7 @@
             border: none;
             //transform: translateY(-50%); // Vertically center
             z-index: 0; // Behind nav items
-            box-shadow: -2px 4px 12px rgba(#030025, .1);
+            box-shadow: -2px px 12px rgba(#030025, .1);
             transition: 0.2s cubic-bezier(0.65, 0, 0.35, 1);
         }
 

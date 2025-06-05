@@ -3864,6 +3864,12 @@ Guidelines:
 
 
     <div id="main">
+      <RefreshButton
+          className="global-refresh-button"
+          title="Clear Canvas"
+          disabled={$isGenerating || $isEditing}
+          on:click={clearCanvas}
+        />
       <div class="toolbars-wrapper"  in:fly={{y: 25, opacity: 0, duration: 500, delay: 200}}>
         <!-- New Tool Selection Toolbar -->
 
@@ -4374,6 +4380,8 @@ Guidelines:
       height: fit-content;
       max-height: 90%;
 
+      filter: drop-shadow(-24px 24px 60px rgba(#030025, .1));
+
       user-select: none;
 
       .area{
@@ -4383,7 +4391,7 @@ Guidelines:
         background: $card-bg;
         border-radius: $border-radius-lg;
         overflow: hidden;
-        box-shadow:-24px 24px 60px rgba(#030025, .1);
+
 
         //border: 1px solid rgba(black, .08);
       }
