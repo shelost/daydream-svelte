@@ -164,12 +164,6 @@
       <!-- Or just the clear button which is outside this if/else block -->
     {/if}
 
-    <RefreshButton
-      title="Clear Canvas"
-      on:click={onClearCanvas}
-    >
-    </RefreshButton>
-
   </div>
 </div>
 

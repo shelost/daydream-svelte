@@ -124,7 +124,7 @@
         }
 
         .app{
-            margin: 12px 12px 4px 12px;
+           // margin: 12px 12px 4px 12px;
         }
 
         #chat {

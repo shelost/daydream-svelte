@@ -64,9 +64,15 @@
         Your AI <i> Studio </i>
       </h1>
       <h2 in:fly={{y: 20, opacity: 0, duration: 600, delay: 200}}>
-        Multiply Yourself, with Generative AI.
+        Do What You Love, and Nothing More.
       </h2>
 
+      <button
+      bind:this={demoButton}
+      class="demo-button"
+      on:click={handleTryDemo}>
+      Start Drawing
+    </button>
 
     </div>
 
@@ -369,7 +375,7 @@
   }
 
   .demo-button {
-    background-color: #6355FF;
+    background-color: var(--highlight);
     color: white;
     border: none;
     position: relative;
@@ -379,7 +385,7 @@
 
     padding: 10px 18px 12px 18px;
 
-    box-shadow: -4px 16px 18px rgba(black,0.1), inset 1px 2px 2px rgba(white,0.1), inset -1px -2px 4px rgba(black,0.1);
+    box-shadow: -4px 16px 18px rgba(black,0.1), inset 1px 2px 2px rgba(white,0.5), inset -1px -2px 4px rgba(black,0.2);
 
 
     h2{
@@ -400,7 +406,7 @@
     }
 
     &:hover {
-      background-color: #5f3cf7;
+      transform: scale(1.03);
      // opacity: 0.9;
       //transform: translateY(-2px);
       // /box-shadow: 0 4px 8px rgba(0,0,0,0.1);

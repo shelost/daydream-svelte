@@ -3860,16 +3860,16 @@ Guidelines:
   {#if realtimeGenerationEnabled}
     <RealtimeStatusIndicator connectionStatus={socketConnectionStatus} imagesReceived={realtimeImagesReceivedCount} />
   {/if}
+  <RefreshButton
+  title="Clear Canvas"
+  disabled={$isGenerating || $isEditing}
+  on:click={clearCanvas}
+/>
   <div class="draw-demo-container">
 
 
     <div id="main">
-      <RefreshButton
-          className="global-refresh-button"
-          title="Clear Canvas"
-          disabled={$isGenerating || $isEditing}
-          on:click={clearCanvas}
-        />
+
       <div class="toolbars-wrapper"  in:fly={{y: 25, opacity: 0, duration: 500, delay: 200}}>
         <!-- New Tool Selection Toolbar -->
 
