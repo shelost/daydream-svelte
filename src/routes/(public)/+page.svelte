@@ -70,7 +70,9 @@
       <button
       bind:this={demoButton}
       class="demo-button"
-      on:click={handleTryDemo}>
+      on:click={handleTryDemo}
+      in:fly={{y: 20, opacity: 0, duration: 600, delay: 250}}
+      >
       Start Drawing
     </button>
 
@@ -162,7 +164,7 @@
 
   #main {
     height: 100%;
-    overflow-y: scroll;
+    overflow-y: hidden;
     position: relative;
    // background-color: $background-color;
   }
@@ -188,7 +190,7 @@
     margin: 0 auto;
 
     background: none;
-    height: 90%;
+    height: 100%;
 
     display: flex;
     flex-direction: column;
@@ -206,9 +208,9 @@
     }
 
     #wordmark{
-      height: 40px;
+      height: 36px;
       border-radius: 0;
-      opacity: .3;
+     //opacity: .3;
     }
 
     .mast{
@@ -269,9 +271,9 @@
         margin: 0 0 24px 0;
 
         font-family: "ivypresto-text", serif;
-        font-size: 22px;
+        font-size: 24px;
         font-weight: 600;
-        letter-spacing: -1.4px;
+        letter-spacing: -1.1px;
         color: rgba(black, .8);
 
       }
@@ -387,9 +389,11 @@
 
     box-shadow: -4px 16px 18px rgba(black,0.1), inset 1px 2px 2px rgba(white,0.5), inset -1px -2px 4px rgba(black,0.2);
 
+    font-weight: 600;
 
     h2{
       font-size: 16px;
+      font-weight: 500;
     }
 
 

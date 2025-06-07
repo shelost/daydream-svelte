@@ -30,8 +30,8 @@
 			//pillElement.style.transform = `translateX(${offsetLeftInNav}px) translateY(-50%)`;
             pillElement.style.left = `${offsetLeftInNav}px`;
             pillElement.style.top = `${offsetTopInNav}px`;
-			pillElement.style.width = `${buttonWidth}px`;
-            pillElement.style.height = `${buttonRect.height}px`;
+			pillElement.style.width = `${buttonWidth-2}px`;
+            pillElement.style.height = `${buttonRect.height-2}px`;
 			pillElement.style.opacity = '1';
 		} else {
 			// No active button found, hide the pill

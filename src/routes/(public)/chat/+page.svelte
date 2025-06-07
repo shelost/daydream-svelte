@@ -1472,7 +1472,7 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
     margin-bottom: 20px;
 
     img {
-      height: 140px;
+      height: 120px;
       // filter: drop-shadow(-8px 16px 24px rgba(#030025, 0.1));
     }
 
@@ -1499,6 +1499,7 @@ Use this EXACT format at the very end, with the special delimiter ⟪ to signal 
     display: flex;
     flex-direction: column;
     gap: 8px;
+    display: none;
 
     @media screen and (max-width: 800px) {
       gap: 20px;
